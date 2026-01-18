@@ -46,5 +46,19 @@ cargo clippy --workspace --all-targets --all-features
 cargo fmt --all
 ```
 
+## Coding Style Guidelines
+
+**IMPORTANT**: Follow the coding standards defined in `docs/style.md` for all code changes.
+
+Key guidelines:
+- **Favor let-else over nesting**: Use `let-else` patterns with early returns instead of deeply nested `if-let` blocks
+- **Keep functions flat**: Maximum 1-2 levels of indentation
+- **Early returns**: Return early on error conditions and guards
+- **Use ? operator**: Prefer `?` for error propagation over explicit match
+- **Document public APIs**: All public functions, types, and modules need doc comments
+- **Run clippy and fmt**: Before committing, run `cargo clippy` and `cargo fmt`
+
+See `docs/style.md` for complete guidelines with examples.
+
 ## Key Architecture Notes
 
