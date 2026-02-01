@@ -24,11 +24,46 @@ Every task should follow this workflow:
 5. **Test automation**: Create automated tests for your changes
 6. **Clean up**: Format code, remove debug statements, update comments
 7. **Update PR description**: Keep PR description current with all changes
-8. **Address PR comments**: Respond to and fix issues from code review
+8. **Address PR comments**: See "Addressing PR Review Comments" section below
 9. **Keep PR updated**: Continue updating description as you make fixes
 10. **Finalize**: Remove `/todo.txt`, merge PR
 
 **todo.txt format**: Use it as your working journal. Track tasks, decisions, blockers, test results, review comments, and next steps. Update frequently.
+
+## Addressing PR Review Comments
+
+When asked to address PR review comments, follow this workflow:
+
+1. **Fetch comments**: Use `gh api repos/{owner}/{repo}/pulls/{pr_number}/comments` to get all review comments
+
+2. **For each comment**, decide whether to:
+   - **Fix it**: Make the change in a separate commit
+   - **Decline it**: Explain why (design decision, out of scope, etc.)
+
+3. **Create separate commits**: Each fix should be its own commit with a clear message referencing the issue
+
+4. **Reply directly to review comments**: Use the GitHub API to reply in the comment thread:
+   ```bash
+   gh api repos/{owner}/{repo}/pulls/{pr_number}/comments/{comment_id}/replies -X POST -f body='Your reply'
+   ```
+   - If fixed: Include the commit SHA (e.g., "Fixed in commit abc123")
+   - If declined: Explain the reasoning clearly and respectfully
+
+5. **Example workflow**:
+   ```bash
+   # Get PR review comments
+   gh api repos/winkoz/plonk/pulls/24/comments
+
+   # Make fix and commit
+   git add <files>
+   git commit -m "Fix: address review comment about X"
+   git push
+
+   # Reply directly to the comment thread
+   gh api repos/winkoz/plonk/pulls/24/comments/123456789/replies -X POST -f body='Fixed in commit abc123'
+   ```
+
+6. **General PR comments** (not in a thread): Use `gh pr comment {pr_number} --body "message"` for standalone comments not tied to specific code lines.
 
 ## Build and Development Commands
 
