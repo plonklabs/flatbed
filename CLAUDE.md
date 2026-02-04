@@ -90,10 +90,34 @@ Key guidelines:
 - **Keep functions flat**: Maximum 1-2 levels of indentation
 - **Early returns**: Return early on error conditions and guards
 - **Use ? operator**: Prefer `?` for error propagation over explicit match
+- **No wildcard imports**: Never use `use foo::*`; always import specific items explicitly
 - **Document public APIs**: All public functions, types, and modules need doc comments
 - **Run clippy and fmt**: Before committing, run `cargo clippy` and `cargo fmt`
 
 See `docs/style.md` for complete guidelines with examples.
+
+## Flatty Framework
+
+The project uses the internal `flatty` framework for HTTP services with FlatBuffers support.
+
+### Worker and Route Discovery
+
+The `#[worker]` and `#[route]` macros use the `inventory` crate for **compile-time registration**:
+
+- **No re-exports needed**: Simply declaring a module (`mod workers;`) is sufficient. The macros register items automatically via `inventory::submit!`
+- **Don't suppress unused import warnings**: If the compiler says a re-export is unused, it's genuinely unused. The inventory system discovers items regardless of module visibility
+- Workers are spawned automatically by `Flatty::run_with_context()`
+
+```rust
+// workers/mod.rs - correct pattern
+mod deploy;  // Just declare, no pub use needed
+
+// workers/deploy.rs
+#[worker(name = "my-worker", description = "Does work")]
+pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlattyWorkerError> {
+    // Worker logic
+}
+```
 
 ## Key Architecture Notes
 
