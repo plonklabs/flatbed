@@ -106,7 +106,7 @@ The `#[worker]` and `#[route]` macros use the `inventory` crate for **compile-ti
 
 - **No re-exports needed**: Simply declaring a module (`mod workers;`) is sufficient. The macros register items automatically via `inventory::submit!`
 - **Don't suppress unused import warnings**: If the compiler says a re-export is unused, it's genuinely unused. The inventory system discovers items regardless of module visibility
-- Workers are spawned automatically by `Flatty::run_with_context()`
+- Workers are spawned automatically by `Flatty::run()`
 
 ```rust
 // workers/mod.rs - correct pattern
