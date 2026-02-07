@@ -119,5 +119,9 @@ pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlattyWorkerError> {
 }
 ```
 
+## Specs
+
+Design specifications live in `specs/`. Each spec has its own folder with a `spec.md` and optional step files (`step1.md`, `step2.md`, etc.) for execution planning. See `specs/README.md` for details.
+
 ## Key Architecture Notes
 
