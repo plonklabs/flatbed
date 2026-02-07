@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The project consists of:
 - **plonk_cli**: Interactive TUI-based CLI for infrastructure initialization and management
-- **plonk_agent**: Kubernetes-resident agent for monitoring and telemetry
+- **plonk_operator**: Kubernetes operator for reconciliation and telemetry
 - **plonk_crds**: Custom Resource Definitions library for Kubernetes resources
 - **plonk_gateway**: API gateway service (early stage)
 
@@ -71,7 +71,7 @@ When asked to address PR review comments, follow this workflow:
 # Build and run
 make build-plonk-cli  # or: cargo run -p plonk_cli
 cargo build -p plonk_cli --release
-cargo build -p plonk_agent --release
+cargo build -p plonk_operator --release
 cargo build --workspace
 
 # Test and quality
