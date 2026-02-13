@@ -81,6 +81,92 @@ cargo clippy --workspace --all-targets --all-features
 cargo fmt --all
 ```
 
+## End-to-End Testing
+
+**CRITICAL**: Always use the Plonk CLI for E2E testing. Never manually apply YAML files or use kubectl directly for installation/uninstallation.
+
+### Testing Workflow
+
+**1. Build operator image:**
+```bash
+# Build without cache to ensure latest code
+docker build --no-cache -t plonk-operator:test -f plonk/apps/operator/Dockerfile .
+
+# Load into Minikube (replace 'plonk-one' with your profile)
+minikube image load plonk-operator:test --profile plonk-one
+```
+
+**2. Uninstall existing deployment:**
+```bash
+cargo run --release -p plonk_cli -- uninstall --yes --namespace plonk
+```
+
+**3. Install using CLI:**
+```bash
+cargo run --release -p plonk_cli -- install --yes --namespace plonk --operator-image plonk-operator:test
+```
+
+**4. Verify deployment:**
+```bash
+# Check pods
+kubectl get pods -n plonk
+
+# Check operator logs
+kubectl logs -l app.kubernetes.io/name=plonk-operator -n plonk --tail=50
+```
+
+### Testing New Features
+
+When testing operator features (like namespace RBAC):
+
+1. **Create test resources:**
+   ```bash
+   # Create managed namespace
+   kubectl create namespace test-managed
+   kubectl label namespace test-managed plonk.tools/managed=true
+
+   # Create unmanaged namespace for negative testing
+   kubectl create namespace test-unmanaged
+   ```
+
+2. **Deploy test CRDs:**
+   ```bash
+   kubectl apply -f - <<EOF
+   apiVersion: plonk.com/v1
+   kind: PlonkBox
+   metadata:
+     name: test-app
+     namespace: test-managed
+   spec:
+     image: nginx:latest
+     min_replicas: 1
+     max_replicas: 2
+   EOF
+   ```
+
+3. **Verify expected behavior:**
+   ```bash
+   # Check logs for processing
+   kubectl logs -l app.kubernetes.io/name=plonk-operator -n plonk --tail=30
+
+   # Verify resources created
+   kubectl get deployment,pods -n test-managed
+   ```
+
+### Common Issues
+
+**Image not updating:**
+- Minikube caches images. Use `--no-cache` when building and verify with a new tag
+- Delete the pod to force recreation: `kubectl delete pod -l app=plonk-operator -n plonk`
+
+**Permission errors:**
+- RBAC changes require pod restart to pick up new permissions
+- Reinstall using CLI to ensure ClusterRole/ClusterRoleBinding are updated
+
+**CLI requires TTY:**
+- Always use `--yes` flag for non-interactive mode
+- Example: `plonk install --yes --namespace plonk`
+
 ## Coding Style Guidelines
 
 **IMPORTANT**: Follow the coding standards defined in `docs/style.md` for all code changes.
