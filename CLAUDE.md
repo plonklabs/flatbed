@@ -17,18 +17,17 @@ The project consists of:
 **IMPORTANT**: Never mention AI tools, Claude, or add Co-Authored-By tags in commits or PRs. All work should appear as standard developer contributions.
 
 Every task should follow this workflow:
-1. **Start from main**: `git checkout main && git pull && git rebase origin/main`
-2. **Create feature branch**: `git checkout -b feature/your-feature-name`
-3. **Create todo.txt**: Create `/todo.txt` at repo root as your PR journal
-4. **Develop**: Implement changes, write tests, run lints
-5. **Test automation**: Create automated tests for your changes
-6. **Clean up**: Format code, remove debug statements, update comments
-7. **Update PR description**: Keep PR description current with all changes
-8. **Address PR comments**: See "Addressing PR Review Comments" section below
-9. **Keep PR updated**: Continue updating description as you make fixes
-10. **Finalize**: Remove `/todo.txt`, merge PR
+1. **Start from main**: If working in a worktree, use `git switch main && git pull && git rebase origin/main`. Otherwise `git checkout main && git pull && git rebase origin/main`
+2. **Create feature branch**: `git switch -c feature/your-feature-name`
+3. **Develop**: Implement changes, write tests, run lints
+4. **Test automation**: Create automated tests for your changes
+5. **Clean up**: Format code, remove debug statements, update comments
+6. **Update PR description**: Keep PR description current with all changes
+7. **Address PR comments**: See "Addressing PR Review Comments" section below
+8. **Keep PR updated**: Continue updating description as you make fixes
+9. **Finalize**: Merge PR
 
-**todo.txt format**: Use it as your working journal. Track tasks, decisions, blockers, test results, review comments, and next steps. Update frequently.
+Track tasks, decisions, blockers, and progress in the GitHub Issue linked to your PR.
 
 ## Addressing PR Review Comments
 
@@ -205,9 +204,81 @@ pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlattyWorkerError> {
 }
 ```
 
-## Specs
+## Feature Planning with GitHub Issues
 
-Design specifications live in `specs/`. Each spec has its own folder with a `spec.md` and optional step files (`step1.md`, `step2.md`, etc.) for execution planning. See `specs/README.md` for details.
+Features and design work are tracked using **GitHub Issues** with sub-issues.
+
+### Structure
+
+- **Parent Issue**: Describes the full feature design (context, proposal, technical design, changes required)
+- **Sub-Issues**: Each sub-issue represents one step of the implementation — each sub-issue maps to exactly **one PR**
+- **Cleanup Issues**: For things like compiler warnings, tech debt, or minor fixes discovered during development, create standalone issues (not sub-issues)
+
+### Creating a Feature Issue
+
+1. **Create the parent issue** with the full design spec:
+   ```bash
+   gh issue create --title "Feature: My Feature Name" --body "$(cat <<'EOF'
+   ## Context
+   Problem statement and current state.
+
+   ## Proposal
+   High-level solution overview.
+
+   ## Design
+   Detailed technical design with code examples.
+
+   ## Changes Required
+   List of files affected with specific modifications.
+
+   ## Dependencies
+   External crates, services, or assumptions.
+   EOF
+   )"
+   ```
+
+2. **Create sub-issues** for each implementation step:
+   ```bash
+   gh issue create --title "Step 1: Set up types and traits" --body "$(cat <<'EOF'
+   Parent: #<parent-issue-number>
+
+   ## Goal
+   What this step accomplishes.
+
+   ## Changes
+   File-by-file modifications with code examples.
+
+   ## Verification
+   Build, test, and validation commands.
+   EOF
+   )"
+   ```
+
+3. **Link sub-issues** to the parent by adding them in the parent issue body or using GitHub's sub-issue feature.
+
+### Creating Cleanup Issues
+
+When you encounter warnings, tech debt, or minor fixes during development, create standalone issues:
+```bash
+gh issue create --title "Fix: resolve unused import warnings in plonk_operator" --body "$(cat <<'EOF'
+## Problem
+Description of the warnings or cleanup needed.
+
+## Files Affected
+- path/to/file.rs
+- path/to/other.rs
+EOF
+)"
+```
+
+### Workflow
+
+1. Pick a sub-issue to work on
+2. Create a feature branch: `git switch -c feature/step-description`
+3. Implement the changes described in the sub-issue
+4. Open a PR referencing the sub-issue: `Closes #<sub-issue-number>`
+5. After merge, the sub-issue closes automatically
+6. When all sub-issues are complete, close the parent issue
 
 ## Key Architecture Notes
 
