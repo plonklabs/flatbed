@@ -17,8 +17,8 @@ The project consists of:
 **IMPORTANT**: Never mention AI tools, Claude, or add Co-Authored-By tags in commits or PRs. All work should appear as standard developer contributions.
 
 Every task should follow this workflow:
-1. **Start from main**: If working in a worktree, use `git switch main && git pull && git rebase origin/main`. Otherwise `git checkout main && git pull && git rebase origin/main`
-2. **Create feature branch**: `git switch -c feature/your-feature-name`
+1. **Start from main**: If working in a worktree, use `git fetch origin main && git switch -c feature/your-feature-name origin/main`. Otherwise `git checkout main && git pull && git rebase origin/main && git switch -c feature/your-feature-name`
+2. **Create feature branch**: (included in step 1 above)
 3. **Develop**: Implement changes, write tests, run lints
 4. **Test automation**: Create automated tests for your changes
 5. **Clean up**: Format code, remove debug statements, update comments
@@ -31,38 +31,12 @@ Track tasks, decisions, blockers, and progress in the GitHub Issue linked to you
 
 ## Addressing PR Review Comments
 
-When asked to address PR review comments, follow this workflow:
+Use `/review <pr-number>` for the interactive workflow. The key principles:
 
-1. **Fetch comments**: Use `gh api repos/{owner}/{repo}/pulls/{pr_number}/comments` to get all review comments
-
-2. **For each comment**, decide whether to:
-   - **Fix it**: Make the change in a separate commit
-   - **Decline it**: Explain why (design decision, out of scope, etc.)
-
-3. **Create separate commits**: Each fix should be its own commit with a clear message referencing the issue
-
-4. **Reply directly to review comments**: Use the GitHub API to reply in the comment thread:
-   ```bash
-   gh api repos/{owner}/{repo}/pulls/{pr_number}/comments/{comment_id}/replies -X POST -f body='Your reply'
-   ```
-   - If fixed: Include the commit SHA (e.g., "Fixed in commit abc123")
-   - If declined: Explain the reasoning clearly and respectfully
-
-5. **Example workflow**:
-   ```bash
-   # Get PR review comments
-   gh api repos/winkoz/plonk/pulls/24/comments
-
-   # Make fix and commit
-   git add <files>
-   git commit -m "Fix: address review comment about X"
-   git push
-
-   # Reply directly to the comment thread
-   gh api repos/winkoz/plonk/pulls/24/comments/123456789/replies -X POST -f body='Fixed in commit abc123'
-   ```
-
-6. **General PR comments** (not in a thread): Use `gh pr comment {pr_number} --body "message"` for standalone comments not tied to specific code lines.
+- **Fetch** review comments via `gh api repos/winkoz/plonk/pulls/{n}/comments`
+- **Fix or decline** each comment — each fix gets its own commit
+- **Reply inline** using `gh api .../comments/{id}/replies` with the commit SHA (if fixed) or reasoning (if declined)
+- **General PR comments** (not in a thread): use `gh pr comment {n} --body "message"`
 
 ## Build and Development Commands
 
@@ -84,15 +58,17 @@ cargo fmt --all
 
 **CRITICAL**: Always use the Plonk CLI for E2E testing. Never manually apply YAML files or use kubectl directly for installation/uninstallation.
 
+**Prerequisites**: E2E testing requires a Kind cluster with a local container registry. The registry is set up by `plonk install` (see epic #2 / #72 for registry support status).
+
 ### Testing Workflow
 
-**1. Build operator image:**
+**1. Build and push operator image:**
 ```bash
 # Build without cache to ensure latest code
-docker build --no-cache -t plonk-operator:test -f plonk/apps/operator/Dockerfile .
+docker build --no-cache -t localhost:5000/plonk-operator:test -f plonk/apps/operator/Dockerfile .
 
-# Load into Minikube (replace 'plonk-one' with your profile)
-minikube image load plonk-operator:test --profile plonk-one
+# Push to local registry (started by plonk install)
+docker push localhost:5000/plonk-operator:test
 ```
 
 **2. Uninstall existing deployment:**
@@ -102,7 +78,7 @@ cargo run --release -p plonk_cli -- uninstall --yes --namespace plonk
 
 **3. Install using CLI:**
 ```bash
-cargo run --release -p plonk_cli -- install --yes --namespace plonk --operator-image plonk-operator:test
+cargo run --release -p plonk_cli -- install --yes --namespace plonk --operator-image localhost:5000/plonk-operator:test
 ```
 
 **4. Verify deployment:**
@@ -155,7 +131,7 @@ When testing operator features (like namespace RBAC):
 ### Common Issues
 
 **Image not updating:**
-- Minikube caches images. Use `--no-cache` when building and verify with a new tag
+- Use `--no-cache` when building and use a unique tag (e.g., timestamp)
 - Delete the pod to force recreation: `kubectl delete pod -l app=plonk-operator -n plonk`
 
 **Permission errors:**
@@ -206,70 +182,13 @@ pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlattyWorkerError> {
 
 ## Feature Planning with GitHub Issues
 
-Features and design work are tracked using **GitHub Issues** with sub-issues.
+Features and design work are tracked using **GitHub Issues** with sub-issues. Use `/spec` to create feature specs interactively, or use the GitHub Issue templates directly.
 
 ### Structure
 
-- **Parent Issue**: Describes the full feature design (context, proposal, technical design, changes required)
-- **Sub-Issues**: Each sub-issue represents one step of the implementation — each sub-issue maps to exactly **one PR**
-- **Cleanup Issues**: For things like compiler warnings, tech debt, or minor fixes discovered during development, create standalone issues (not sub-issues)
-
-### Creating a Feature Issue
-
-1. **Create the parent issue** with the full design spec:
-   ```bash
-   gh issue create --title "Feature: My Feature Name" --body "$(cat <<'EOF'
-   ## Context
-   Problem statement and current state.
-
-   ## Proposal
-   High-level solution overview.
-
-   ## Design
-   Detailed technical design with code examples.
-
-   ## Changes Required
-   List of files affected with specific modifications.
-
-   ## Dependencies
-   External crates, services, or assumptions.
-   EOF
-   )"
-   ```
-
-2. **Create sub-issues** for each implementation step:
-   ```bash
-   gh issue create --title "Step 1: Set up types and traits" --body "$(cat <<'EOF'
-   Parent: #<parent-issue-number>
-
-   ## Goal
-   What this step accomplishes.
-
-   ## Changes
-   File-by-file modifications with code examples.
-
-   ## Verification
-   Build, test, and validation commands.
-   EOF
-   )"
-   ```
-
-3. **Link sub-issues** to the parent by adding them in the parent issue body or using GitHub's sub-issue feature.
-
-### Creating Cleanup Issues
-
-When you encounter warnings, tech debt, or minor fixes during development, create standalone issues:
-```bash
-gh issue create --title "Fix: resolve unused import warnings in plonk_operator" --body "$(cat <<'EOF'
-## Problem
-Description of the warnings or cleanup needed.
-
-## Files Affected
-- path/to/file.rs
-- path/to/other.rs
-EOF
-)"
-```
+- **Parent Issue**: Full feature design (context, proposal, technical design, changes required, dependencies)
+- **Sub-Issues**: Each sub-issue = one implementation step = one PR
+- **Cleanup Issues**: Standalone issues for compiler warnings, tech debt, or minor fixes
 
 ### Workflow
 
