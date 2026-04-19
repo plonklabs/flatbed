@@ -182,22 +182,23 @@ pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlattyWorkerError> {
 
 ## Feature Planning with GitHub Issues
 
-Features and design work are tracked using **GitHub Issues** with sub-issues. Use `/spec` to create feature specs interactively, or use the GitHub Issue templates directly.
+Features and design work are tracked using **GitHub Issues** as epics with checkbox lists. Use `/spec` to create feature specs interactively.
 
 ### Structure
 
-- **Parent Issue**: Full feature design (context, proposal, technical design, changes required, dependencies)
-- **Sub-Issues**: Each sub-issue = one implementation step = one PR
-- **Cleanup Issues**: Standalone issues for compiler warnings, tech debt, or minor fixes
+- **Epic Issue**: Full feature design (context, proposal, technical design, changes required, dependencies) with a checkbox list of implementation steps
+- **Standalone Issues**: For compiler warnings, tech debt, or small fixes that don't belong to an epic
+
+Do **not** create sub-issues. All steps live as checkboxes in the epic body to avoid notification spam and keep tracking in one place.
 
 ### Workflow
 
-1. Pick a sub-issue to work on
+1. Pick a step from an epic's checkbox list
 2. Create a feature branch: `git switch -c feature/step-description`
-3. Implement the changes described in the sub-issue
-4. Open a PR referencing the sub-issue: `Closes #<sub-issue-number>`
-5. After merge, the sub-issue closes automatically
-6. When all sub-issues are complete, close the parent issue
+3. Implement the changes described in the step
+4. Open a PR referencing the epic: `Part of #<epic-number>`
+5. After merge, check off the step in the epic body
+6. When all steps are checked, close the epic
 
 ## Key Architecture Notes
 

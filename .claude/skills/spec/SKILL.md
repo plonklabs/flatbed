@@ -1,7 +1,7 @@
 # /spec — Create a Feature Spec with GitHub Issues
 
 ## Description
-Guided workflow for designing a feature spec and creating GitHub Issues (parent + sub-issues) to track implementation.
+Guided workflow for designing a feature spec and creating a GitHub Issue (epic) to track implementation.
 
 ## Instructions
 
@@ -13,38 +13,53 @@ Walk the user through each section of the spec. Ask one section at a time, offer
 
 1. **Context** — What problem does this solve? What is the current state?
 2. **Proposal** — High-level solution overview (1-2 paragraphs)
-3. **Design** — Detailed technical design: types, traits, code flow, code examples where helpful
-4. **Changes Required** — List of files/modules affected with specific modifications
-5. **Dependencies** — External crates, services, assumptions, or prerequisites
+3. **User Flows** — Concrete scenarios showing how users interact with this feature end-to-end. Each flow should be a numbered sequence of steps from the user's perspective.
+4. **Acceptance Criteria** — Checkbox list of observable, testable outcomes that define "done". These should be verifiable without reading the code.
+5. **Design** — Detailed technical design: types, traits, code flow, code examples where helpful
+6. **Changes Required** — List of files/modules affected with specific modifications
+7. **Dependencies** — External crates, services, assumptions, or prerequisites
 
 For each section, present what you have so far and ask the user to confirm or revise before moving on.
 
-### Phase 2: Break Down into Sub-Issues
+### Phase 2: Break Down into Steps
 
 Once the spec is complete:
 
-1. Propose a set of implementation steps (sub-issues), where each step maps to exactly **one PR**
-2. Each sub-issue should have:
-   - A clear title: `Step N: <imperative description>`
-   - A body with: Goal, Changes (file-by-file), and Verification steps
-3. Ask the user to confirm, reorder, split, or merge steps
+1. Propose a set of implementation steps as a **checkbox list** inside the epic issue body
+2. Each step should map to roughly one PR and have a clear imperative description
+3. Include enough detail in each step that someone picking it up knows what to do
+4. Ask the user to confirm, reorder, split, or merge steps
+
+**Do NOT create sub-issues.** All steps live as checkboxes in the epic body. This avoids notification spam and keeps tracking in one place.
 
 ### Phase 3: Review & Create
 
-1. Present the **full parent issue** and **all sub-issues** for final review
-2. Only after the user explicitly approves, create them using `gh issue create`
-3. Create the parent issue first, then create each sub-issue referencing the parent
-4. Link sub-issues to the parent using GitHub's sub-issue feature or body references
+1. Present the **full epic issue** for final review
+2. Only after the user explicitly approves, create it using `gh issue create`
+3. Apply the `📦 epic` label and any relevant component labels
 
 ### Issue Format
 
-**Parent issue:**
+**Epic issue:**
 ```
 ## Context
 ...
 
 ## Proposal
 ...
+
+## User Flows
+
+**<Persona> does <action>:**
+1. Step from user's perspective
+2. What happens next
+3. Observable outcome
+
+## Acceptance Criteria
+
+- [ ] Testable outcome 1
+- [ ] Testable outcome 2
+- ...
 
 ## Design
 ...
@@ -55,29 +70,20 @@ Once the spec is complete:
 ## Dependencies
 ...
 
-## Implementation Steps
-- [ ] #<sub-issue-1>
-- [ ] #<sub-issue-2>
+## Steps
+- [ ] **Step 1: <imperative description>** — detail on what this covers, which files change, verification
+- [ ] **Step 2: <imperative description>** — ...
 - ...
 ```
 
-**Sub-issue:**
-```
-Parent: #<parent-issue-number>
+Each step checkbox should be self-contained: bold title, then a dash and enough context to work from. When a step is completed, check the box and reference the PR in a comment.
 
-## Goal
-What this step accomplishes.
-
-## Changes
-File-by-file modifications with code examples.
-
-## Verification
-Build, test, and validation commands.
-```
+User flows define the "what" from the user's perspective. Acceptance criteria define the "done" with testable outcomes. Steps define the "how" from the developer's perspective.
 
 ### Rules
 
 - Never create issues without explicit user approval
-- Keep sub-issues small enough for a single PR (ideally reviewable in one sitting)
-- Use imperative mood for issue titles ("Add X", "Refactor Y", not "Added X")
-- Reference the parent issue number in every sub-issue body
+- Use imperative mood for step titles ("Add X", "Refactor Y", not "Added X")
+- Keep steps small enough for a single PR (ideally reviewable in one sitting)
+- Do NOT create separate sub-issues — use checkbox lists in the epic body
+- One epic per feature area; fold related work into existing epics rather than creating new ones
