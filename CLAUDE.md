@@ -107,7 +107,7 @@ When testing operator features (like namespace RBAC):
 2. **Deploy test CRDs:**
    ```bash
    kubectl apply -f - <<EOF
-   apiVersion: plonk.com/v1
+   apiVersion: plonk.tools/v1
    kind: PlonkBox
    metadata:
      name: test-app
