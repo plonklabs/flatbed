@@ -58,17 +58,17 @@ cargo fmt --all
 
 **CRITICAL**: Always use the Plonk CLI for E2E testing. Never manually apply YAML files or use kubectl directly for installation/uninstallation.
 
-**Prerequisites**: E2E testing requires a Kind cluster with a local container registry. The registry is set up by `plonk install` (see epic #2 / #72 for registry support status).
+**Prerequisites**: E2E testing requires a k3d cluster. Use `make e2e-cluster-create` or `make e2e-full` for the complete workflow.
 
 ### Testing Workflow
 
-**1. Build and push operator image:**
+**1. Build and load operator image:**
 ```bash
-# Build without cache to ensure latest code
-docker build --no-cache -t localhost:5000/plonk-operator:test -f plonk/apps/operator/Dockerfile .
+# Build operator and import into k3d cluster
+make e2e-load-image
 
-# Push to local registry (started by plonk install)
-docker push localhost:5000/plonk-operator:test
+# For a clean rebuild (skips Docker layer cache):
+make e2e-load-image DOCKER_BUILD_FLAGS=--no-cache
 ```
 
 **2. Uninstall existing deployment:**
@@ -131,7 +131,7 @@ When testing operator features (like namespace RBAC):
 ### Common Issues
 
 **Image not updating:**
-- Use `--no-cache` when building and use a unique tag (e.g., timestamp)
+- Use a unique tag (e.g., timestamp) or rebuild with `DOCKER_BUILD_FLAGS=--no-cache`
 - Delete the pod to force recreation: `kubectl delete pod -l app=plonk-operator -n plonk`
 
 **Permission errors:**
