@@ -52,9 +52,9 @@ Checklist of verification steps. Mark completed items with `[x]`. Include:
    ```bash
    git push -u origin <branch-name>
    ```
-2. Create the PR:
+2. Create the PR as a **draft** (the user will mark it ready for review themselves):
    ```bash
-   gh pr create --title "<title>" --body "<body>"
+   gh pr create --draft --title "<title>" --body "<body>"
    ```
 
 **For existing PRs:**

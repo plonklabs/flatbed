@@ -22,10 +22,11 @@ Every task should follow this workflow:
 3. **Develop**: Implement changes, write tests, run lints
 4. **Test automation**: Create automated tests for your changes
 5. **Clean up**: Format code, remove debug statements, update comments
-6. **Update PR description**: Keep PR description current with all changes
-7. **Address PR comments**: See "Addressing PR Review Comments" section below
-8. **Keep PR updated**: Continue updating description as you make fixes
-9. **Finalize**: Merge PR
+6. **Create draft PR**: Always create PRs as drafts (`gh pr create --draft`). Only the user moves them to "ready for review" — never do this automatically.
+7. **Update PR description**: Keep PR description current with all changes
+8. **Address PR comments**: See "Addressing PR Review Comments" section below
+9. **Keep PR updated**: Continue updating description as you make fixes
+10. **Finalize**: User marks PR ready for review, then merges
 
 Track tasks, decisions, blockers, and progress in the GitHub Issue linked to your PR.
 
