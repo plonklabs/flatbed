@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**IMPORTANT**: Never claim something is "tracked" or "documented" without actually doing it in the same response. If you say "tracked on #X" or "documented in Y", the issue/file MUST be updated before you finish your response. Making false claims about tracking is unacceptable.
+
 ## Project Overview
 
 **Plonk** is a Kubernetes infrastructure management platform written in Rust that provides unified secret management and service mesh control within Kubernetes clusters. It is part of the larger Winkoz Group monorepo.
@@ -202,4 +204,15 @@ Do **not** create sub-issues. All steps live as checkboxes in the epic body to a
 6. When all steps are checked, close the epic
 
 ## Key Architecture Notes
+
+### Resource Construction Pattern
+
+The operator builds Kubernetes resources in two ways:
+
+- **Plonk-owned resources** (Deployment, Service, Secret): Built with typed k8s-openapi structs in worker modules (e.g., `build_deployment()` in `plonk_box_deploy.rs`)
+- **Third-party CRD resources** (ARC AutoscalingRunnerSet, future CloudNativePG, Redis): Built programmatically with `serde_json::json!()` via renderer modules in `services/renderers/`
+
+Renderers take a typed params struct and return `serde_json::Value`. Vendored Helm chart YAML in `manifests/` is a checked-in reference for version tracking -- NOT used at runtime.
+
+See `docs/architecture.md` for the full renderer pattern documentation.
 
