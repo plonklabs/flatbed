@@ -216,3 +216,25 @@ Renderers take a typed params struct and return `serde_json::Value`. Vendored He
 
 See `docs/architecture.md` for the full renderer pattern documentation.
 
+### Modifying CRD status fields
+
+Status patches use `kube::api::Patch::Merge` (JSON Merge Patch, RFC 7396). Two consequences trip people up:
+
+1. **`Option<T>` + `#[serde(skip_serializing_if = "Option::is_none")]` is a "preserve etcd value" signal, not a "clear" signal.** When the field is `None`, the merge-patch omits the key, so the API server keeps whatever is stored. `None` means "I have nothing to write; trust the existing value."
+2. **Array fields like `conditions: Vec<Condition>` are replaced wholesale.** RFC 7396 has no merge-key semantics for arrays, so any reconciler patching the array must own the entire contents.
+
+Before editing a status struct or its reconciler, audit the struct by wire shape:
+
+| Wire shape | Treatment | Goes into "should I patch?" comparison? |
+|---|---|---|
+| `T` written every reconcile | actively driven by this reconciler | **YES** — straight equality |
+| `Vec<T>` + `skip_if_empty` written every reconcile | actively driven; sole writer required | **YES** — straight equality |
+| `Option<T>` + `skip_if_none`, this reconciler writes `Some` on some branches and `None` on others | preserve via skip-serialize on the off branches | **CONDITIONALLY** — `proposed.is_some() && proposed != existing`. Comparing straight `!=` causes no-op patch loops on transitions (proposed `None` vs etcd `Some`); omitting entirely causes missed re-population if etcd ever drifts to `None` while we hold a `Some` |
+| `Option<T>` + `skip_if_none`, owned by a different worker | always pass `None`; never copy the snapshot value back | **NO** — copying back creates a TOCTOU window against the real owner |
+
+When extracting a "did anything change?" helper, name it for what it actually answers (e.g. `deploy_status_changed` compares only fields the deploy reconciler actively drives) and put the audit in the doc-comment.
+
+**Class-level fixes, not instance-level.** When a review flags a regression on field X with this shape, grep the module for siblings with the same shape and apply the fix uniformly — the bug almost always recurs on every field that matches the pattern. PR #200 shipped two rounds of the same regression on different fields because the first fix was instance-level. See `plonk/apps/operator/src/workers/deploy.rs` `proposed_status` / `deploy_status_changed` for the worked example.
+
+**Test transitions, not snapshots.** Status-machine bugs hide in transitions (Ready → invalid spec, Ready → Deployment-deleted, cert_issuer-write between deploy snapshots). Pin the comparisons across transitions, not just steady-state serialisation.
+
