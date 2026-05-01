@@ -65,14 +65,28 @@ cargo fmt --all
 
 ### Testing Workflow
 
-**1. Build and load operator image:**
+**1. Build and load images:**
+
+E2E needs two images in the k3d cluster: the operator and `rocket`, the
+Plonk-conformant test fixture used as the `PlonkBox` image (it serves
+`/healthz`, `/readyz`, `/metrics` on 8080 — `nginx` does not, and
+`PlonkBox` probes will hang on readiness if you point them at it).
+
 ```bash
-# Build operator and import into k3d cluster
-make e2e-load-image
+# Build + import both images (operator + rocket)
+make e2e-load-images
+
+# Or one at a time
+make e2e-load-image       # operator
+make e2e-load-rocket      # rocket
 
 # For a clean rebuild (skips Docker layer cache):
-make e2e-load-image DOCKER_BUILD_FLAGS=--no-cache
+make e2e-load-images DOCKER_BUILD_FLAGS=--no-cache
 ```
+
+See `plonk/apps/rocket/README.md` for rocket's env-var knobs
+(`ROCKET_READY_DELAY_SECS`, `ROCKET_METRICS`) — both are useful when
+writing transition-style e2e tests.
 
 **2. Uninstall existing deployment:**
 ```bash
@@ -116,7 +130,10 @@ When testing operator features (like namespace RBAC):
      name: test-app
      namespace: test-managed
    spec:
-     image: nginx:latest
+     # Use the rocket test fixture — it satisfies the platform contract
+     # (/healthz, /readyz, /metrics on admin_port). nginx and similar
+     # arbitrary images will hang on readiness.
+     image: rocket:e2e-test
      min_replicas: 1
      max_replicas: 2
    EOF
