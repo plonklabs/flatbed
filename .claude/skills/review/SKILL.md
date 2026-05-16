@@ -212,6 +212,18 @@ The substantive content the assistant works through in both modes. Each item is 
 
 11. **Forward-looking / speculative claims in comments.** Phrases like "future X tooling will...", "slice 6b's injector needs...". These rot. Describe the *property* (single source of truth, contract, invariant) without naming speculative consumers.
 
+12. **Rust API hygiene.** Idiomatic Rust hardening that lives outside CLAUDE.md but that the `claude[bot]` reviewer catches reliably. Self-review should walk these too:
+    - **`#[must_use]` on return values that drive control flow.** Versions, cursors, `RequestOutcome`-like enums, nonces — anything whose discarding leaves the caller without a signal it was supposed to consume. Without the attribute, `let _ = f();` is silent; with it, a missed binding fails the build.
+    - **Visibility scoping — lowest that compiles wins.** A struct with a private container (e.g. `WorldState::by_type` is private) doesn't need `pub` fields; `pub(super)` keeps the push loop's access while preventing a future accessor from leaking internals as crate-wide stable API.
+    - **Intra-doc link syntax.** `[`name`]` resolves against free functions / modules in scope; method links must be explicit: `[`Type::method`]` or `[`name`](Self::name)`. Bare method names render as plain text and rustdoc warns "unresolved link."
+    - **`#[tokio::test]` flavor.** The default is single-threaded — `tokio::join!` cooperates rather than parallelises. Tests claiming to exercise concurrency need `flavor = "multi_thread", worker_threads = N` AND `tokio::spawn` per future so they actually land on separate threads.
+    - **`JoinHandle` error handling.** `let _ = tokio::join!(a, b)` silently drops `JoinError`s, including panics. Use `let (res_a, res_b) = tokio::join!(a, b); res_a.expect(...); res_b.expect(...)` so a panicking spawned task surfaces as a test failure.
+    - **`HashMap::entry().or_default()` side effects.** Calling `.entry(k).or_default()` *before* an early return inserts a phantom entry. Functional accessors may still behave correctly, but `contains_key` is no longer a reliable proxy for "subscribed." Use `get_mut` on early-return paths; reserve `entry().or_default()` for create-on-write semantics.
+
+13. **Symmetric-branch sweep.** When fixing one match arm or one direction of a paired API, audit the others for the same behaviour. The xDS NACK path not updating `subscribed_names` while the ACK path did was a real protocol correctness bug; `remove_cluster_does_not_cascade_to_endpoints` needed the EDS-side mirror. Always ask "if branch X does this, should branch Y also?"
+
+14. **Re-read the diff after applying any fix.** AI-assisted patches commonly introduce drift adjacent to the fix — a doc-comment edit that adds a forward-looking phrase while removing one, an unused import left after a rewrite, a comment field name that drifted from the new code, a `let _ = ` site that the new `#[must_use]` exposes. `git diff` (not just the new file contents) before push, walking the *changed* lines with the checklist in mind, catches them.
+
 ## Rules
 
 - **Never post to GitHub in draft mode.** Findings stay in the chat. The developer reads them, acts on them locally, and only triggers the actual bot review by flipping the PR to ready.
@@ -221,4 +233,5 @@ The substantive content the assistant works through in both modes. Each item is 
 - **For changes touching the operator runtime, run `make e2e-full`** before declaring done. CLAUDE.md is also non-negotiable on this.
 - **Never auto-merge or auto-mark-ready** even if every comment is addressed. The user does that.
 - **Never skip a comment without explicit user direction.** A comment the assistant disagrees with should be declined with reasoning (Phase 2e), not silently dropped. Phase 2c is the dedicated triage step where the user picks fix vs decline per comment.
+- **Re-read the `git diff` after every fix** before pushing, walking the changed lines through the checklist again. AI-assisted patches reliably introduce adjacent drift (an "if a future…" phrase added while removing another, a stale import, a comment field name that drifted) — one pass of `git diff` catches them and saves a re-review round.
 - **No AI references** in any commit message, PR comment, or reply. Same project rule as `/pr`.
