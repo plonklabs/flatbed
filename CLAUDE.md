@@ -177,6 +177,57 @@ Key guidelines:
 
 See `docs/style.md` for complete guidelines with examples.
 
+### Comment hygiene
+
+Comments rot faster than code. Two failure modes recur often enough that
+the bot reviewer flags them on most PRs — head them off at the source.
+
+**No forward-looking or speculative phrasing.** Avoid wording like
+"future X tooling will…", "(none today — but added defensively so a
+future Y…)", "when the cert worker grows a `CertReady` condition", "the
+new NATS path", "the pre-cutover overlap". These claims become wrong the
+moment X gets renamed, Y never ships, "new" becomes the default, or the
+cutover completes. Describe the **property** (single source of truth,
+contract, invariant) without naming speculative consumers or temporal
+state:
+
+```rust
+// Bad — names a worker that may never write this and "future" rots
+// once a foreign writer arrives (or never does).
+/// Filters to deploy-owned condition types so foreign entries
+/// (none today — but added defensively so a future foreign writer
+/// never gets re-asserted under this manager).
+
+// Good — describes the invariant; survives whether or not foreign
+// writers ever appear.
+/// Filters to deploy-owned condition types so anything that ever shares
+/// the merged conditions list is never re-asserted under this manager.
+```
+
+**No slice/PR/issue references in source comments.** Phrases like
+"PR #200 spelled out…", "the PR description spells out…", "slice 6b's
+injector needs…", or bare `#123` rot the moment the PR/issue is closed.
+PR descriptions live in PR history; epic context lives in issue bodies;
+neither should be the load-bearing explanation for a line of code.
+Inline the actual rationale instead:
+
+```rust
+// Bad
+/// A refactor that accidentally aligns the two strings re-introduces
+/// the clobbering regression the PR description spells out.
+
+// Good
+/// A refactor that accidentally aligns the two strings re-introduces
+/// silent cross-manager clobbering on `/status` — the aggregator's
+/// next Apply would un-claim the scalars this manager owns, and vice
+/// versa, on every reconcile.
+```
+
+Both rules apply equally to module docs, function docs, inline `//`
+comments, test comments, and PR-anchored TODOs. When self-reviewing,
+grep the diff for `future `, `will `, `once a`, `PR #\d+`, `issue #\d+`,
+and bare `#\d+` inside `///` or `//` lines before pushing.
+
 ## Flatty Framework
 
 The project uses the internal `flatty` framework for HTTP services with FlatBuffers support.
