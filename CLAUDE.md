@@ -67,18 +67,22 @@ cargo fmt --all
 
 **1. Build and load images:**
 
-E2E needs two images in the k3d cluster: the operator and `rocket`, the
-Plonk-conformant test fixture used as the `PlonkBox` image (it serves
-`/healthz`, `/readyz`, `/metrics` on 8080 — `nginx` does not, and
-`PlonkBox` probes will hang on readiness if you point them at it).
+E2E needs four images in the k3d cluster:
+
+- **operator** — Plonk's control plane.
+- **rocket** — the Plonk-conformant test fixture used as the `PlonkBox` image; serves `/healthz`, `/readyz`, `/metrics` on 8080 (`nginx` does not, and `PlonkBox` probes hang on readiness if you point them at it).
+- **mesh-rocket** — active-caller fixture for cross-PlonkBox tests.
+- **plonk-proxy** — Plonk's sidecar Envoy image (`FROM envoyproxy/envoy:v1.32.5` + `curl` for the kubelet exec readiness probe).
 
 ```bash
-# Build + import both images (operator + rocket)
+# Build + import all four images
 make e2e-load-images
 
 # Or one at a time
-make e2e-load-image       # operator
-make e2e-load-rocket      # rocket
+make e2e-load-image          # operator
+make e2e-load-rocket         # rocket
+make e2e-load-mesh-rocket    # mesh-rocket
+make e2e-load-proxy          # plonk-proxy
 
 # For a clean rebuild (skips Docker layer cache):
 make e2e-load-images DOCKER_BUILD_FLAGS=--no-cache
