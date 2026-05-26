@@ -2,25 +2,33 @@
 
 ## Description
 
-Two-mode workflow keyed off PR state:
+Two-mode workflow keyed off PR state, with an opt-in autonomous loop:
 
 - **Draft PR** → the assistant performs a local self-review against the [Quality checklist](#quality-checklist) and prints findings in the chat. Nothing is posted to GitHub. The point is to surface issues *before* flipping to ready, so the developer can fix them before the `claude[bot]` reviewer (configured in `.github/workflows/claude-review.yml`) sees them.
-- **Ready-for-review PR** → the assistant waits for the bot's review run for the current HEAD commit to finish, then fetches its inline + top-level comments and runs a holistic fix loop. The fix loop reads each affected file in full (not just diff hunks) and applies the [Quality checklist](#quality-checklist) to catch siblings of every flagged issue.
+- **Ready-for-review PR** → the assistant waits for the bot's review run for the current HEAD commit to finish, then fetches its inline + top-level comments and runs a holistic fix loop. The fix loop reads each affected file in full (not just diff hunks) and applies the [Quality checklist](#quality-checklist) to catch siblings of every flagged issue. By default, Phase 2c asks the user to fix/decline each comment.
+- **Autonomous mode** (`/review <pr-number> --auto`) → same as ready-for-review mode but skips Phase 2c (every bot finding is treated as fix-bound) and chains rounds: after Phase 2f posts the top-level summary, re-arms the wait loop on the new HEAD and goes back to Phase 2a. Loops until the bot returns a green review, the workflow run fails or times out, or the user interrupts. **Never marks the PR ready, never merges.**
 
 ## Instructions
 
-When the user runs `/review` or `/review <pr-number>`, follow this workflow:
+When the user runs `/review`, `/review <pr-number>`, or `/review <pr-number> --auto`, follow this workflow:
 
-### Phase 0: Detect PR state
+### Phase 0: Detect PR state and parse flags
 
 ```bash
 PR_NUMBER=${1:-$(gh pr view --json number --jq '.number')}
+AUTONOMOUS=false
+ROUND=1   # incremented at the end of each pass (Phase 2g), after posting the round summary
+for arg in "$@"; do
+    case "$arg" in
+        --auto|--autonomous) AUTONOMOUS=true ;;
+    esac
+done
 gh pr view "$PR_NUMBER" --json isDraft,state,headRefOid,headRefName
 ```
 
-- If `isDraft == true` → **Phase 1** (draft mode).
-- If `isDraft == false && state == "OPEN"` → **Phase 2** (ready mode).
-- If `state` is `MERGED` or `CLOSED`, ask the user whether they want to review historical comments anyway, then go to Phase 2 (skipping the wait sub-phase).
+- If `isDraft == true` → **Phase 1** (draft mode). `--auto` is a no-op in draft mode (the bot doesn't run on drafts); proceed with Phase 1 as normal and tell the user that `--auto` takes effect once they flip to ready.
+- If `isDraft == false && state == "OPEN"` → **Phase 2** (ready mode). If `AUTONOMOUS=true`, Phase 2c is skipped and Phase 2g re-arms the loop after each round.
+- If `state` is `MERGED` or `CLOSED`, ask the user whether they want to review historical comments anyway, then go to Phase 2 (skipping the wait sub-phase). `--auto` has no effect on merged/closed PRs since there's nothing to re-trigger.
 
 ### Phase 1: Draft mode — local self-review
 
@@ -106,6 +114,8 @@ done
 
 If the loop breaks for any reason other than `completed:success`, ask the user how to proceed — don't silently continue as if the bot finished its review.
 
+**Use the `Monitor` tool instead of inline `sleep` polling when one is available.** The polling shape above is the reference behaviour; in practice the harness's `Monitor` tool (with a script that emits one stdout line per status change and exits on a terminal state) gives a single notification when the run completes without keeping the conversation paused. Either form is fine; the Monitor form is preferred in autonomous mode because it lets the assistant keep working between rounds.
+
 #### Phase 2b: Fetch comments
 
 GitHub Apps appear in the REST API with a `<name>[bot]` login, so the filter is `claude[bot]` — not the bare app name.
@@ -133,9 +143,11 @@ If there are zero bot comments, report "no bot comments to address" and stop.
 
 #### Phase 2c: Triage with the user
 
-Before applying any fix, present the bot's comments to the user grouped by file, with a one-line summary of each. For each comment (or batch of related comments on the same file), ask the user whether to **fix** or **decline**. Don't proceed to Phase 2d until the user has chosen for every comment.
+**If `AUTONOMOUS=true`, skip this phase entirely.** Invocation with `--auto` is the explicit user direction to treat every bot finding as fix-bound — proceed straight to Phase 2d.
 
-This step exists because the Rules below require explicit user direction before fixing or skipping a comment. Skipping this step and going straight to fixes denies the user that decision point.
+Otherwise: before applying any fix, present the bot's comments to the user grouped by file, with a one-line summary of each. For each comment (or batch of related comments on the same file), ask the user whether to **fix** or **decline**. Don't proceed to Phase 2d until the user has chosen for every comment.
+
+This step exists because the Rules below require explicit user direction before fixing or skipping a comment. Skipping this step (other than via `--auto`) and going straight to fixes denies the user that decision point.
 
 #### Phase 2d: Apply fixes holistically
 
@@ -186,6 +198,39 @@ The summary should cover:
 - Self-flagged issues fixed in the same pass (the holistic delta)
 - Comments declined (with reasoning)
 
+In autonomous mode, title each round's summary `## Round N — addressed` (track `N` across rounds in the loop state) so the user can follow progress in the PR conversation tab without scrolling.
+
+#### Phase 2g: Autonomous loop (opt-in, `--auto` only)
+
+If `AUTONOMOUS=true`, the push at the end of Phase 2d re-triggers the bot workflow on the new HEAD. After Phase 2f posts the round's top-level summary, loop back to Phase 2a with the new HEAD SHA:
+
+```bash
+NEW_HEAD=$(git rev-parse HEAD)
+ROUND=$((ROUND + 1))
+# Re-arm Monitor on NEW_HEAD using the same status-poll script as Phase 2a.
+# Each round produces one stdout event on terminal status; the conversation
+# stays free to do other work between rounds.
+```
+
+**Exit the loop** when any of the following hold. On each exit, post a final close-out summary that names the exit reason and the round count.
+
+1. **Green review.** The latest bot run returned zero new inline comments AND the top-level summary doesn't claim a blocker. Positive signals: "Ready to merge", "No blocking concerns", "no issues found", bare "clean" / "LGTM" (not followed by a qualifier). Negative signals: a new inline comment, "Blocking:", a numbered fix list, "must change", "regression", "consider", "optional", "minor nit". **Qualifier rule:** any positive signal followed by "but", "though", "however", "except", "consider", or a suggestion is a negative signal — the qualifier moves the verdict from green to ambiguous, and ambiguous reverts to another round per the Rules section. "LGTM but consider X" / "clean overall but Y" are negatives, not positives, so substring matching on the bare phrase must not exit. When in doubt, ask the user before exiting — false-positive green exit silently leaves a finding unaddressed; false-positive red just runs another round.
+2. **Bot run failed.** `completed:failure`, `completed:cancelled`, `completed:timed_out`, or any non-success terminal status. Surface to the user; the loop exits. Don't auto-retry the workflow.
+3. **Monitor timeout.** 30 minutes elapsed without the bot run reaching a terminal state. Surface and exit.
+4. **User interrupts.** Any out-of-band user message during the loop. Pause the loop, address the user, and ask whether to resume.
+5. **Recurrence.** If the same file region (file path + 5-line window around the anchor line) is flagged in two consecutive rounds despite an applied fix, break the loop. The autonomous mode's "every finding is fix-bound" stance assumes the assistant can satisfy the bot in finite rounds; a recurrence means either the fix misreads the finding or the bot's expectation is unattainable. Post a summary of what was tried on the recurring region and ask the user whether to decline the finding (with reasoning), take a different approach, or accept the current state. The `cargo test` / clippy guards catch fixes that break CI but not fixes that pass CI while still mismatching the bot's intent — recurrence is the complementary signal for that case.
+
+**Diff-vs-main drift check at the top of every round.** Before fetching new comments, run `git fetch origin main && git log --oneline HEAD..origin/main` — if main has advanced, rebase the branch onto current main, run `git push --force-with-lease`, then `HEAD_SHA=$(git rev-parse HEAD)` and **re-enter Phase 2a** (not Phase 2b) — the push re-triggers the bot workflow on the new HEAD and Phase 2b must not run until that new run completes, or it would fetch comments produced against the pre-rebase HEAD. A long-running autonomous loop is the exact scenario where a stale base silently reverts merges that landed on main mid-loop (per [[feedback_rebase_against_latest_main]]).
+
+**If the rebase produces conflicts, break the loop immediately.** Do not push. Surface the conflict to the user (show `git status` and the conflicting file list) and ask whether to (a) abort the rebase (`git rebase --abort`) and continue from the pre-rebase HEAD, (b) resolve conflicts manually before resuming, or (c) abandon the round. Same close-out flow as exit condition 2 (bot run failed): automation hit a hard stop, surface, don't auto-retry.
+
+**Constraints that hold across the loop:**
+
+- **Never auto-mark-ready, never auto-merge.** This rule survives autonomous mode unchanged. The loop fixes findings; the user decides when to merge.
+- **Stop on test or clippy failure.** Per Phase 2d step 5 — a failed verification breaks the loop. Surface the failure to the user instead of pushing a broken SHA into the next round.
+- **Skip Phase 2c each round.** No per-comment triage; every bot finding is fix-bound.
+- **Class-level sweep applies every round.** The bot's findings narrow over time but the diff grows; rerun the full Quality-checklist sweep across every changed file each round, not just the file the new comments anchor to.
+
 ## Quality checklist
 
 The substantive content the assistant works through in both modes. Each item is a category of issue that's bitten this codebase before — see `feedback_*.md` memories for the recurring patterns.
@@ -231,7 +276,8 @@ The substantive content the assistant works through in both modes. Each item is 
 - **One comprehensive commit per file or logical unit** — not one commit per inline comment. The point of the holistic read is that fixes group naturally; the commit should reflect that grouping.
 - **Run `cargo fmt`, `cargo clippy`, and the relevant `cargo test`** before pushing. CLAUDE.md is non-negotiable on these.
 - **For changes touching the operator runtime, run `make e2e-full`** before declaring done. CLAUDE.md is also non-negotiable on this.
-- **Never auto-merge or auto-mark-ready** even if every comment is addressed. The user does that.
-- **Never skip a comment without explicit user direction.** A comment the assistant disagrees with should be declined with reasoning (Phase 2e), not silently dropped. Phase 2c is the dedicated triage step where the user picks fix vs decline per comment.
+- **Never auto-merge or auto-mark-ready** even if every comment is addressed, even in `--auto` mode. The user does that.
+- **Never skip a comment without explicit user direction.** A comment the assistant disagrees with should be declined with reasoning (Phase 2e), not silently dropped. Phase 2c is the dedicated triage step where the user picks fix vs decline per comment. **Invocation with `--auto` is itself the explicit user direction** to treat every bot finding as fix-bound — that mode skips Phase 2c by design, but the assistant still posts a reply (with the SHA) on every addressed thread, so nothing is silently dropped from the bot's perspective.
+- **Autonomous loop: treat ambiguous as red; exit only on clearly green.** If the latest round's verdict is ambiguous ("LGTM but consider X", "minor nit", "optional"), apply the suggestion and run another round rather than declaring the loop done. The loop ends on a clearly green review or on user direction.
 - **Re-read the `git diff` after every fix** before pushing, walking the changed lines through the checklist again. AI-assisted patches reliably introduce adjacent drift (an "if a future…" phrase added while removing another, a stale import, a comment field name that drifted) — one pass of `git diff` catches them and saves a re-review round.
 - **No AI references** in any commit message, PR comment, or reply. Same project rule as `/pr`.
