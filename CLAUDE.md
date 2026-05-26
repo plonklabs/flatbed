@@ -59,50 +59,113 @@ cargo fmt --all
 
 ## End-to-End Testing
 
+**CRITICAL — production cluster guardrail.** The `plonk-production`
+kubectl context (and any other non-`k3d-*` context) points at a real
+production Kubernetes cluster. **It must never be the target of any
+e2e test, `plonk install`, `plonk uninstall`, or destructive `kubectl`
+command run from this repo.** Trusting `KUBECONFIG` isolation alone is
+not sufficient — env-var plumbing has silently fallen back to
+`~/.kube/config` before and trashed production.
+
+**Invariant:** every destructive Make target — anything that calls
+`plonk install`, `plonk uninstall`, `kubectl delete`, `kubectl rollout
+restart`, or any other cluster-mutating command on an *existing*
+cluster — MUST call `scripts/assert-kubectl-context.sh
+<expected-context>` before that destructive operation. A target that
+must first create its own k3d cluster (e.g. `e2e-full`) may run the
+creation step before the assertion: a new k3d cluster with a
+deterministic name cannot accidentally land on an existing production
+cluster, so the creation itself needs no guard. Targets that create
+their own cluster also need a target-scoped `export KUBECONFIG =
+<slot-local file>` so the new context is written to an isolated
+file, not `~/.kube/config`.
+
 **CRITICAL**: Always use the Plonk CLI for E2E testing. Never manually apply YAML files or use kubectl directly for installation/uninstallation.
 
-**Prerequisites**: E2E testing requires a k3d cluster. Use `make e2e-cluster-create` or `make e2e-full` for the complete workflow.
+E2E has two entry points, depending on whether you want a hermetic
+throwaway cluster or to reuse your worktree's persistent dev cluster:
 
-### Testing Workflow
+| Target | Cluster | When |
+|---|---|---|
+| `make e2e-worktree` | `plonk-$PLONK_SLOT` (your worktree's dev cluster) | Day-to-day iteration. Tears Tilt and Plonk down first, reinstalls fresh, leaves the cluster up afterwards. |
+| `make e2e-full` | `plonk-e2e` (created + destroyed) | Hermetic one-shot. What CI runs. Use locally when you want a clean-room repro that's guaranteed not to be contaminated by prior dev state. |
 
-**1. Build and load images:**
+Both produce identical test runs — the tests are kubeconfig-agnostic
+and just hit whatever context is active.
 
-E2E needs four images in the k3d cluster:
+### Worktree workflow (daily driver)
+
+```bash
+# From a worktree (e.g. worktrees/plonk1):
+make e2e-worktree
+```
+
+That target chains: kill any running `tilt up` for this slot, `tilt
+down`, `plonk uninstall`, reap leftover `e2e-*` namespaces from prior
+runs, build + import all four fixture images at the slot tag
+`:e2e-test-plonk$N`, `plonk install` with those images, wait for
+readiness, then `cargo test -p plonk_operator --test e2e --
+--ignored`. The cluster stays running so the next invocation skips
+the create step.
+
+**Concurrent worktrees.** Two worktrees can run `make e2e-worktree`
+simultaneously — none of the shared global state collides:
+
+- The k3d cluster name is slot-aware (`plonk-$PLONK_SLOT`).
+- The Docker image tag is slot-aware (`e2e-test-plonk$PLONK_SLOT`).
+- The kubeconfig is written to a slot-local file
+  (`/tmp/plonk-kubeconfig-plonk$PLONK_SLOT.yaml`) and exported as
+  `KUBECONFIG` for every subprocess in the recipe; `~/.kube/config`
+  is neither read nor written. (Interactive `make dev` keeps its
+  existing UX of merging into the global file.)
+
+If you need to re-run after a code change in the operator, just
+re-run `make e2e-worktree` — the image build is layer-cached so
+operator-only changes take seconds.
+
+### Hermetic workflow
+
+```bash
+make e2e-full
+```
+
+That target creates `plonk-e2e` (separate from any worktree dev
+cluster), runs the whole flow, and deletes the cluster on the way out.
+Mirrors what `.github/workflows/e2e.yml` does in CI.
+
+### What the fixtures are
+
+E2E needs four images in whichever cluster is in play:
 
 - **operator** — Plonk's control plane.
 - **rocket** — the Plonk-conformant test fixture used as the `PlonkBox` image; serves `/healthz`, `/readyz`, `/metrics` on 8080 (`nginx` does not, and `PlonkBox` probes hang on readiness if you point them at it).
 - **mesh-rocket** — active-caller fixture for cross-PlonkBox tests.
 - **plonk-proxy** — Plonk's sidecar Envoy image (`FROM envoyproxy/envoy:v1.32.5` + `curl` for the kubelet exec readiness probe).
 
+To target a specific cluster manually (instead of via the
+`e2e-worktree` / `e2e-full` chains):
+
 ```bash
-# Build + import all four images
+# Into the worktree's dev cluster (auto-detected from $PWD):
+make dev-load-images
+make dev-load-image          # operator only
+make dev-load-rocket         # rocket
+make dev-load-mesh-rocket    # mesh-rocket
+make dev-load-proxy          # plonk-proxy
+
+# Into the hermetic plonk-e2e cluster:
 make e2e-load-images
 
-# Or one at a time
-make e2e-load-image          # operator
-make e2e-load-rocket         # rocket
-make e2e-load-mesh-rocket    # mesh-rocket
-make e2e-load-proxy          # plonk-proxy
-
-# For a clean rebuild (skips Docker layer cache):
-make e2e-load-images DOCKER_BUILD_FLAGS=--no-cache
+# Clean rebuild (skip Docker layer cache):
+make dev-load-images DOCKER_BUILD_FLAGS=--no-cache
 ```
 
 See `plonk/apps/rocket/README.md` for rocket's env-var knobs
 (`ROCKET_READY_DELAY_SECS`, `ROCKET_METRICS`) — both are useful when
 writing transition-style e2e tests.
 
-**2. Uninstall existing deployment:**
-```bash
-cargo run --release -p plonk_cli -- uninstall --yes --namespace plonk
-```
+### Verifying a deployment by hand
 
-**3. Install using CLI:**
-```bash
-cargo run --release -p plonk_cli -- install --yes --namespace plonk --operator-image localhost:5000/plonk-operator:test
-```
-
-**4. Verify deployment:**
 ```bash
 # Check pods
 kubectl get pods -n plonk
@@ -136,7 +199,10 @@ When testing operator features (like namespace RBAC):
    spec:
      # Use the rocket test fixture — it satisfies the platform contract
      # (/healthz, /readyz, /metrics on admin_port). nginx and similar
-     # arbitrary images will hang on readiness.
+     # arbitrary images will hang on readiness. The tag below is the
+     # default (`e2e-test`, loaded by `make e2e-full`). Under
+     # `make e2e-worktree` the tag is `e2e-test-plonk$N` — substitute
+     # the slot-aware tag if `rocket:e2e-test` is not in your cluster.
      image: rocket:e2e-test
      min_replicas: 1
      max_replicas: 2
