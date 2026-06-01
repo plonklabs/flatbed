@@ -376,3 +376,162 @@ When extracting a "did anything change?" helper, name it for what it actually an
 
 **Test transitions, not snapshots.** Status-machine bugs hide in transitions (Ready → invalid spec, Ready → Deployment-deleted, cert_issuer-write between deploy snapshots). Pin the comparisons across transitions, not just steady-state serialisation.
 
+### Reconciler/worker split (conditions-based)
+
+The operator's target shape for every CR is a **reconciler that decides
++ observes** and a **worker that does one simple, uninterrupted
+action and acks**. The first complete realisation of this pattern is
+PlonkNats — see [`docs/plonk_nats.md`](docs/plonk_nats.md) for the
+worked example with mermaid diagrams. Match its structure when
+introducing a new reconciler/worker pair, and migrate existing CRs
+toward it (tracked in #367).
+
+**Reconciler responsibilities:**
+
+- Read CR + downstream resources (StatefulSet / Deployment / PVC /
+  Service / Job).
+- Decide each owned condition's state for the current generation.
+- SSA-apply conditions with the reconciler's `fieldManager`.
+- Publish a worker task when `Dispatched.observedGeneration` is stale
+  vs `metadata.generation` (use the `dispatched_for_generation`
+  helper or its equivalent).
+- Requeue: short interval (e.g. 15s) while installing, long interval
+  (e.g. 60s) when Ready.
+
+**Worker responsibilities:**
+
+- Validate the CR UID (refuses to act on a stale enqueued message
+  whose CR has been recreated).
+- Render and SSA-apply its owned resources.
+- SSA-apply a single cursor condition (e.g. `ResourcesApplied=True`)
+  with the worker's own `fieldManager`.
+- ACK.
+
+**What the worker MUST NOT do:**
+
+- Block on `wait_for_*_ready`. Readiness is the reconciler's job;
+  blocking in the worker conflates "did one action" with "downstream
+  rolled out" and makes the system brittle to NATS redelivery.
+- Patch `Ready` or any aggregate condition. Workers own only their
+  cursor; the aggregate is the reconciler's role.
+- Read its own SSA-applied resource back to verify. The cursor
+  condition write IS the signal — the reconciler's kube watch on the
+  CR fires when that condition lands and picks up from there.
+
+**Multiple actions per reconciler.** A reconciler can drive more
+than one worker action. PlonkNats is the canonical example: the
+same reconciler picks between **InstallNats** (on the create / spec-
+change path) and **UninstallNats** (on the deletion / finalizer-
+`cleanup` path), each on its own JetStream subject, each handled by
+a distinct worker with a distinct `fieldManager`. Every action
+follows the same cursor pattern — reconciler publishes, worker does
+ONE simple thing, worker SSA-applies its cursor condition, watch
+fires, reconciler advances. See [`docs/plonk_nats.md`](docs/plonk_nats.md)
+"Teardown flow" for the worked sequence diagram. Conventions:
+
+- **One subject per action.** `plonk.tasks.<resource>.<verb>` (e.g.
+  `plonk.tasks.nats.install`, `plonk.tasks.nats.uninstall`). Each
+  subject corresponds to one worker module, one FlatBuffer message
+  type, and one cursor condition.
+- **One fieldManager per worker.** Distinct constants in
+  `plonk_crds::crds` — `NATS_INSTALLER_FIELD_MANAGER`,
+  `NATS_UNINSTALLER_FIELD_MANAGER`, etc. The pinned-distinct test
+  (`nats_field_manager_constants_are_distinct`) prevents accidental
+  aliasing that would silently collapse two workers' ownership
+  into one.
+- **One cursor condition per worker.** Each worker writes exactly
+  one cursor condition whose `type` is unique to that action
+  (install → `ResourcesApplied`, uninstall → `ResourcesReleased`).
+  Uniqueness is what lets the SSA list-map merge (which uses `type`
+  as the merge key) keep per-worker entries independent — two
+  workers sharing a `type` would clobber each other's cursor on
+  every Apply.
+- **Pure decider per branch.** The reconciler's "which action
+  next?" logic lives in a pure helper that takes the prior
+  conditions and returns an enum of possible next steps —
+  `dispatched_for_generation` for the install branch,
+  `next_cleanup_action` for the teardown branch. Pure helpers are
+  unit-testable without spinning up a kube client / NATS connection.
+- **No worker fans out to another worker.** Workers ack and stop.
+  When the next action needs to fire, the cursor condition the
+  worker just wrote re-fires the reconciler's watch, and the
+  reconciler decides + publishes the next task. This keeps NATS
+  redelivery semantics consistent — every action is delivered to
+  exactly one worker, never chained mid-flight.
+
+When adding a third action (e.g. backup, certificate rotation,
+seed-data load), copy the install/uninstall shape: new subject,
+new schema, new worker file, new fieldManager constant, new cursor
+condition, new pure decider branch. The reconciler stays the
+single source of "what's next given the CR's current state."
+
+**Multi-writer SSA on conditions.** Plonk has **two coexisting
+patterns** for writing `.status.conditions[]`. Which one a CR uses
+depends on when it was introduced:
+
+- **Aggregator path** (PlonkBox, PlonkNamespace): workers publish
+  state-change events to a NATS JetStream stream (`PLONK_STATUS`);
+  one leader-gated `plonk-status-aggregator` worker holds the truth
+  and is the sole writer of the conditions array. Documented in
+  [`docs/architecture.md`](docs/architecture.md) under
+  "Status Writes and Field-Manager Hygiene". New work on these CRs
+  must keep using this path — direct condition writes from any
+  fieldManager other than `plonk-status-aggregator` would un-claim
+  the aggregator's entries on every reconcile.
+- **Direct multi-writer SSA** (PlonkNats and every conditions-based
+  CR introduced afterwards): each writer holds a distinct
+  `fieldManager` and Applies its own cursor condition directly to
+  `.status.conditions[]`. The SSA list-map merge keys on `type`,
+  so per-worker entries stay independent without an aggregator
+  collapse. This section's rules below apply to **this** pattern.
+
+The decision rule for a new CR: if the new CR introduces new
+condition types that don't exist on PlonkBox / PlonkNamespace and
+the reconciler/worker split here applies, use the direct multi-
+writer SSA pattern. Adding a new condition type to PlonkBox or
+PlonkNamespace stays on the aggregator path.
+
+Rules for the direct multi-writer pattern — each writer must:
+
+- Use a distinct `fieldManager` (e.g. `plonk-nats-reconciler` vs
+  `plonk-nats-installer`). The fieldManager is the field-ownership
+  key; two writers sharing one fieldManager will clobber each other.
+- Apply with `.force()` so transient ownership conflicts (race during
+  a coordinated migration) don't fail the patch.
+- Use the `conditions_schema` helper in `plonk_crds::crds` to attach
+  the `x-kubernetes-list-type=map` + `list-map-keys=[type]` markers
+  — without these markers the apiserver treats the array as
+  monolithic and the multi-writer story silently breaks.
+- Sort by `type` before comparing in tests so the "did anything
+  change?" comparison is order-insensitive.
+
+**No `phase` enum on new CRs.** Use the aggregate `Ready` condition.
+The `phase` enum is preserved on PlonkRegistry / PlonkStorage /
+PlonkRunnerSet / PlonkGateway for backwards compatibility. New CRs
+ship in the target shape directly.
+
+**Reason vocabulary as pinned constants.** Every `Reason` string a
+condition writer can produce is a `pub const` in `plonk_crds::crds`
+(e.g. `NATS_REASON_TIER_NOT_FOUND`). Producer (reconciler / worker)
+and consumer (CLI's install wait, dashboards, alerts) reference the
+constants by name — never inline literals — and a single test pins
+the constant list as stable camel-case so drift is caught at compile
+time.
+
+**Bootstrap chicken-and-egg.** When a CR's reconciler depends on a
+resource the CR itself materialises (NATS is the canonical case:
+operator's startup hard-fails on NATS unreachable, so the operator
+can't be the only path to bringing NATS up), the CLI bootstraps the
+shape with `Create` (POST), producing the **byte-identical
+resources** the operator's worker would render via SSA-apply. The
+operator's first reconcile is then a no-op SSA — every field the
+operator writes already matches what etcd holds, so `.force()`
+transfers ownership without diff and the kube-controller computes
+the same pod-template hash, leaving the running pods undisturbed.
+The hard property is shape parity, not fieldManager parity:
+diverging on a label value, a wrapper-script byte, a port literal,
+or any other pod-template input changes the hash and triggers a
+rolling restart of the operator's own broker during its own
+startup. Thread every input through both sides (StorageClass,
+mount path, labels, wrapper script, env vars).
+
