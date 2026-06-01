@@ -506,9 +506,12 @@ Rules for the direct multi-writer pattern — each writer must:
   change?" comparison is order-insensitive.
 
 **No `phase` enum on new CRs.** Use the aggregate `Ready` condition.
-The `phase` enum is preserved on PlonkRegistry / PlonkStorage /
-PlonkRunnerSet / PlonkGateway for backwards compatibility. New CRs
-ship in the target shape directly.
+The `phase` enum survives on PlonkRunnerSet and PlonkNamespace as a
+not-yet-migrated legacy field — both are tracked in the operator
+refactor epic #367. Every other CR (PlonkBox, PlonkRegistry,
+PlonkStorage, PlonkNats, PlonkGateway, PlonkRoute, PlonkDomain)
+already ships conditions-only. New CRs ship in the target shape
+directly.
 
 **Reason vocabulary as pinned constants.** Every `Reason` string a
 condition writer can produce is a `pub const` in `plonk_crds::crds`
