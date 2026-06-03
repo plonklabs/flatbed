@@ -4,6 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **IMPORTANT**: Never claim something is "tracked" or "documented" without actually doing it in the same response. If you say "tracked on #X" or "documented in Y", the issue/file MUST be updated before you finish your response. Making false claims about tracking is unacceptable.
 
+## Minimalism + pragmatism
+
+> *"Lo que no sirve que no estorbe"* — what doesn't serve a purpose shouldn't be in the way.
+
+Keep the codebase (code, docs, scripts, configs, tests, CI surface) as **minimal as possible while being as pragmatic as possible**. The two halves are equally weighted: aggressive deletion of dead weight, but not at the cost of breaking real workflows, losing genuine context, or shipping cute-but-fragile abstractions.
+
+Apply to:
+
+- **Code.** Dead modules, unused helpers, dead `_prior` params, compatibility shims for migrations that already completed, "future-proofing" abstractions for hypothetical needs — delete. Three similar lines beats a premature trait. (See the "Doing tasks" rules: don't design for hypothetical future requirements.)
+- **Docs.** Historical / superseded docs rot fastest of all (every line is a claim about code that has since moved). If a doc is labeled "historical" or "legacy" or "preserved for context," ask whether `git log` doesn't already provide that — if yes, delete the doc and strip its inbound links. The decision rule: would a new contributor reading the repo today benefit from this doc, or would they be confused by it? Confusion → delete.
+- **Comments.** Already covered under "Comment hygiene" in `docs/style.md` and inline in this file — no forward-looking phrasing, no PR/issue/slice refs, no narrating what the code already says.
+- **Tests.** Skip the test for the speculative case nobody will ever hit; keep the test for the regression that actually happened.
+- **CI / scripts / Makefile.** Targets that nobody runs, mirror entries for images nothing consumes, env-var knobs with no remaining caller — delete.
+
+**Pragmatism guardrails** (when *not* to delete):
+
+- A doc / helper / Make target is still load-bearing for a real workflow even if it looks dusty — verify before deleting.
+- A migration is mid-flight (some callers cut over, others not yet) — finish the migration before deleting the shim, not in parallel with it.
+- A test exercises a regression we shipped — even if the surrounding feature is "stable now," the test is the receipt and stays.
+
+When in doubt, delete and put the rationale in the commit message. If the deletion turns out to have been wrong, `git revert` is one command. The opposite mistake — letting rot accumulate — has no symmetric undo.
+
 ## Project Overview
 
 **Plonk** is a Kubernetes infrastructure management platform written in Rust that provides unified secret management and service mesh control within Kubernetes clusters. It is part of the larger Winkoz Group monorepo.
