@@ -131,15 +131,58 @@ readiness, then `cargo test -p plonk_operator --test e2e --
 the create step.
 
 **Concurrent worktrees.** Two worktrees can run `make e2e-worktree`
-simultaneously — none of the shared global state collides:
+simultaneously — their cluster-targeting operations don't collide:
 
 - The k3d cluster name is slot-aware (`plonk-$PLONK_SLOT`).
 - The Docker image tag is slot-aware (`e2e-test-plonk$PLONK_SLOT`).
-- The kubeconfig is written to a slot-local file
-  (`/tmp/plonk-kubeconfig-plonk$PLONK_SLOT.yaml`) and exported as
-  `KUBECONFIG` for every subprocess in the recipe; `~/.kube/config`
-  is neither read nor written. (Interactive `make dev` keeps its
-  existing UX of merging into the global file.)
+- Cluster-targeting kubectl/plonk calls in the recipe read and
+  write a slot-local kubeconfig
+  (`/tmp/plonk-kubeconfig-plonk$PLONK_SLOT.yaml`) via the
+  target-scoped `KUBECONFIG` export — they never touch
+  `~/.kube/config`. After the slot file is written, the recipe
+  has a separate explicit step that `kubectl config view
+  --flatten`s the slot context into `~/.kube/config` so it shows
+  up alongside the user's other contexts (`kubectl config
+  get-contexts`). The flatten lists the slot file FIRST in
+  `KUBECONFIG` so its `cluster`/`user`/`context` entries
+  override any stale `k3d-plonk-N` entry already in
+  `~/.kube/config` (after a `make dev-cluster-delete` + recreate
+  the slot file carries the fresh CA / server cert, and a
+  `~/.kube/config`-first ordering would keep the broken old
+  entry). To prevent the slot's `current-context` from silently
+  winning under that ordering, the recipe captures whatever
+  `~/.kube/config` had as `current-context` before the flatten
+  and re-applies it on the merged file via `kubectl config
+  use-context` — so production never silently flips to the
+  worktree. If the user has no `current-context` set (or the file
+  is freshly touched), the slot's `current-context` wins by
+  default, which is harmless because there's no production
+  context to protect. The `assert-kubectl-context.sh` guard reads
+  from the slot file (the target-scoped export), not from
+  `~/.kube/config`, so the recipe's own context guard is
+  unaffected by the merge. (Interactive `make dev` keeps its
+  existing UX of merging into the global file via `k3d kubeconfig
+  merge`.)
+
+The merge step is the one place this recipe writes shared global
+state (`~/.kube/config`). It uses a slot-scoped temp file inside
+`$HOME/.kube/` for the intermediate `kubectl config view
+--flatten` output. Same-filesystem placement matters: on Linux
+`/tmp` is usually tmpfs while `$HOME` lives on the main disk, and
+a cross-filesystem `mv` falls back to copy+unlink — not atomic,
+so a concurrent writer could see a half-written file. Keeping the
+temp file under `$HOME/.kube/` keeps `rename(2)` in-kernel and
+atomic, so each writer's payload lands whole. The redirect runs
+under `umask 177` so the temp file is born at mode 0600 — without
+it the temp is created world-readable (0644) and the post-`mv`
+`~/.kube/config` inherits that mode until the subsequent `chmod
+600`, briefly exposing tokens and client certs to other local
+users. Under truly concurrent runs, both slots read
+`~/.kube/config` before either writes; each flattens `(own_slot +
+existing)` independently and races to `mv`. The final rename is
+last-writer-wins — the losing slot's cluster/user/context entries
+may be absent from `~/.kube/config` until that slot re-runs
+`e2e-worktree`. The file itself is never half-written.
 
 If you need to re-run after a code change in the operator, just
 re-run `make e2e-worktree` — the image build is layer-cached so
