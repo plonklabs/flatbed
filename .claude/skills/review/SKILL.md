@@ -5,7 +5,7 @@
 Two-mode workflow keyed off PR state, with an opt-in autonomous loop:
 
 - **Draft PR** → the assistant performs a local self-review against the [Quality checklist](#quality-checklist) and prints findings in the chat. Nothing is posted to GitHub. The point is to surface issues *before* flipping to ready, so the developer can fix them before the `claude[bot]` reviewer (configured in `.github/workflows/claude-review.yml`) sees them.
-- **Ready-for-review PR** → the assistant waits for the bot's review run for the current HEAD commit to finish, then fetches its inline + top-level comments and runs a holistic fix loop. The fix loop reads each affected file in full (not just diff hunks) and applies the [Quality checklist](#quality-checklist) to catch siblings of every flagged issue. By default, Phase 2c asks the user to fix/decline each comment.
+- **Ready-for-review PR** → the assistant waits for the bot's review run for the current HEAD commit to finish, then fetches its unresolved inline threads + top-level comments and runs a holistic fix loop. The fix loop reads each affected file in full (not just diff hunks) and applies the [Quality checklist](#quality-checklist) to catch siblings of every flagged issue. By default, Phase 2c asks the user to fix/decline each thread.
 - **Autonomous mode** (`/review <pr-number> --auto`) → same as ready-for-review mode but skips Phase 2c (every bot finding is treated as fix-bound) and chains rounds: after Phase 2f posts the top-level summary, re-arms the wait loop on the new HEAD and goes back to Phase 2a. Loops until the bot returns a green review, the workflow run fails or times out, or the user interrupts. **Never marks the PR ready, never merges.**
 
 ## Instructions
@@ -116,47 +116,77 @@ If the loop breaks for any reason other than `completed:success`, ask the user h
 
 **Use the `Monitor` tool instead of inline `sleep` polling when one is available.** The polling shape above is the reference behaviour; in practice the harness's `Monitor` tool (with a script that emits one stdout line per status change and exits on a terminal state) gives a single notification when the run completes without keeping the conversation paused. Either form is fine; the Monitor form is preferred in autonomous mode because it lets the assistant keep working between rounds.
 
-#### Phase 2b: Fetch comments
+#### Phase 2b: Fetch unresolved threads
 
-GitHub Apps appear in the REST API with a `<name>[bot]` login, so the filter is `claude[bot]` — not the bare app name.
+**Fetch UNRESOLVED inline threads via GraphQL.** Filtering REST `/comments` by timestamp or commit anchor is fragile — pagination silently truncates the response after 30 entries (a 33-comment PR's tail vanishes), and a clock cutoff that lands after a finding's `created_at` makes the round look green when it wasn't. Phase 2d's resolve-after-reply step (below) marks every addressed thread as resolved in GitHub's first-class state machine, so the round's actual working set is simply "all unresolved bot threads" — no filter heuristics, no pagination drift. Use GraphQL because thread resolution state isn't on the REST `/comments` shape:
 
 ```bash
-# Inline (line-attached) comments from the bot.
-gh api "repos/winkoz/plonk/pulls/$PR_NUMBER/comments" \
-    --jq '.[] | select(.user.login == "claude[bot]") |
-          {id, path, line, body, commit_id, created_at}'
+gh api graphql --paginate -f query='
+  query($owner: String!, $repo: String!, $pr: Int!, $endCursor: String) {
+    repository(owner: $owner, name: $repo) {
+      pullRequest(number: $pr) {
+        reviewThreads(first: 100, after: $endCursor) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            id          # GraphQL node id — pass this to resolveReviewThread later
+            isResolved
+            path
+            comments(first: 1) {
+              nodes {
+                databaseId   # the REST API "id" — needed for /replies
+                author { __typename login }
+                body
+                createdAt
+                line
+              }
+            }
+          }
+        }
+      }
+    }
+  }' \
+  -f owner=winkoz -f repo=plonk -F pr="$PR_NUMBER" \
+  --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+        | select(.isResolved == false
+                 and .comments.nodes[0].author.__typename == "Bot"
+                 and .comments.nodes[0].author.login == "claude")'
+```
 
-# Top-level review summaries from the bot.
+That streams each unresolved bot thread as one object with the shape `{id, isResolved, path, comments: {nodes: [{databaseId, author, body, createdAt, line}]}}` — exactly the set the loop needs to act on this round. Four pitfalls worth pinning so the next implementer doesn't have to discover them from a runtime error or a silently-undercounted batch:
+
+- The thread's own identifier is `id` (the GraphQL node id), not `threadId`. Pass it as-is to `resolveReviewThread` below.
+- `comments` on each thread is a connection object — access the first comment via `comments.nodes[0]`, not `comments[0]`.
+- `gh api graphql --paginate` chases `pageInfo.endCursor` automatically as long as the query exposes `pageInfo { hasNextPage endCursor }` and accepts a `$endCursor: String` variable. Without it, `first: 100` silently caps the result and reintroduces the same under-count class of bug REST's 30-default produces — a PR with 101 review threads loses its tail.
+- `--paginate` runs the `--jq` filter **per page** — a `map(select(...))` filter outputs one JSON array per page (multiple separate JSON documents on stdout), not a single merged array. A consumer that pipes the result into something expecting a single array silently drops every page after the first. The block above uses the streaming form `.nodes[] | select(...)` instead, which emits one independent JSON object per match — that's the actual NDJSON shape (newline-delimited self-contained values), which any line-by-line reader or `jq -s '.'` step collects into a list. The alternative is the array-map filter with `| jq -s 'add'` appended.
+
+And the author filter combines two signals — `author.__typename == "Bot"` discriminates bots from human users (GraphQL exposes the bot's login as bare `claude`, with no `[bot]` suffix, so the REST-style `login == "claude[bot]"` string filter would silently mismatch every bot thread), and `author.login == "claude"` narrows to this project's reviewer specifically. Without the login check, dependabot, github-actions, or any other bot that ever leaves an inline thread enters the resolve/reply loop's working set — the same silent-inclusion class these filters eliminate elsewhere.
+
+Top-level review summaries still come from REST (no resolution state on those). The REST API renders GitHub Apps with a `<name>[bot]` login, so the filter at this one site is `claude[bot]` — distinct from the GraphQL filter above, where the same bot appears as bare `claude`:
+
+```bash
 gh api "repos/winkoz/plonk/issues/$PR_NUMBER/comments" \
     --jq '.[] | select(.user.login == "claude[bot]") |
           {id, body, created_at}'
 ```
 
-**Multi-round PRs**: every push to a non-draft PR re-triggers the bot workflow, so a re-review may include comments that were already addressed in a previous round. Two ways to identify the new ones:
-
-- **By thread state**: an inline comment is "addressed" if there's a reply on its thread (`gh api repos/winkoz/plonk/pulls/$PR_NUMBER/comments/<id>/replies`) whose body references a commit SHA that's already in the PR's history. New comments don't have such a reply.
-- **By timestamp**: get the timestamp of the most recent fix-reply commit (`git log --format=%cI -1 -- <path>` or the timestamp of the last push), and filter `created_at > $timestamp`.
-
-If you can't tell, process all bot comments — it's cheaper to no-op on an already-addressed one than to silently skip a new one.
-
-If there are zero bot comments, report "no bot comments to address" and stop.
+If the GraphQL query returns zero unresolved bot threads (and the latest bot run completed without a new top-level summary that claims a blocker), the bot's findings are all addressed — report and stop.
 
 #### Phase 2c: Triage with the user
 
 **If `AUTONOMOUS=true`, skip this phase entirely.** Invocation with `--auto` is the explicit user direction to treat every bot finding as fix-bound — proceed straight to Phase 2d.
 
-Otherwise: before applying any fix, present the bot's comments to the user grouped by file, with a one-line summary of each. For each comment (or batch of related comments on the same file), ask the user whether to **fix** or **decline**. Don't proceed to Phase 2d until the user has chosen for every comment.
+Otherwise: before applying any fix, present the bot's threads to the user grouped by file, with a one-line summary of each. For each thread (or batch of related threads on the same file), ask the user whether to **fix** or **decline**. Don't proceed to Phase 2d until the user has chosen for every thread.
 
-This step exists because the Rules below require explicit user direction before fixing or skipping a comment. Skipping this step (other than via `--auto`) and going straight to fixes denies the user that decision point.
+This step exists because the Rules below require explicit user direction before fixing or skipping a bot thread. Skipping this step (other than via `--auto`) and going straight to fixes denies the user that decision point.
 
 #### Phase 2d: Apply fixes holistically
 
-For each batch of fix-bound comments on the **same file**:
+For each batch of fix-bound threads on the **same file**:
 
-1. **Read the FULL file** (not just the lines around the comment). The reactive line-fix loop is the failure mode that drives multi-round review iteration: every round introduces a new pinpoint patch that leaves adjacent issues uncovered.
-2. **Read the immediate neighbours** the comment alludes to. If the comment is about a constant duplication, also open the file holding the canonical constant. If it's about a doc/code drift, also open the docs that reference the changed value.
-3. **Walk the [Quality checklist](#quality-checklist)** and fix the comment AND any adjacent issues that fall under the same category. The sweep must span **every file in the change set** (`git diff origin/main..HEAD --name-only`), not just the file the comment is anchored to. A "constant duplication" comment on one literal should trigger a sweep for that pattern in every changed file; a "hardcoded value" comment, a "forward-looking phrase" comment, an "error type quality" comment — all the same. Within-file sweeps miss cross-file siblings, which is the failure mode `feedback_class_level_fixes.md` captures and which has shipped regressions on this codebase.
-4. **Stage and commit** the comprehensive fix as **one commit per file or per logical unit** — not one commit per inline comment. The commit message should describe the comprehensive change, not just the comment that triggered it.
+1. **Read the FULL file** (not just the lines around the thread's anchor). The reactive line-fix loop is the failure mode that drives multi-round review iteration: every round introduces a new pinpoint patch that leaves adjacent issues uncovered.
+2. **Read the immediate neighbours** the thread alludes to. If the thread is about a constant duplication, also open the file holding the canonical constant. If it's about a doc/code drift, also open the docs that reference the changed value.
+3. **Walk the [Quality checklist](#quality-checklist)** and fix the thread's finding AND any adjacent issues that fall under the same category. The sweep must span **every file in the change set** (`git diff origin/main..HEAD --name-only`), not just the file the thread is anchored to. A "constant duplication" finding on one literal should trigger a sweep for that pattern in every changed file; a "hardcoded value" finding, a "forward-looking phrase" finding, an "error type quality" finding — all the same. Within-file sweeps miss cross-file siblings, which is the failure mode `feedback_class_level_fixes.md` captures and which has shipped regressions on this codebase.
+4. **Stage and commit** the comprehensive fix as **one commit per file or per logical unit** — not one commit per inline thread. The commit message should describe the comprehensive change, not just the thread that triggered it.
 5. **Run the relevant verifications before pushing:**
    - `cargo fmt --all` (apply formatting; AI-written code often needs normalisation, and `cargo fmt --all -- --check` would just fail rather than fix)
    - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
@@ -172,9 +202,22 @@ For each batch of fix-bound comments on the **same file**:
        -f body='Fixed in <commit-sha>. <one-sentence what changed and why it covers more than the line>'
    ```
 
+7. **Resolve the thread.** Immediately after the reply, mark the thread resolved via GraphQL — this is what makes the next round's "unresolved threads" query produce exactly the new findings:
+
+   ```bash
+   gh api graphql -f query='
+     mutation($threadId: ID!) {
+       resolveReviewThread(input: { threadId: $threadId }) {
+         thread { id isResolved }
+       }
+     }' -f threadId="<thread-graphql-id>"
+   ```
+
+   `<thread-graphql-id>` is the `id` field on the GraphQL `reviewThreads.nodes[*]` shape — NOT the REST comment id (`comments.nodes[0].databaseId` from the Phase 2b output, used as `<comment-id>` in step 6's `/replies` call). Both are returned together by the Phase 2b fetch query so the pairing is one lookup. If the resolve mutation fails (rare — a stale node id or a race against another resolver — `gh api graphql` exits non-zero and the JSON body contains an `errors` array), surface the failure to the user with the affected thread's node id and abort the current round — do not continue resolving or replying on other threads. **In autonomous mode this exits the loop (same close-out flow as exit condition 2, bot run failed) — the fix is already pushed to the remote but the thread stays unresolved, so re-entering Phase 2b would re-fetch it as a phantom "still open" finding and the loop would mis-process it as a false recurrence on the next round.** The user resolves the surfaced thread manually before re-invoking `/review --auto`.
+
 #### Phase 2e: Decline path
 
-For each comment the user marked as **decline** in Phase 2c:
+For each thread the user marked as **decline** in Phase 2c:
 
 1. Ask for the reasoning (or draft a response and confirm with the user before posting).
 2. Reply on the thread with the rationale (no commit SHA needed):
@@ -185,9 +228,11 @@ For each comment the user marked as **decline** in Phase 2c:
        -f body='<reasoning>'
    ```
 
+3. Resolve the thread via the same GraphQL mutation as Phase 2d step 7. If the resolve mutation fails, apply the same abort-and-exit behavior as Phase 2d step 7: surface the affected thread's node id to the user, abort the current round, and in autonomous mode exit the loop — the phantom-recurrence risk is identical, and `--auto` skips Phase 2c so the unresolved declined thread would be re-fetched and mis-processed as a new fix-bound finding rather than an already-resolved decline. Decline-with-reasoning counts as addressed for the loop's purposes — the rationale is on the thread, the reviewer can see it, and re-opening the thread is the bot's job if it disagrees on the next round.
+
 #### Phase 2f: Post the top-level summary
 
-Run *after* both Phase 2d and Phase 2e have completed — the summary references state from both (fixed comments, declined comments) and posting it earlier means claiming a state that hasn't yet been produced.
+Run *after* both Phase 2d and Phase 2e have completed — the summary references state from both (fixed threads, declined threads) and posting it earlier means claiming a state that hasn't yet been produced.
 
 ```bash
 gh pr comment "$PR_NUMBER" --body "<summary>"
@@ -196,7 +241,7 @@ gh pr comment "$PR_NUMBER" --body "<summary>"
 The summary should cover:
 - Reviewer-flagged issues fixed (with commit SHAs)
 - Self-flagged issues fixed in the same pass (the holistic delta)
-- Comments declined (with reasoning)
+- Threads declined (with reasoning)
 
 In autonomous mode, title each round's summary `## Round N — addressed` (track `N` across rounds in the loop state) so the user can follow progress in the PR conversation tab without scrolling.
 
@@ -214,7 +259,7 @@ ROUND=$((ROUND + 1))
 
 **Exit the loop** when any of the following hold. On each exit, post a final close-out summary that names the exit reason and the round count.
 
-1. **Green review.** The latest bot run returned zero new inline comments AND the top-level summary doesn't claim a blocker. Positive signals: "Ready to merge", "No blocking concerns", "no issues found", bare "clean" / "LGTM" (not followed by a qualifier). Negative signals: a new inline comment, "Blocking:", a numbered fix list, "must change", "regression", "consider", "optional", "minor nit". **Qualifier rule:** any positive signal followed by "but", "though", "however", "except", "consider", or a suggestion is a negative signal — the qualifier moves the verdict from green to ambiguous, and ambiguous reverts to another round per the Rules section. "LGTM but consider X" / "clean overall but Y" are negatives, not positives, so substring matching on the bare phrase must not exit. When in doubt, ask the user before exiting — false-positive green exit silently leaves a finding unaddressed; false-positive red just runs another round.
+1. **Green review.** The Phase 2b GraphQL query returns zero unresolved bot threads AND the top-level summary doesn't claim a blocker. Positive signals: "Ready to merge", "No blocking concerns", "no issues found", bare "clean" / "LGTM" (not followed by a qualifier). Negative signals: an unresolved bot thread, "Blocking:", a numbered fix list, "must change", "regression", "consider", "optional", "minor nit". **Qualifier rule:** any positive signal followed by "but", "though", "however", "except", "consider", or a suggestion is a negative signal — the qualifier moves the verdict from green to ambiguous, and ambiguous reverts to another round per the Rules section. "LGTM but consider X" / "clean overall but Y" are negatives, not positives, so substring matching on the bare phrase must not exit. When in doubt, ask the user before exiting — false-positive green exit silently leaves a finding unaddressed; false-positive red just runs another round.
 2. **Bot run failed.** `completed:failure`, `completed:cancelled`, `completed:timed_out`, or any non-success terminal status. Surface to the user; the loop exits. Don't auto-retry the workflow.
 3. **Monitor timeout.** 30 minutes elapsed without the bot run reaching a terminal state. Surface and exit.
 4. **User interrupts.** Any out-of-band user message during the loop. Pause the loop, address the user, and ask whether to resume.
@@ -222,7 +267,7 @@ ROUND=$((ROUND + 1))
 
 6. **Speculative-fix saturation.** If three consecutive rounds produce **real correctness findings** (not nits) AND the fixes you applied to earlier rounds were based on guessed semantics rather than docs or repo precedent, break out of speculation mode for one round. Do not push another patch. Instead: re-audit the **entire diff** against the official docs of whatever semantic system is at play (GitHub Actions expressions, language coercion, the foreign API's spec), walk every input case through documented rules, and write down the expected result for each before editing. Ship one careful commit that covers everything the audit surfaces, *with the comparison reasoning in the commit message so a future re-reader can verify it*. PR #377 ran 4 rounds before this — a doc-grounded re-audit on round 5 found two bugs the loop had been preserving (a wrong K8s resource type and a broken expression coercion) and closed the loop clean. The signal "the bot keeps finding real bugs in semantics-adjacent fixes" means you don't yet know the semantics; reading the spec is faster than guessing again. See Quality checklist item 15 and [[verify-dont-guess-semantics]].
 
-**Diff-vs-main drift check at the top of every round.** Before fetching new comments, run `git fetch origin main && git log --oneline HEAD..origin/main` — if main has advanced, rebase the branch onto current main, run `git push --force-with-lease`, then `HEAD_SHA=$(git rev-parse HEAD)` and **re-enter Phase 2a** (not Phase 2b) — the push re-triggers the bot workflow on the new HEAD and Phase 2b must not run until that new run completes, or it would fetch comments produced against the pre-rebase HEAD. A long-running autonomous loop is the exact scenario where a stale base silently reverts merges that landed on main mid-loop (per [[feedback_rebase_against_latest_main]]).
+**Diff-vs-main drift check at the top of every round.** Before fetching unresolved threads, run `git fetch origin main && git log --oneline HEAD..origin/main` — if main has advanced, rebase the branch onto current main, run `git push --force-with-lease`, then `HEAD_SHA=$(git rev-parse HEAD)` and **re-enter Phase 2a** (not Phase 2b) — the push re-triggers the bot workflow on the new HEAD and Phase 2b must not run until that new run completes, or it would fetch threads produced against the pre-rebase HEAD. A long-running autonomous loop is the exact scenario where a stale base silently reverts merges that landed on main mid-loop (per [[feedback_rebase_against_latest_main]]).
 
 **If the rebase produces conflicts, break the loop immediately.** Do not push. Surface the conflict to the user (show `git status` and the conflicting file list) and ask whether to (a) abort the rebase (`git rebase --abort`) and continue from the pre-rebase HEAD, (b) resolve conflicts manually before resuming, or (c) abandon the round. Same close-out flow as exit condition 2 (bot run failed): automation hit a hard stop, surface, don't auto-retry.
 
@@ -230,8 +275,8 @@ ROUND=$((ROUND + 1))
 
 - **Never auto-mark-ready, never auto-merge.** This rule survives autonomous mode unchanged. The loop fixes findings; the user decides when to merge.
 - **Stop on test or clippy failure.** Per Phase 2d step 5 — a failed verification breaks the loop. Surface the failure to the user instead of pushing a broken SHA into the next round.
-- **Skip Phase 2c each round.** No per-comment triage; every bot finding is fix-bound.
-- **Class-level sweep applies every round.** The bot's findings narrow over time but the diff grows; rerun the full Quality-checklist sweep across every changed file each round, not just the file the new comments anchor to.
+- **Skip Phase 2c each round.** No per-thread triage; every bot finding is fix-bound.
+- **Class-level sweep applies every round.** The bot's findings narrow over time but the diff grows; rerun the full Quality-checklist sweep across every changed file each round, not just the file the new threads anchor to.
 
 ## Quality checklist
 
@@ -277,11 +322,12 @@ The substantive content the assistant works through in both modes. Each item is 
 
 - **Never post to GitHub in draft mode.** Findings stay in the chat. The developer reads them, acts on them locally, and only triggers the actual bot review by flipping the PR to ready.
 - **Reply on inline threads with the commit SHA** that actually contains the fix. The SHA-in-reply is what makes a fix verifiable end-to-end.
-- **One comprehensive commit per file or logical unit** — not one commit per inline comment. The point of the holistic read is that fixes group naturally; the commit should reflect that grouping.
+- **Resolve every thread you reply to** (Phase 2d step 7 / Phase 2e step 3). The next round's "unresolved bot threads" GraphQL query IS the working set — leaving threads open re-introduces the timestamp/pagination filter-drift class of bugs that have caused post-merge misses in prior rounds. SHA-reply without resolution is half a fix.
+- **One comprehensive commit per file or logical unit** — not one commit per inline thread. The point of the holistic read is that fixes group naturally; the commit should reflect that grouping.
 - **Run `cargo fmt`, `cargo clippy`, and the relevant `cargo test`** before pushing. CLAUDE.md is non-negotiable on these.
 - **For changes touching the operator runtime, run `make e2e-full`** before declaring done. CLAUDE.md is also non-negotiable on this.
-- **Never auto-merge or auto-mark-ready** even if every comment is addressed, even in `--auto` mode. The user does that.
-- **Never skip a comment without explicit user direction.** A comment the assistant disagrees with should be declined with reasoning (Phase 2e), not silently dropped. Phase 2c is the dedicated triage step where the user picks fix vs decline per comment. **Invocation with `--auto` is itself the explicit user direction** to treat every bot finding as fix-bound — that mode skips Phase 2c by design, but the assistant still posts a reply (with the SHA) on every addressed thread, so nothing is silently dropped from the bot's perspective.
+- **Never auto-merge or auto-mark-ready** even if every thread is addressed, even in `--auto` mode. The user does that.
+- **Never skip a bot thread without explicit user direction.** A finding the assistant disagrees with should be declined with reasoning (Phase 2e), not silently dropped. Phase 2c is the dedicated triage step where the user picks fix vs decline per thread. **Invocation with `--auto` is itself the explicit user direction** to treat every bot finding as fix-bound — that mode skips Phase 2c by design, but the assistant still posts a reply (with the SHA) on every addressed thread, so nothing is silently dropped from the bot's perspective.
 - **Autonomous loop: treat ambiguous as red; exit only on clearly green.** If the latest round's verdict is ambiguous ("LGTM but consider X", "minor nit", "optional"), apply the suggestion and run another round rather than declaring the loop done. The loop ends on a clearly green review or on user direction.
 - **Re-read the `git diff` after every fix** before pushing, walking the changed lines through the checklist again. AI-assisted patches reliably introduce adjacent drift (an "if a future…" phrase added while removing another, a stale import, a comment field name that drifted) — one pass of `git diff` catches them and saves a re-review round.
 - **Doc-grounded fixes when semantics are unfamiliar.** Whenever a fix involves rules that aren't visible in the code being changed (expression coercion, context variables across invocation modes, foreign type behaviour, language quirks in unfamiliar territory), **fetch the official docs first and walk every input case through the documented rules** before pushing — see Quality checklist item 15. The bot reviewer is a cross-check on your reasoning, not a substitute for understanding the spec. "Guessing it works" and "pushing and seeing" are the failure modes the autonomous loop is most prone to and the ones that produce the longest, most demoralising review chains. If you cannot point to the specific doc text or repo precedent that says your fix is correct, you don't yet know your fix is correct.
