@@ -109,7 +109,7 @@ throwaway cluster or to reuse your worktree's persistent dev cluster:
 
 | Target | Cluster | When |
 |---|---|---|
-| `make e2e-worktree` | `plonk-$PLONK_SLOT` (your worktree's dev cluster) | Day-to-day iteration. Tears Tilt and Plonk down first, reinstalls fresh, leaves the cluster up afterwards. |
+| `make e2e-worktree` | `plonk-$PLONK_SLOT` (your worktree's dev cluster) | Day-to-day iteration. Tears Plonk down first, reinstalls fresh, leaves the cluster up afterwards. |
 | `make e2e-full` | `plonk-e2e` (created + destroyed) | Hermetic one-shot. What CI runs. Use locally when you want a clean-room repro that's guaranteed not to be contaminated by prior dev state. |
 
 Both produce identical test runs — the tests are kubeconfig-agnostic
@@ -122,13 +122,12 @@ and just hit whatever context is active.
 make e2e-worktree
 ```
 
-That target chains: kill any running `tilt up` for this slot, `tilt
-down`, `plonk uninstall`, reap leftover `e2e-*` namespaces from prior
-runs, build + import all four fixture images at the slot tag
-`:e2e-test-plonk$N`, `plonk install` with those images, wait for
-readiness, then `cargo test -p plonk_operator --test e2e --
---ignored`. The cluster stays running so the next invocation skips
-the create step.
+That target chains: `plonk uninstall`, reap leftover `e2e-*`
+namespaces from prior runs, build + import all four fixture images
+at the slot tag `:e2e-test-plonk$N`, `plonk install` with those
+images, wait for readiness, then `cargo test -p plonk_operator
+--test e2e -- --ignored`. The cluster stays running so the next
+invocation skips the create step.
 
 **Concurrent worktrees.** Two worktrees can run `make e2e-worktree`
 simultaneously — their cluster-targeting operations don't collide:
