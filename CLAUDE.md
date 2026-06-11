@@ -14,7 +14,7 @@ Apply to:
 
 - **Code.** Dead modules, unused helpers, dead `_prior` params, compatibility shims for migrations that already completed, "future-proofing" abstractions for hypothetical needs — delete. Three similar lines beats a premature trait. (See the "Doing tasks" rules: don't design for hypothetical future requirements.)
 - **Docs.** Historical / superseded docs rot fastest of all (every line is a claim about code that has since moved). If a doc is labeled "historical" or "legacy" or "preserved for context," ask whether `git log` doesn't already provide that — if yes, delete the doc and strip its inbound links. The decision rule: would a new contributor reading the repo today benefit from this doc, or would they be confused by it? Confusion → delete.
-- **Comments.** Already covered under "Comment hygiene" in `docs/style.md` and inline in this file — no forward-looking phrasing, no PR/issue/slice refs, no narrating what the code already says.
+- **Comments.** Already covered under the "Comments" section below and in `docs/style.md`. Default to not writing them; when one earns its place it states a property of the world the code runs in, not a property of the change that introduced it.
 - **Tests.** Skip the test for the speculative case nobody will ever hit; keep the test for the regression that actually happened.
 - **CI / scripts / Makefile.** Targets that nobody runs, mirror entries for images nothing consumes, env-var knobs with no remaining caller — delete.
 
@@ -311,56 +311,123 @@ Key guidelines:
 
 See `docs/style.md` for complete guidelines with examples.
 
-### Comment hygiene
+### Comments
 
-Comments rot faster than code. Two failure modes recur often enough that
-the bot reviewer flags them on most PRs — head them off at the source.
+Comments rot. Unlike code, they're verified by nothing — no compiler,
+no test, no reviewer can confirm a comment still matches the code it
+sits next to. Every comment is a quiet bet that whoever changes the
+surrounding code next will also update the comment. That bet is usually
+lost: the code drifts, the comment stays, and the next reader trusts a
+sentence that has become a lie.
 
-**No forward-looking or speculative phrasing.** Avoid wording like
-"future X tooling will…", "(none today — but added defensively so a
-future Y…)", "when the cert worker grows a `CertReady` condition", "the
-new NATS path", "the pre-cutover overlap". These claims become wrong the
-moment X gets renamed, Y never ships, "new" becomes the default, or the
-cutover completes. Describe the **property** (single source of truth,
-contract, invariant) without naming speculative consumers or temporal
-state:
+So the default position is **don't comment**. Names, types, and control
+flow are the primary documentation. A comment has to earn its place by
+carrying information that:
 
-```rust
-// Bad — names a worker that may never write this and "future" rots
-// once a foreign writer arrives (or never does).
-/// Filters to deploy-owned condition types so foreign entries
-/// (none today — but added defensively so a future foreign writer
-/// never gets re-asserted under this manager).
+1. **Cannot be inferred from the surrounding code or types.** If reading
+   the line tells the reader what it does, a comment that restates it is
+   pure overhead.
+2. **Will be useful to a future reader,** not just to the author at write
+   time. Six-months-later you doesn't have today-you's context.
+3. **Will remain accurate through reasonable refactors.** A comment that
+   any nearby restructure could quietly invalidate is a future lie
+   waiting to happen.
 
-// Good — describes the invariant; survives whether or not foreign
-// writers ever appear.
-/// Filters to deploy-owned condition types so anything that ever shares
-/// the merged conditions list is never re-asserted under this manager.
-```
+#### When a comment earns its place
 
-**No slice/PR/issue references in source comments.** Phrases like
-"PR #200 spelled out…", "the PR description spells out…", "slice 6b's
-injector needs…", or bare `#123` rot the moment the PR/issue is closed.
-PR descriptions live in PR history; epic context lives in issue bodies;
-neither should be the load-bearing explanation for a line of code.
-Inline the actual rationale instead:
+The shapes below recur and are worth the cost:
 
-```rust
-// Bad
-/// A refactor that accidentally aligns the two strings re-introduces
-/// the clobbering regression the PR description spells out.
+- **Constraints from outside the code.** A platform behaviour, library
+  quirk, or wire-format requirement that the types can't express.
+  ```rust
+  // Image pulls run in the kubelet's host network namespace, where
+  // cluster DNS doesn't resolve. The rewrite step substitutes the
+  // cluster IP so the ref the kubelet sees is actually reachable.
+  ```
 
-// Good
-/// A refactor that accidentally aligns the two strings re-introduces
-/// silent cross-manager clobbering on `/status` — the aggregator's
-/// next Apply would un-claim the scalars this manager owns, and vice
-/// versa, on every reconcile.
-```
+- **Invariants the caller is responsible for.** Contracts the type
+  system can't enforce, made explicit so a future caller doesn't break
+  the function by accident.
+  ```rust
+  // Caller holds the write lock — the cursor advance below isn't
+  // safe under concurrent reads.
+  ```
 
-Both rules apply equally to module docs, function docs, inline `//`
-comments, test comments, and PR-anchored TODOs. When self-reviewing,
-grep the diff for `future `, `will `, `once a`, `PR #\d+`, `issue #\d+`,
-and bare `#\d+` inside `///` or `//` lines before pushing.
+- **Surprising library or language behaviour.** A standard-library or
+  external API that doesn't behave the obvious way; the comment names
+  the foot-gun.
+  ```rust
+  // `Option::is_none_or` short-circuits on `None` before evaluating
+  // the closure — `is_some_and(!...)` would evaluate the closure on
+  // a `None` and panic on the deref inside.
+  ```
+
+- **Workarounds for a bug, named by its property.** Not by issue number
+  (which rots), but by the bounded condition under which the workaround
+  is load-bearing.
+  ```rust
+  // `serde_yaml` rejects integer keys for a `String`-keyed map even
+  // when the integer would coerce cleanly. Read as `serde_json::Value`
+  // first and stringify keys before re-deserialising.
+  ```
+
+In every case the comment describes a *property of the world the code
+runs in*, not a property of the change that introduced it. That's what
+makes it durable.
+
+#### Patterns that rot the fastest
+
+The shapes below turn into lies first. Don't write them; delete them
+when you find them.
+
+- **Restating what the code already says.** `// increment the counter`
+  next to `i += 1`. The reader spends attention parsing both, with
+  nothing gained.
+
+- **Forward-looking or temporal phrasing.** "Future X will…", "for when
+  we add Y", "the new path", "the pre-cutover overlap". Wrong the
+  moment X is renamed, Y never ships, "new" becomes the default, or
+  the cutover completes. State the property without dating it.
+
+- **References to other code, docs, or issues by path or name.**
+  `// see foo::bar for the equivalent`, `// matches lib/other.rs`,
+  `// PR #123 spells out why`. The referenced thing keeps compiling
+  fine when it's renamed or moved; the comment silently points at
+  nothing. State the property the reference would have explained,
+  inline.
+
+- **Reasoning about the patch instead of the code.** "Noting this for
+  future readers so they know it's intentional", "documenting the gap
+  this change couldn't close". Reasoning about a *change* belongs in
+  the PR description and commit message, which are frozen in time and
+  searchable from `git log`. Source comments have to keep being
+  accurate as the code keeps moving — a poor home for any thought
+  scoped to "the state of the world when I wrote this".
+
+- **Author-mental-state asides.** "Tricky", "TODO: probably refactor",
+  "not sure why this works". Either fix what the comment is hedging
+  about, or replace the hedge with a specific statement about the
+  invariant.
+
+#### The self-test
+
+Before keeping or writing a comment, walk it through three questions:
+
+1. **Removal test.** If I deleted this comment, would a reader with the
+   surrounding code and a working knowledge of the codebase actually be
+   confused? If no, the comment is noise.
+2. **Refactor test.** Could a sensible nearby restructure leave the
+   comment quietly wrong without anyone noticing? If yes, restructure
+   the code so the comment isn't needed, or delete the comment.
+3. **Scope test.** Is the comment about the *code as it stands*, or
+   about the *change that produced it*? Code-as-it-stands belongs in
+   the source; change-reasoning belongs in the PR description and
+   commit message.
+
+The three apply to module docs, function docs, inline `//` comments,
+test comments, and TODOs the same way. When self-reviewing a diff,
+walk every comment in it through the three questions before pushing —
+most of what gets caught downstream is caught here for free.
 
 ## Flatty Framework
 
