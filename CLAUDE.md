@@ -652,20 +652,11 @@ constants by name — never inline literals — and a single test pins
 the constant list as stable camel-case so drift is caught at compile
 time.
 
-**Bootstrap chicken-and-egg.** When a CR's reconciler depends on a
-resource the CR itself materialises (NATS is the canonical case:
-operator's startup hard-fails on NATS unreachable, so the operator
-can't be the only path to bringing NATS up), the CLI bootstraps the
-shape with `Create` (POST), producing the **byte-identical
-resources** the operator's worker would render via SSA-apply. The
-operator's first reconcile is then a no-op SSA — every field the
-operator writes already matches what etcd holds, so `.force()`
-transfers ownership without diff and the kube-controller computes
-the same pod-template hash, leaving the running pods undisturbed.
-The hard property is shape parity, not fieldManager parity:
-diverging on a label value, a wrapper-script byte, a port literal,
-or any other pod-template input changes the hash and triggers a
-rolling restart of the operator's own broker during its own
-startup. Thread every input through both sides (StorageClass,
-mount path, labels, wrapper script, env vars).
+**Operator-internal bus runs as a sidecar, not a CR.** The
+operator's task-dispatch NATS lives as a `nats:2.10-alpine`
+container inside the operator Pod — same network namespace as the
+operator container, reached at `nats://localhost:4222`, persisted to
+the operator StatefulSet's PVC. The `PlonkNats` CRD is for user
+workloads only; the operator does not consume one for its own bus.
+See [`docs/nats_sidecar.md`](docs/nats_sidecar.md).
 
