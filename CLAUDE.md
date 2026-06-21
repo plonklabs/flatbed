@@ -600,10 +600,11 @@ single source of "what's next given the CR's current state."
 patterns** for writing `.status.conditions[]`. Which one a CR uses
 depends on when it was introduced:
 
-- **Aggregator path** (PlonkBox, PlonkNamespace): workers publish
-  state-change events to a NATS JetStream stream (`PLONK_STATUS`);
-  one leader-gated `plonk-status-aggregator` worker holds the truth
-  and is the sole writer of the conditions array. Documented in
+- **Aggregator path** (PlonkBox, PlonkNamespace): workers enqueue
+  state-change events on an in-process `tokio::sync::mpsc` channel
+  (`ctx.status_tx`); one leader-gated `plonk-status-aggregator`
+  worker drains the channel, holds the truth, and is the sole
+  writer of the conditions array. Documented in
   [`docs/architecture.md`](docs/architecture.md) under
   "Status Writes and Field-Manager Hygiene". New work on these CRs
   must keep using this path — direct condition writes from any
