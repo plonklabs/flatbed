@@ -58,7 +58,7 @@ Track tasks, decisions, blockers, and progress in the GitHub Issue linked to you
 
 Use `/review <pr-number>` for the interactive workflow. The key principles:
 
-- **Fetch** review comments via `gh api repos/winkoz/plonk/pulls/{n}/comments`
+- **Fetch** review comments via `gh api repos/plonklabs/plonk/pulls/{n}/comments`
 - **Fix or decline** each comment — each fix gets its own commit
 - **Reply inline** using `gh api .../comments/{id}/replies` with the commit SHA (if fixed) or reasoning (if declined)
 - **General PR comments** (not in a thread): use `gh pr comment {n} --body "message"`

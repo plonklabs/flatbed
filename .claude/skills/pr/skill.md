@@ -3,7 +3,7 @@
 ## Description
 Creates a PR with a structured description that lets a reader understand the change without reading the diff. Can also update an existing PR's description.
 
-The canonical example for this project is [PR #364](https://github.com/winkoz/plonk/pull/364) (PlonkStorage slice 5 — PlonkNats CRD + conditions-based reconciler/worker). When in doubt about structure, tone, or how to weave code blocks and mermaid diagrams into the body, open that PR and match it.
+The canonical example for this project is [PR #364](https://github.com/plonklabs/plonk/pull/364) (PlonkStorage slice 5 — PlonkNats CRD + conditions-based reconciler/worker). When in doubt about structure, tone, or how to weave code blocks and mermaid diagrams into the body, open that PR and match it.
 
 ## Instructions
 
