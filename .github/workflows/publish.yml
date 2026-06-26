@@ -1,9 +1,17 @@
 name: Publish to crates.io
 
 # Tag-driven publish of the three flatbed crates in dependency order
-# (flatbed_macros → flatbed_build → flatbed). Runs on `flatbed-v*` tag
-# pushes, the same trigger as `release-bin.yml`, so a single tag push
-# both publishes the crates and cuts the binary release.
+# (flatbed_macros → flatbed_build → flatbed). Primary trigger is a
+# `flatbed-v*` tag push, the same trigger as `release-bin.yml`, so a
+# single tag push both publishes the crates and cuts the binary
+# release.
+#
+# The `workflow_dispatch` trigger is the escape hatch for re-running
+# publish against an existing tag without re-pushing it — useful when
+# a publish failed partway (e.g. a transient crates.io 5xx or, on the
+# first run, a missing verified email on the account). Dispatch
+# against `--ref flatbed-vX.Y.Z` so the workflow checks out the same
+# tree the original tag pointed at.
 #
 # The `cargo publish` between crates needs the previous one's index
 # entry to be visible on crates.io; a fixed sleep is the pragmatic
@@ -13,6 +21,7 @@ name: Publish to crates.io
 on:
   push:
     tags: ['flatbed-v*']
+  workflow_dispatch:
 
 concurrency:
   group: publish-${{ github.ref }}
