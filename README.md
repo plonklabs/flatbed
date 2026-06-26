@@ -74,16 +74,19 @@ Install it either way:
 # From crates.io, built locally (any platform):
 cargo install flatbed_build
 
-# Or a prebuilt Linux binary from the GitHub release (amd64 or arm64):
+# Or a prebuilt binary from the GitHub release. Detect your OS + arch:
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m); case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; esac
 curl -fsSL -o flatbed \
-  https://github.com/plonklabs/flatbed/releases/latest/download/flatbed-linux-amd64
+  "https://github.com/plonklabs/flatbed/releases/latest/download/flatbed-${OS}-${ARCH}"
 chmod +x flatbed
 ```
 
 Prebuilt binaries are published as
 [GitHub release assets](https://github.com/plonklabs/flatbed/releases/latest),
-not as GitHub Packages, each with a `.sha256` checksum file. Only Linux `amd64`
-and `arm64` are prebuilt; on other platforms use `cargo install flatbed_build`.
+not as GitHub Packages, each with a `.sha256` checksum file. Linux and macOS
+(`amd64` + `arm64` each) are prebuilt; on any other platform use
+`cargo install flatbed_build`.
 
 ## Quick example
 

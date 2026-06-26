@@ -4,15 +4,16 @@ name: Build flatbed binary
 # GitHub Release. Two trigger paths:
 #
 #   - push a `flatbed-vX.Y.Z` tag → cuts a versioned release with the
-#     amd64 + arm64 binaries and their sha256 checksums attached.
+#     linux + darwin (amd64 + arm64 each) binaries and their sha256
+#     checksums attached.
 #   - run via `workflow_dispatch` → publishes a pre-release tagged
 #     `flatbed-dev-<short-sha>` so a feature branch can hand someone
 #     a binary without minting a real version. Pre-release flag is
 #     set so dispatch builds don't appear as the "latest" versioned
 #     release that automated consumers key off.
 #
-# Cross-arch is done by matrix on GitHub-hosted native runners. No
-# cross toolchain involved — each runner builds its own arch.
+# Cross-platform is done by matrix on GitHub-hosted native runners. No
+# cross toolchain involved — each runner builds its own OS/arch.
 
 on:
   push:
@@ -32,8 +33,16 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-latest
+            os: linux
             arch: amd64
           - runner: ubuntu-24.04-arm
+            os: linux
+            arch: arm64
+          - runner: macos-13
+            os: darwin
+            arch: amd64
+          - runner: macos-14
+            os: darwin
             arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -48,17 +57,25 @@ jobs:
         run: cargo build -p flatbed_build --bin flatbed --release --locked
 
       - name: Stage binary + checksum
+        # macOS runners have `shasum` but not GNU `sha256sum`; Linux has
+        # both. Prefer `sha256sum` and fall back so the same step works
+        # on every runner.
         run: |
-          install -m 0755 target/release/flatbed "flatbed-linux-${{ matrix.arch }}"
-          sha256sum "flatbed-linux-${{ matrix.arch }}" > "flatbed-linux-${{ matrix.arch }}.sha256"
+          bin="flatbed-${{ matrix.os }}-${{ matrix.arch }}"
+          install -m 0755 target/release/flatbed "$bin"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$bin" > "$bin.sha256"
+          else
+            shasum -a 256 "$bin" > "$bin.sha256"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flatbed-linux-${{ matrix.arch }}
+          name: flatbed-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            flatbed-linux-${{ matrix.arch }}
-            flatbed-linux-${{ matrix.arch }}.sha256
+            flatbed-${{ matrix.os }}-${{ matrix.arch }}
+            flatbed-${{ matrix.os }}-${{ matrix.arch }}.sha256
           if-no-files-found: error
           retention-days: 1
 
@@ -96,7 +113,7 @@ jobs:
           fi
 
       - name: Write release notes
-        # Quoted heredoc keeps every backtick / code-fence / `${ARCH}`
+        # Quoted heredoc keeps every backtick / code-fence / `${OS}`
         # reference verbatim — no need to escape each one. The release
         # tag is then inserted by a `sed` pass against a sentinel token
         # so the shell never has to expand inside the markdown body.
@@ -109,15 +126,21 @@ jobs:
           Binaries (each with a matching `.sha256` checksum):
           - `flatbed-linux-amd64`
           - `flatbed-linux-arm64`
+          - `flatbed-darwin-amd64`
+          - `flatbed-darwin-arm64`
 
-          Verify and install:
+          Verify and install (Linux or macOS):
 
           ```bash
-          ARCH=$(dpkg --print-architecture)
-          curl -fLO "https://github.com/plonklabs/flatbed/releases/download/__RELEASE_TAG__/flatbed-linux-${ARCH}"
-          curl -fLO "https://github.com/plonklabs/flatbed/releases/download/__RELEASE_TAG__/flatbed-linux-${ARCH}.sha256"
-          sha256sum -c "flatbed-linux-${ARCH}.sha256"
-          install -m 0755 "flatbed-linux-${ARCH}" /usr/local/bin/flatbed
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m); case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64|arm64) ARCH=arm64 ;; esac
+          BASE="https://github.com/plonklabs/flatbed/releases/download/__RELEASE_TAG__"
+          curl -fLO "$BASE/flatbed-${OS}-${ARCH}"
+          curl -fLO "$BASE/flatbed-${OS}-${ARCH}.sha256"
+          command -v sha256sum >/dev/null 2>&1 \
+            && sha256sum -c "flatbed-${OS}-${ARCH}.sha256" \
+            || shasum -a 256 -c "flatbed-${OS}-${ARCH}.sha256"
+          install -m 0755 "flatbed-${OS}-${ARCH}" /usr/local/bin/flatbed
           ```
           EOF
           sed -i "s|__RELEASE_TAG__|$RELEASE_TAG|g" notes.md
@@ -139,4 +162,8 @@ jobs:
             dist/flatbed-linux-amd64 \
             dist/flatbed-linux-amd64.sha256 \
             dist/flatbed-linux-arm64 \
-            dist/flatbed-linux-arm64.sha256
+            dist/flatbed-linux-arm64.sha256 \
+            dist/flatbed-darwin-amd64 \
+            dist/flatbed-darwin-amd64.sha256 \
+            dist/flatbed-darwin-arm64 \
+            dist/flatbed-darwin-arm64.sha256
