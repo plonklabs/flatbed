@@ -9,6 +9,13 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the telemetry config now reads `FLATBED_SERVICE_NAME`,
+  `FLATBED_SERVICE_ADDRESS`, and `FLATBED_TELEMETRY_PORT` environment
+  variables, renamed from their `PLONK_*` predecessors. Update any
+  deployment that set the old names.
+
 ## [0.0.1] — 2026-06-26
 
 ### Added

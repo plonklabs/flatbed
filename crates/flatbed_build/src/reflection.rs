@@ -426,8 +426,8 @@ mod tests {
     #[test]
     fn test_split_namespace() {
         assert_eq!(
-            split_namespace("plonk.data.PingRequest"),
-            ("plonk::data".to_string(), "PingRequest".to_string())
+            split_namespace("app.data.PingRequest"),
+            ("app::data".to_string(), "PingRequest".to_string())
         );
         assert_eq!(
             split_namespace("v_1.PingRequest"),

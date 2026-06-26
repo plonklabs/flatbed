@@ -1,4 +1,4 @@
-//! `flatbed` — Plonk's FlatBuffer codegen helper.
+//! `flatbed` — the FlatBuffer codegen helper.
 //!
 //! A thin CLI around [`flatbed_build::Config`] so codegen can be
 //! driven directly — without compiling the full workspace — by
@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "flatbed", about = "Plonk's FlatBuffer codegen helper")]
+#[command(name = "flatbed", about = "FlatBuffer codegen helper")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -135,13 +135,13 @@ mod tests {
 
     #[test]
     fn discover_picks_up_top_level_fbs_files() {
-        let dir = make_tree(&["operator.fbs", "plonk_box.fbs"]);
+        let dir = make_tree(&["operator.fbs", "user.fbs"]);
         let found = discover_root_schemas(&dir).unwrap();
         let names: Vec<_> = found
             .iter()
             .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
             .collect();
-        assert_eq!(names, vec!["operator.fbs", "plonk_box.fbs"]);
+        assert_eq!(names, vec!["operator.fbs", "user.fbs"]);
     }
 
     #[test]
@@ -151,7 +151,7 @@ mod tests {
         // their own root or the operator's compiled output would
         // double up (root + version) and the diff against the
         // committed `_generated.rs` would never converge.
-        let dir = make_tree(&["operator.fbs", "v1/operator.fbs", "v1/plonk.fbs"]);
+        let dir = make_tree(&["operator.fbs", "v1/operator.fbs", "v1/user.fbs"]);
         let found = discover_root_schemas(&dir).unwrap();
         let names: Vec<_> = found
             .iter()

@@ -977,7 +977,7 @@ pub trait KubeWatcher: Send + Sync + 'static {
     /// Defaults to an unfiltered cluster-wide watch (`Config::default()`).
     /// Override to add label or field selectors — e.g. a Pod watcher
     /// scoped to a managed-namespace label, or a Service watcher
-    /// filtered to PlonkBox-owned services. Returning a `Config` keeps
+    /// filtered to services your controller owns. Returning a `Config` keeps
     /// the open-once-relist-on-error behaviour the kube-rs `watcher`
     /// provides; replace selectors here rather than pre-filtering in
     /// callbacks so the apiserver-side filter shrinks the watch

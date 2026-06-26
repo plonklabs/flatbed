@@ -18,16 +18,16 @@ impl TelemetryConfig {
         port: Option<u16>,
     ) -> Result<Self, TelemetryError> {
         let service_name = service_name
-            .or_else(|| std::env::var("PLONK_SERVICE_NAME").ok())
-            .ok_or_else(|| TelemetryError::ConfigValidationError("PLONK_SERVICE_NAME environment variable is not set and no service name was provided".to_string()))?;
+            .or_else(|| std::env::var("FLATBED_SERVICE_NAME").ok())
+            .ok_or_else(|| TelemetryError::ConfigValidationError("FLATBED_SERVICE_NAME environment variable is not set and no service name was provided".to_string()))?;
 
         let ip_address = ip_address
-            .or_else(|| std::env::var("PLONK_SERVICE_ADDRESS").ok())
-            .ok_or_else(|| TelemetryError::ConfigValidationError("PLONK_SERVICE_ADDRESS environment variable is not set and no service name was provided".to_string()))?;
+            .or_else(|| std::env::var("FLATBED_SERVICE_ADDRESS").ok())
+            .ok_or_else(|| TelemetryError::ConfigValidationError("FLATBED_SERVICE_ADDRESS environment variable is not set and no service name was provided".to_string()))?;
 
         let port = port
             .or_else(|| {
-                std::env::var("PLONK_TELEMETRY_PORT")
+                std::env::var("FLATBED_TELEMETRY_PORT")
                     .ok()
                     .and_then(|p| p.parse().ok())
             })
@@ -46,7 +46,7 @@ impl TelemetryConfig {
     ///
     /// # Panics
     ///
-    /// Panics if required environment variables (PLONK_SERVICE_NAME, PLONK_SERVICE_ADDRESS)
+    /// Panics if required environment variables (FLATBED_SERVICE_NAME, FLATBED_SERVICE_ADDRESS)
     /// are not set.
     pub fn from_env() -> Self {
         match Self::new(None, None, None) {
