@@ -429,9 +429,9 @@ test comments, and TODOs the same way. When self-reviewing a diff,
 walk every comment in it through the three questions before pushing —
 most of what gets caught downstream is caught here for free.
 
-## Flatty Framework
+## Flatbed Framework
 
-The project uses the internal `flatty` framework for HTTP services with FlatBuffers support.
+The project uses the internal `flatbed` framework for HTTP services with FlatBuffers support.
 
 ### Worker and Route Discovery
 
@@ -439,7 +439,7 @@ The `#[worker]` and `#[route]` macros use the `inventory` crate for **compile-ti
 
 - **No re-exports needed**: Simply declaring a module (`mod workers;`) is sufficient. The macros register items automatically via `inventory::submit!`
 - **Don't suppress unused import warnings**: If the compiler says a re-export is unused, it's genuinely unused. The inventory system discovers items regardless of module visibility
-- Workers are spawned automatically by `Flatty::run()`
+- Workers are spawned automatically by `Flatbed::run()`
 
 ```rust
 // workers/mod.rs - correct pattern
@@ -447,7 +447,7 @@ mod deploy;  // Just declare, no pub use needed
 
 // workers/deploy.rs
 #[worker(name = "my-worker", description = "Does work")]
-pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlattyWorkerError> {
+pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlatbedWorkerError> {
     // Worker logic
 }
 ```

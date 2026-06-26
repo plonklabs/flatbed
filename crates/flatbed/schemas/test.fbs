@@ -1,0 +1,71 @@
+// Test FlatBuffer schema for flatbed integration tests
+
+namespace test;
+
+// Severity levels — exercises the enum codegen path. The first variant
+// (`Info`) is the FlatBuffer default. The codegen re-exports `Severity`
+// from `__fb` so callers can write `generated::test::Severity::Warning`
+// without crossing the internal module boundary.
+enum Severity : byte {
+  Info,
+  Warning,
+  Error,
+}
+
+// Test request message
+table TestRequest {
+  message: string;
+  value: uint64;
+}
+
+// Test response message
+table TestResponse {
+  message: string;
+  value: uint64;
+  success: bool;
+}
+
+// Nested table for testing nested struct support
+table Address {
+  street: string;
+  city: string;
+  zip_code: int32;
+}
+
+// User request with nested Address
+table UserRequest {
+  name: string;
+  age: int32;
+  address: Address;
+}
+
+// User response with nested Address
+table UserResponse {
+  user_id: uint64;
+  name: string;
+  address: Address;
+  success: bool;
+}
+
+// Exercises the vector-of-tables codegen path: an addressbook holds a
+// list of nested `Address` tables and zero or more user names. The wire
+// format reads each Address as a WIPOffset; the high-level Rust struct
+// surfaces it as `Option<Vec<Address>>`.
+table AddressBook {
+  owner: string;
+  addresses: [Address];
+  contact_names: [string];
+}
+
+// Exercises the enum codegen path: a `Severity` field lives alongside an
+// `[Severity]` vector. Bare enum fields default to the first variant
+// (`Severity::Info`) and round-trip through scalar accessors; vectors of
+// enums go through `create_vector` / `iter().collect()` because flatc emits
+// `Push + Copy` impls on the enum type.
+table LogEvent {
+  message: string;
+  severity: Severity;
+  history: [Severity];
+}
+
+root_type TestRequest;

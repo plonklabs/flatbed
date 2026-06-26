@@ -1,0 +1,13 @@
+[package]
+name = "flatbed_build"
+version.workspace = true
+edition = "2021"
+
+[[bin]]
+name = "flatbed"
+path = "src/bin/flatbed.rs"
+
+[dependencies]
+flatc-rust = "0.2.0"
+flatbuffers-reflection = "0.1"
+clap = { version = "4", features = ["derive"] }

@@ -1,0 +1,54 @@
+[package]
+name = "flatbed"
+version.workspace = true
+edition = "2021"
+
+[features]
+default = []
+openapi = ["utoipa"]
+telemetry = []
+prometheus = ["telemetry", "dep:prometheus"]
+nats = ["async-nats", "futures"]
+k8s = ["kube", "futures"]
+
+[dependencies]
+flatbuffers = "25.2.10"
+inventory = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+flatbed_macros = { path = "../flatbed_macros" }
+utoipa = { version = "5", optional = true }
+uuid = { version = "1.11", features = ["v4"] }
+
+async-nats = { version = "0.38", optional = true }
+futures = { version = "0.3", optional = true }
+kube = { version = "1.1", features = ["runtime", "client"], optional = true }
+prometheus = { version = "0.14", optional = true }
+
+# Hyper stack — Envoy terminates TLS upstream, so no rustls /
+# native-tls feature here.
+hyper = { version = "1.4", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server", "http1", "http2"] }
+http-body-util = "0.1"
+http = "1.2"
+bytes = "1.9"
+tokio = { version = "1.44", features = ["rt-multi-thread", "net", "signal", "macros", "time", "sync"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+serde_json = "1.0"
+tracing = { workspace = true }
+
+[build-dependencies]
+flatbed_build = { path = "../flatbed_build" }
+
+[dev-dependencies]
+utoipa = "5"
+reqwest = { version = "0.12", features = ["json"] }
+k8s-openapi = { version = "0.25", features = ["v1_32"] }
+futures = "0.3"
+
+[[test]]
+name = "hyper_integration"
+required-features = ["openapi", "telemetry"]
+
+[[test]]
+name = "reconciler_tests"
+required-features = ["nats", "k8s"]
