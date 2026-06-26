@@ -68,7 +68,11 @@ cargo test --workspace --all-features
 cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 
+# Regenerate committed FlatBuffer code after editing a `.fbs` schema
+FLATBED_GENERATE=1 cargo build -p flatbed && cargo fmt --all
+
 # Verify committed FlatBuffer codegen matches the `.fbs` schemas
+# (also runs in CI as the `check-generated` job)
 bash scripts/check-generated.sh
 ```
 
@@ -208,7 +212,7 @@ pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlatbedWorkerError> {
 
 - crates.io publishing is automated via `.github/workflows/publish.yml`,
   triggered by `flatbed-v*` tag pushes. The workflow uses the
-  `CARGO_REGISTRY_TOKEN` repo secret.
+  `CARGO_REGISTRY_TOKEN` org secret (visibility: all repos).
 - The standalone `flatbed` CLI binary is published as a GitHub release
   asset by `.github/workflows/release-bin.yml` on the same tag push.
 - Version bumps live in `[workspace.package]` of the root `Cargo.toml`.
