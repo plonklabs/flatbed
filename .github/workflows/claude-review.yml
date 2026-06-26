@@ -10,8 +10,15 @@ concurrency:
 
 jobs:
   review:
-    if: ${{ !github.event.pull_request.draft }}
-    runs-on: prod-std
+    # Collaborators only: skip drafts and PRs from outside contributors
+    # (fork PRs don't receive org secrets, so the review couldn't run
+    # there anyway). author_association is OWNER/MEMBER/COLLABORATOR for
+    # people with repo access.
+    if: >-
+      ${{ !github.event.pull_request.draft &&
+          contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                   github.event.pull_request.author_association) }}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
