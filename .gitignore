@@ -1,0 +1,18 @@
+/target
+**/*.rs.bk
+**/*.bak
+Cargo.lock.bak
+
+# IDE noise
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Claude Code session artifacts that shouldn't propagate
+.claude/worktrees/
+.claude/settings.local.json

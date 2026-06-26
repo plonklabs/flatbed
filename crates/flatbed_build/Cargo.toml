@@ -1,7 +1,15 @@
 [package]
 name = "flatbed_build"
+description = "Build-time FlatBuffer codegen and the flatbed CLI tool"
+readme = "../../README.md"
+keywords = ["flatbuffers", "build-script", "codegen", "cli"]
+categories = ["development-tools::build-utils", "command-line-utilities"]
 version.workspace = true
-edition = "2021"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
 
 [[bin]]
 name = "flatbed"

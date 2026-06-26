@@ -1,8 +1,7 @@
 name: Build flatbed binary
 
 # Publishes the `flatbed` codegen helper as a standalone binary in a
-# GitHub Release, decoupled from the workspace's docker images. Two
-# trigger paths:
+# GitHub Release. Two trigger paths:
 #
 #   - push a `flatbed-vX.Y.Z` tag → cuts a versioned release with the
 #     amd64 + arm64 binaries and their sha256 checksums attached.
@@ -12,9 +11,8 @@ name: Build flatbed binary
 #     set so dispatch builds don't appear as the "latest" versioned
 #     release that automated consumers key off.
 #
-# Cross-arch is done by matrix on native runners: `prod-std` for
-# amd64, the GitHub-hosted `ubuntu-24.04-arm` for arm64. No cross
-# toolchain involved — each runner builds its own arch.
+# Cross-arch is done by matrix on GitHub-hosted native runners. No
+# cross toolchain involved — each runner builds its own arch.
 
 on:
   push:
@@ -33,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: prod-std
+          - runner: ubuntu-latest
             arch: amd64
           - runner: ubuntu-24.04-arm
             arch: arm64
@@ -51,10 +49,6 @@ jobs:
 
       - name: Stage binary + checksum
         run: |
-          # Rename so the artifact filename advertises its arch — the
-          # release attachments will sit side by side without colliding,
-          # and downstream consumers can pick the right one via
-          # `dpkg --print-architecture` or equivalent.
           install -m 0755 target/release/flatbed "flatbed-linux-${{ matrix.arch }}"
           sha256sum "flatbed-linux-${{ matrix.arch }}" > "flatbed-linux-${{ matrix.arch }}.sha256"
 
@@ -70,12 +64,9 @@ jobs:
 
   release:
     needs: build
-    runs-on: prod-std
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      # `gh release create` needs write access on the repo's releases
-      # API. `contents: read` (the default for non-default workflows)
-      # would 403 on the upload step.
       contents: write
     steps:
       - uses: actions/checkout@v4
@@ -91,21 +82,15 @@ jobs:
         # Untrusted context values (anyone with write access can push
         # a tag whose name contains shell metacharacters) flow through
         # `env:` rather than `${{ … }}` inside `run:`. The shell sees
-        # them as data, not as part of the script — closes the
-        # command-injection vector the bot-review pattern audit flags.
+        # them as data, not as part of the script.
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           if [ "$EVENT_NAME" = "push" ]; then
-            # Tag push: ref_name is the tag itself (`flatbed-vX.Y.Z`).
             echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
-            # Dispatch: synthesise a tag from the short SHA so the
-            # release is uniquely addressable but clearly not a
-            # versioned cut. Prerelease flag prevents it from
-            # showing as the "latest" release.
             echo "tag=flatbed-dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
@@ -113,16 +98,13 @@ jobs:
       - name: Write release notes
         # Quoted heredoc keeps every backtick / code-fence / `${ARCH}`
         # reference verbatim — no need to escape each one. The release
-        # tag is then inserted by a `sed` pass against a sentinel
-        # token so the shell never has to expand inside the markdown
-        # body (which is what the prior `<<'EOF'` + bare `<tag>` shape
-        # got wrong — placeholder landed verbatim in the published
-        # notes).
+        # tag is then inserted by a `sed` pass against a sentinel token
+        # so the shell never has to expand inside the markdown body.
         env:
           RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           cat > notes.md <<'EOF'
-          Standalone build of the `flatbed` codegen helper from the plonk monorepo.
+          Standalone build of the `flatbed` FlatBuffer codegen helper.
 
           Binaries (each with a matching `.sha256` checksum):
           - `flatbed-linux-amd64`
@@ -132,15 +114,12 @@ jobs:
 
           ```bash
           ARCH=$(dpkg --print-architecture)
-          curl -fLO "https://github.com/plonklabs/plonk/releases/download/__RELEASE_TAG__/flatbed-linux-${ARCH}"
-          curl -fLO "https://github.com/plonklabs/plonk/releases/download/__RELEASE_TAG__/flatbed-linux-${ARCH}.sha256"
+          curl -fLO "https://github.com/plonklabs/flatbed/releases/download/__RELEASE_TAG__/flatbed-linux-${ARCH}"
+          curl -fLO "https://github.com/plonklabs/flatbed/releases/download/__RELEASE_TAG__/flatbed-linux-${ARCH}.sha256"
           sha256sum -c "flatbed-linux-${ARCH}.sha256"
           install -m 0755 "flatbed-linux-${ARCH}" /usr/local/bin/flatbed
           ```
           EOF
-          # `|` as the sed delimiter so a `/` in a tag name never
-          # breaks the substitution — tag names are not assumed to
-          # be `/`-free.
           sed -i "s|__RELEASE_TAG__|$RELEASE_TAG|g" notes.md
 
       - name: Create release
@@ -161,11 +140,3 @@ jobs:
             dist/flatbed-linux-amd64.sha256 \
             dist/flatbed-linux-arm64 \
             dist/flatbed-linux-arm64.sha256
-
-  notify-failure:
-    needs: [build, release]
-    if: failure()
-    uses: ./.github/workflows/notify-failure.yml
-    with:
-      workflow_name: Build flatbed binary
-    secrets: inherit

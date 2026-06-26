@@ -1,0 +1,56 @@
+name: Publish to crates.io
+
+# Tag-driven publish of the three flatbed crates in dependency order
+# (flatbed_macros → flatbed_build → flatbed). Runs on `flatbed-v*` tag
+# pushes, the same trigger as `release-bin.yml`, so a single tag push
+# both publishes the crates and cuts the binary release.
+#
+# The `cargo publish` between crates needs the previous one's index
+# entry to be visible on crates.io; a fixed sleep is the pragmatic
+# floor (crates.io's index propagation is usually <30s but occasionally
+# slower).
+
+on:
+  push:
+    tags: ['flatbed-v*']
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install flatc
+        run: |
+          FLATC_VERSION="$(cat .flatc-version)"
+          curl -fL "https://github.com/google/flatbuffers/releases/download/v${FLATC_VERSION}/Linux.flatc.binary.g++-13.zip" -o flatc.zip
+          unzip flatc.zip
+          sudo install -m 0755 flatc /usr/local/bin/flatc
+
+      - name: Publish flatbed_macros
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p flatbed_macros
+
+      - name: Wait for crates.io index
+        run: sleep 60
+
+      - name: Publish flatbed_build
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p flatbed_build
+
+      - name: Wait for crates.io index
+        run: sleep 60
+
+      - name: Publish flatbed
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p flatbed
