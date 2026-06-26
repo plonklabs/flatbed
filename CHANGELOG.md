@@ -9,6 +9,13 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the telemetry config now reads `FLATBED_SERVICE_NAME`,
+  `FLATBED_SERVICE_ADDRESS`, and `FLATBED_TELEMETRY_PORT` environment
+  variables, renamed from their `PLONK_*` predecessors. Update any
+  deployment that set the old names.
+
 ## [0.0.1] — 2026-06-26
 
 ### Added
@@ -19,5 +26,5 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/v0.0.1...HEAD
-[0.0.1]: https://github.com/plonklabs/flatbed/releases/tag/v0.0.1
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.1...HEAD
+[0.0.1]: https://github.com/plonklabs/flatbed/releases/tag/flatbed-v0.0.1

@@ -1,7 +1,8 @@
-/// Flatbuffers utility library for Plonk
+/// FlatBuffers utilities and route registry for the flatbed framework.
 ///
 /// This library provides helper functions and utilities for working with
-/// FlatBuffers in the Plonk ecosystem.
+/// FlatBuffers, plus the compile-time route registry that powers the
+/// `#[route]` macro.
 ///
 /// # Plain Struct API
 ///

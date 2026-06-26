@@ -1,6 +1,6 @@
 # flatbed
 
-FlatBuffers utilities and route decorator system for Plonk.
+FlatBuffers utilities and route decorator system for the flatbed framework.
 
 ## Overview
 
@@ -11,11 +11,13 @@ FlatBuffers utilities and route decorator system for Plonk.
 
 ## Network Architecture
 
-Flatbed is designed to run inside Kubernetes pods with an Envoy sidecar proxy:
+flatbed is designed to run behind a proxy that terminates TLS — a reverse
+proxy, API gateway, or service-mesh sidecar (Envoy, nginx, Linkerd, …):
 
-- **No TLS support** - Envoy handles TLS termination, mTLS, and external routing
+- **No TLS support** - the proxy handles TLS termination, mTLS, and external routing
 - **HTTP/1.1 and HTTP/2 cleartext** - Both protocols auto-negotiated
-- All traffic is pod-internal, simplifying the framework
+- Traffic between the proxy and the service is plaintext, which keeps the
+  framework small
 
 ## Features
 
@@ -25,7 +27,7 @@ Helper functions for creating and verifying FlatBuffer messages:
 
 ```rust
 use flatbed::{new_builder, verify_buffer, get_root};
-use plonk_data::PingRequest;
+use my_types::PingRequest;
 
 // Create a builder
 let mut builder = new_builder();
@@ -423,11 +425,12 @@ The macro crate is separate because Rust requires `proc-macro` crates to only ex
 - `flatbuffers` - FlatBuffer runtime
 - `inventory` - Distributed plugin registration
 - `http` - HTTP types (Method, StatusCode, HeaderMap)
-- `hyper` / `hyper-util` - HTTP server (no TLS - Envoy handles it)
+- `hyper` / `hyper-util` - HTTP server (no TLS - the fronting proxy handles it)
 - `tokio` - Async runtime
 - `serde` / `serde_json` - JSON serialization
 - `flatbed_macros` - Route decorator and main macros
 
 ## License
 
-Part of the Plonk project.
+Licensed under either of Apache License, Version 2.0 or MIT license at your
+option. See the [repository root](../../README.md#license) for details.

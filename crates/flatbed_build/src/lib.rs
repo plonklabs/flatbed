@@ -11,8 +11,8 @@
 //! // In build.rs — multiple schemas can be chained
 //! fn main() {
 //!     flatbed_build::Config::new()
-//!         .schema("schemas/operator.fbs")
-//!         .schema("schemas/plonk_box.fbs")
+//!         .schema("schemas/ping.fbs")
+//!         .schema("schemas/user.fbs")
 //!         .compile()
 //!         .expect("schema compilation failed");
 //! }
