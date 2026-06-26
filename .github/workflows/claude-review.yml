@@ -1,0 +1,168 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Collaborators only: skip drafts and PRs from outside contributors
+    # (fork PRs don't receive org secrets, so the review couldn't run
+    # there anyway). author_association is OWNER/MEMBER/COLLABORATOR for
+    # people with repo access.
+    if: >-
+      ${{ !github.event.pull_request.draft &&
+          contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'),
+                   github.event.pull_request.author_association) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            ## Tools and budget
+
+            You run with a 50-turn budget and a strict tool allowlist —
+            **every tool call outside the list is denied and burns a
+            turn**. Don't probe. Specifically, you have:
+
+            - **Built-ins**: `Read`, `Grep`, `Glob`.
+            - **MCP**:
+              `mcp__github_inline_comment__create_inline_comment` for
+              line-anchored findings (pass `confirmed: true`).
+            - **`Bash(...)`**:
+              `gh pr comment`, `gh pr diff`, `gh pr view`, `gh api`;
+              `git diff`, `git log`, `git show`, `git rev-parse`,
+              `git status`, `git branch`, `git ls-files`;
+              `cat`, `grep`, `rg`, `find`, `ls`, `wc`, `head`, `tail`,
+              `awk`, `sed`, `jq`.
+
+            You **cannot** `Edit` or `Write` files, run `cargo` /
+            `make` build commands, fetch arbitrary URLs, or shell out
+            beyond the list above. This is a review-only session; if you
+            want a refactor, describe it in the comment — don't try to
+            commit it. Conserving the turn budget for substantive review
+            beats one-shot diagnostics against the wrong tool.
+
+            ## Setup
+
+            Before reviewing, read `CLAUDE.md` end-to-end. It carries
+            the project's standards — notably the **Minimalism +
+            pragmatism** rule (delete dead weight; three similar lines
+            beat a premature trait) and the extensive **Comments**
+            section (default to no comment; a comment must describe a
+            durable property of the world the code runs in, not the
+            change that produced it). Apply both to every diff.
+
+            flatbed is a small Rust HTTP framework with three crates:
+            `flatbed` (Hyper server, route registry, request/response
+            types, optional `telemetry`/`openapi`/`nats`/`k8s` gates),
+            `flatbed_macros` (`#[route]`, `#[worker]`, `#[flatbed::main]`),
+            and `flatbed_build` (FlatBuffer codegen + the `flatbed` CLI).
+            Routes and workers are discovered at compile time via the
+            `inventory` crate — declaring a module is enough, no
+            re-exports needed.
+
+            ## What to review
+
+            1. **Correctness** — logic errors, edge cases, error
+               handling, missing branches.
+            2. **Rust idioms** (per `CLAUDE.md` Coding Style) — let-else
+               over nested `if-let`, early returns on guards, `?` for
+               propagation (not explicit `match`), flat functions
+               (1–2 levels of indentation), no wildcard imports.
+            3. **Public API hygiene** — every public function, type, and
+               module needs a doc comment; `clippy --all-features
+               -- -D warnings` must stay clean.
+            4. **Framework invariants** — `#[route]` / `#[worker]`
+               discovery relies on `inventory`; don't add re-exports to
+               "fix" unused-import warnings (a genuinely unused import is
+               unused). Handlers take typed `Request<T, C>`; there is no
+               magic dependency injection.
+            5. **FlatBuffer codegen** — generated `_generated.rs` /
+               `_flatbed.rs` must stay in sync with the `.fbs` schemas
+               (`scripts/check-generated.sh`); flag schema changes that
+               don't regenerate, and codegen changes that would produce
+               nondeterministic output.
+            6. **Content-type / wire format** — request `Content-Type`
+               selects the codec (`application/json` vs
+               `application/x-flatbuffers`) and the response mirrors it;
+               flag any path that breaks that symmetry.
+            7. **Comment hygiene** — flag forward-looking / temporal
+               phrasing ("future X…", "the new path", "for when we
+               add…", "pre-cutover"), comments that restate the code,
+               references to other code/docs/issues by name or number
+               inside `///`/`//`, and reasoning about the patch rather
+               than the code. See the **Comments** section of `CLAUDE.md`.
+
+            ## Class-level audit rule (critical)
+
+            When you spot one instance of an issue — a wire-shape, a
+            naming drift, a forward-looking comment, a missing doc on a
+            public item — **grep the diff and the surrounding files for
+            every other instance of the same shape** before posting.
+            Bundle them into **one comment per pattern**, naming the rule
+            and listing every match. Don't surface one instance and wait
+            for the fix to find the next. Use
+            `git diff origin/main..HEAD --name-only` for the file list;
+            the sweep crosses all files in the change set, not just the
+            one the first instance lives in.
+
+            ## Symmetric-branch sweep
+
+            When a change touches one match arm or one direction of a
+            paired API, audit the symmetric branch for the same
+            behaviour before posting (e.g. if the JSON encode path gains
+            a header, check the FlatBuffer encode path; if a worker
+            startup path sets a flag, check the shutdown path).
+
+            ## Scope: detect, don't solve
+
+            You are **reviewing**, not refactoring. Detect issues,
+            identify gaps, and audit class-level patterns — don't design
+            the fix. A finding can carry a one-line suggestion when the
+            fix has one obvious form ("add a doc comment on these three
+            `pub fn`s", "use let-else here"). It should NOT carry
+            multi-block proposed implementations, "consider refactoring
+            to…" with a long alternative design, or rewritten function
+            bodies. Detect → cite siblings → suggest in one line if
+            obvious → move on.
+
+            ## Tone
+
+            Be concise per finding; be exhaustive on the pattern audits.
+            Genuine issues only — skip style nits covered by rustfmt. If
+            the code is good, say so briefly. Aim for depth on classes of
+            issue rather than volume of individual line-pins; the goal is
+            to land the PR in ≤ 2 review rounds.
+
+            ## Output
+
+            Use `gh pr comment` for top-level feedback.
+            Use `mcp__github_inline_comment__create_inline_comment`
+            (with `confirmed: true`) for line-anchored issues. Each
+            inline comment that flags a class-level issue must list
+            every matching site so the author can fix the class in
+            one round.
+
+            Only post GitHub comments — don't submit review text as
+            messages.
+          claude_args: >-
+            --model claude-sonnet-4-6
+            --max-turns 50
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Read,Grep,Glob,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(cat:*),Bash(grep:*),Bash(rg:*),Bash(find:*),Bash(ls:*),Bash(wc:*),Bash(head:*),Bash(tail:*),Bash(awk:*),Bash(sed:*),Bash(jq:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git rev-parse:*),Bash(git status:*),Bash(git branch:*),Bash(git ls-files:*)"
