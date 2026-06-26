@@ -164,7 +164,7 @@ And the author filter combines two signals — `author.__typename == "Bot"` disc
 Top-level review summaries still come from REST (no resolution state on those). The REST API renders GitHub Apps with a `<name>[bot]` login, so the filter at this one site is `claude[bot]` — distinct from the GraphQL filter above, where the same bot appears as bare `claude`:
 
 ```bash
-gh api "repos/plonklabs/plonk/issues/$PR_NUMBER/comments" \
+gh api "repos/plonklabs/flatbed/issues/$PR_NUMBER/comments" \
     --jq '.[] | select(.user.login == "claude[bot]") |
           {id, body, created_at}'
 ```
@@ -198,7 +198,7 @@ For each batch of fix-bound threads on the **same file**:
 
    ```bash
    gh api -X POST \
-       "repos/plonklabs/plonk/pulls/$PR_NUMBER/comments/<comment-id>/replies" \
+       "repos/plonklabs/flatbed/pulls/$PR_NUMBER/comments/<comment-id>/replies" \
        -f body='Fixed in <commit-sha>. <one-sentence what changed and why it covers more than the line>'
    ```
 
@@ -224,7 +224,7 @@ For each thread the user marked as **decline** in Phase 2c:
 
    ```bash
    gh api -X POST \
-       "repos/plonklabs/plonk/pulls/$PR_NUMBER/comments/<comment-id>/replies" \
+       "repos/plonklabs/flatbed/pulls/$PR_NUMBER/comments/<comment-id>/replies" \
        -f body='<reasoning>'
    ```
 
