@@ -71,10 +71,36 @@ jobs:
           sudo install -m 0755 flatc /usr/local/bin/flatc
       - run: bash scripts/check-generated.sh
 
+  # The examples/ projects are standalone packages (own [workspace] table), so
+  # the workspace clippy/test jobs above don't reach them. Lint each one so a
+  # framework API change can't silently break a published example.
+  examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install flatc
+        run: |
+          FLATC_VERSION="$(cat .flatc-version)"
+          curl -fL "https://github.com/google/flatbuffers/releases/download/v${FLATC_VERSION}/Linux.flatc.binary.g++-13.zip" -o flatc.zip
+          unzip flatc.zip
+          sudo install -m 0755 flatc /usr/local/bin/flatc
+          flatc --version
+      - run: |
+          for manifest in examples/*/Cargo.toml; do
+            echo "::group::clippy $manifest"
+            cargo clippy --manifest-path "$manifest" --all-targets -- -D warnings
+            echo "::endgroup::"
+          done
+
   # Alert Discord only on main-branch breakage. PR failures are visible to the
   # author already, and fork PRs don't get the DISCORD_WEBHOOK secret.
   notify-failure:
-    needs: [fmt, clippy, test, check-generated]
+    needs: [fmt, clippy, test, check-generated, examples]
     if: failure() && github.event_name == 'push'
     uses: plonklabs/.github/.github/workflows/discord-notify-failure.yml@main
     with:

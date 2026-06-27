@@ -22,8 +22,6 @@ use flatbed::{
 
 #[derive(Clone)]
 struct AppContext {
-    /// A stand-in for real boot state (a DB pool, a client, …). Set once in the
-    /// boot closure and shared by every handler and worker.
     started_at: String,
 }
 
@@ -43,8 +41,6 @@ async fn info(
     }))
 }
 
-/// Background worker: logs a heartbeat every few seconds, reading the same
-/// shared context the handlers use.
 #[derive(Default)]
 struct Heartbeat;
 
@@ -73,8 +69,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .splash("context-worker-example — POST /info");
 
     Flatbed::run(config, |_| async {
-        // Real services would connect a DB / build clients here. We just stamp a
-        // value to make the shared context observable.
         let started_at = format!("boot-{}", std::process::id());
         Ok(AppContext { started_at })
     })

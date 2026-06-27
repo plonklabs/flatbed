@@ -5,8 +5,7 @@
 
 FROM rust:1-bookworm AS builder
 
-# Pinned to match /.flatc-version. Bump both together — flatc version drift
-# changes the generated code byte-for-byte.
+# flatc version drift changes the generated code byte-for-byte — keep this pinned.
 ARG FLATC_VERSION=25.9.23
 RUN apt-get update && apt-get install -y --no-install-recommends curl unzip \
  && curl -fL "https://github.com/google/flatbuffers/releases/download/v${FLATC_VERSION}/Linux.flatc.binary.g++-13.zip" -o /tmp/flatc.zip \
