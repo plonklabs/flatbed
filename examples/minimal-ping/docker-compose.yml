@@ -1,0 +1,8 @@
+services:
+  app:
+    build:
+      # Repo root, so the ../../crates/flatbed path dependency resolves.
+      context: ../..
+      dockerfile: examples/minimal-ping/Dockerfile
+    ports:
+      - "8080:8080"

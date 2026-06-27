@@ -1,0 +1,12 @@
+namespace ping;
+
+table PingRequest {
+  message: string;
+}
+
+table PingResponse {
+  message: string;
+  success: bool;
+}
+
+root_type PingRequest;
