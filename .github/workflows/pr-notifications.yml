@@ -1,0 +1,10 @@
+name: PR Discord Notifications
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  notify:
+    uses: plonklabs/.github/.github/workflows/discord-pr.yml@main
+    secrets: inherit

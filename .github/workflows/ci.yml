@@ -70,3 +70,13 @@ jobs:
           unzip flatc.zip
           sudo install -m 0755 flatc /usr/local/bin/flatc
       - run: bash scripts/check-generated.sh
+
+  # Alert Discord only on main-branch breakage. PR failures are visible to the
+  # author already, and fork PRs don't get the DISCORD_WEBHOOK secret.
+  notify-failure:
+    needs: [fmt, clippy, test, check-generated]
+    if: failure() && github.event_name == 'push'
+    uses: plonklabs/.github/.github/workflows/discord-notify-failure.yml@main
+    with:
+      workflow_name: CI
+    secrets: inherit
