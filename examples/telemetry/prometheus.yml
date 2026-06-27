@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: flatbed
+    static_configs:
+      # `app` is the compose service name, resolved on the compose network.
+      - targets: ["app:8080"]

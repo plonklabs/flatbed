@@ -1,4 +1,7 @@
 /target
+# Each example under examples/ is its own standalone Cargo package.
+examples/*/target/
+examples/*/Cargo.lock
 **/*.rs.bk
 **/*.bak
 Cargo.lock.bak
