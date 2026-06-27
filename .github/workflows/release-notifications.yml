@@ -1,0 +1,10 @@
+name: Release Discord Notifications
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  notify:
+    uses: plonklabs/.github/.github/workflows/discord-release.yml@main
+    secrets: inherit

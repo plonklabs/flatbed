@@ -167,3 +167,11 @@ jobs:
             dist/flatbed-darwin-amd64.sha256 \
             dist/flatbed-darwin-arm64 \
             dist/flatbed-darwin-arm64.sha256
+
+  notify-failure:
+    needs: [build, release]
+    if: failure()
+    uses: plonklabs/.github/.github/workflows/discord-notify-failure.yml@main
+    with:
+      workflow_name: Build flatbed binary
+    secrets: inherit

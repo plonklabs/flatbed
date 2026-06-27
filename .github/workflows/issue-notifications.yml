@@ -1,0 +1,12 @@
+name: Issue Discord Notifications
+
+on:
+  issues:
+    types: [opened, closed, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  notify:
+    uses: plonklabs/.github/.github/workflows/discord-issue.yml@main
+    secrets: inherit
