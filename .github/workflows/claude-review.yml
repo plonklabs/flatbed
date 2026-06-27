@@ -13,5 +13,11 @@ jobs:
   # instructions live in REVIEW.md at the repo root. Defaults (ubuntu-latest,
   # collaborators-only) match this repo's previous behavior.
   review:
+    # The repo's default GITHUB_TOKEN is read-only; a reusable workflow can't
+    # elevate beyond the caller, so grant the review's needs here.
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     uses: plonklabs/.github/.github/workflows/claude-review.yml@main
     secrets: inherit
