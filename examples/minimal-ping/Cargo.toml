@@ -1,0 +1,24 @@
+[package]
+name = "flatbed-example-minimal-ping"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Empty table: this example is a standalone package, not a member of the
+# flatbed workspace one level up.
+[workspace]
+
+[dependencies]
+# `openapi` is required: flatbed_build's codegen always emits utoipa's
+# `ToSchema` derive, which only resolves when flatbed re-exports utoipa
+# under this feature.
+flatbed = { path = "../../crates/flatbed", features = ["openapi"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# The flatc-generated wire-format code uses `extern crate flatbuffers` and
+# serde derives that reference the `serde` crate by name, so both must be
+# direct dependencies. Versions match flatbed's own (crates/flatbed/Cargo.toml).
+flatbuffers = "25.2.10"
+serde = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+flatbed_build = { path = "../../crates/flatbed_build" }

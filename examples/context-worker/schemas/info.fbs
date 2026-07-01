@@ -1,0 +1,12 @@
+namespace info;
+
+table InfoRequest {
+  name: string;
+}
+
+table InfoResponse {
+  greeting: string;
+  started_at: string;
+}
+
+root_type InfoRequest;

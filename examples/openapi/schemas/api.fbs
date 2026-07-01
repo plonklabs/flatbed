@@ -1,0 +1,20 @@
+namespace api;
+
+table GreetRequest {
+  name: string;
+}
+
+table GreetResponse {
+  greeting: string;
+}
+
+table EchoRequest {
+  message: string;
+  times: uint32;
+}
+
+table EchoResponse {
+  message: string;
+}
+
+root_type GreetRequest;

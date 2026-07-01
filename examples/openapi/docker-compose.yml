@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      # Repo root, so the ../../crates/flatbed path dependency resolves.
+      context: ../..
+      dockerfile: examples/openapi/Dockerfile
+    ports:
+      - "8080:8080"
+
+  swagger:
+    image: swaggerapi/swagger-ui
+    environment:
+      # Resolved by your browser, so it points at the host-published app port.
+      URL: http://localhost:8080/openapi.json
+    ports:
+      - "8081:8080"
+    depends_on:
+      - app
