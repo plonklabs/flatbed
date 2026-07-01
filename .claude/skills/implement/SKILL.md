@@ -59,9 +59,9 @@ For each PR in order:
    cargo fmt --all
    cargo clippy --workspace --all-targets --all-features -- -D warnings
    cargo test --workspace          # add --all-features when feature-gated code changed
-   bash scripts/check-generated.sh # cheap diff — run it every time, per CLAUDE.md
+   bash scripts/check-generated.sh # cheap diff; catches generated-code drift even when no schema changed
    ```
-   For changes to a standalone package outside the workspace (one with its own `[workspace]` table), run `cargo fmt`/`clippy -D warnings`/`build` inside that directory too — the workspace gates don't reach it.
+   For changes to a standalone package outside the workspace (one with its own `[workspace]` table), run `cargo fmt`/`clippy -D warnings`/`test`/`build` inside that directory too — the workspace gates don't reach it.
    All must be green before pushing.
 4. Push and open a **draft** PR via `/pr`. Title and body follow the `/pr` skill's rules; link the epic when there is one.
 
@@ -145,7 +145,7 @@ When the loop completes (all PRs merged) OR stops on a blocker:
 - Never skip nits in self-review under this skill — autonomous mode applies them all.
 - `flatc` (version pinned in `.flatc-version`) must be on `PATH` for any build that triggers codegen; version drift produces byte-level diffs that make `check-generated.sh` report stale.
 - Smoke means running the artifact and observing a distinguishing signal — never substitute "it compiled" for it. Build + run the affected example/service/CLI and assert real output.
-- Standalone packages outside the workspace (those with their own `[workspace]` table) are not reached by `cargo *--workspace*` gates — fmt/clippy/build them in their own directory.
+- Standalone packages outside the workspace (those with their own `[workspace]` table) are not reached by `cargo --workspace` gates — fmt/clippy/test/build them in their own directory.
 - Lane B (smoke) starts right after flipping ready and runs concurrently with Lane A's bot-review loop.
 - HEAD-pinning: every Lane B run is tagged with the SHA it started on. When Lane A pushes a fix, kill in-flight Lane B and restart against the new SHA. Merge requires both lanes green at the **same** SHA.
 - Merge gates: `/review --auto` green AND smoke green (when required) AND the local gate suite (fmt clean + clippy `-D warnings` + `cargo test --workspace` + `check-generated.sh`) green at HEAD. All must hold — no exceptions.
