@@ -2,7 +2,9 @@
 
 ## Description
 
-Fires after a design discussion has settled an ordered list of PRs to ship. For each PR in order: implement → self-review and fix everything including nits → flip to ready → run `/review --auto` (bot review + apply-fixes loop) in parallel with cluster-side tests (e2e + smoke) → merge → move on. Pure-cleanup PRs skip the cluster tests; the last non-cleanup PR MUST be smoke-tested via the `plonk` CLI (never `kubectl`-mutating) after `make dev-reset`. Invoking this skill explicitly authorizes autonomous ready/merge for the listed PRs — it overrides the default [[feedback_draft_prs]] / [[feedback_explicit_merge_authorization]] rules for *this* invocation only.
+Fires after a design discussion has settled an ordered list of PRs to ship. For each PR in order: implement → self-review and fix everything including nits → flip to ready → run `/review --auto` (bot review + apply-fixes loop) in parallel with an end-to-end smoke of the built artifact → merge → move on. Pure-cleanup PRs skip the smoke; the last non-cleanup PR MUST be smoke-tested by building and exercising the real artifact it completes. Invoking this skill explicitly authorizes autonomous ready/merge for the listed PRs — it overrides the default [[feedback_draft_prs]] / [[feedback_explicit_merge_authorization]] rules for *this* invocation only.
+
+flatbed is a library + codegen repo (three crates — `flatbed`, `flatbed_macros`, `flatbed_build`), not a deployed service. There is no cluster: the gates are Cargo's, the codegen check, and running the affected artifact. The `flatc` pinned in `.flatc-version` must be on `PATH` for any build that triggers codegen.
 
 ## Arguments
 - `$ARGUMENTS` — optional GitHub epic issue number (e.g. `/implement 614`). If given, the skill reads that epic's `## Steps` checklist (the format produced by `/spec`) as a starting hint. If both are present, the **chat conversation is the source of truth**; the epic is only consulted when the chat list is implicit.
@@ -19,29 +21,26 @@ When the user runs `/implement` or `/implement <epic>`, execute the following ph
    ```
    Extract unchecked `- [ ]` items under the `## Steps` section. These are the candidate PRs.
 
-2. **Otherwise**, re-state the ordered PR list inferred from the immediately preceding chat conversation.
+2. **Otherwise**, re-state the ordered PR list inferred from the immediately preceding chat conversation. A single agreed deliverable is a valid one-item list — treat it as one PR, don't force a split.
 
 3. **Print** the numbered list back to the user before doing anything else.
 
-4. **If the list is ambiguous** (no clear order, zero items, scope missing from one or more entries), STOP and ask the user to restate the list. Never invent a PR not on the agreed list.
+4. **If the list is ambiguous** (no clear order, zero items, scope missing from one or more entries), STOP and ask the user to restate the list. Never invent a PR not on the agreed list. A clear single-PR deliverable is **not** ambiguous — proceed without asking.
 
-5. **State authorization once**: print one line confirming that the user's invocation of `/implement` authorizes autonomous flip-to-ready and squash-merge for the listed PRs only (this is the explicit override of [[feedback_draft_prs]] and [[feedback_explicit_merge_authorization]] for this run).
+5. **State authorization once**: print one line confirming that the user's invocation of `/implement` authorizes autonomous flip-to-ready and squash-merge for the listed PRs only (this is the explicit override of [[feedback_draft_prs]] and [[feedback_explicit_merge_authorization]] for this run). Having stated it, **do not re-ask for merge permission later** — that is exactly the re-prompting this skill exists to eliminate. The only thing that pauses the loop is a red gate or a design-level failure (see Failure handling), never caution about an irreversible step you were already authorized to take.
 
 ### Phase 1: Classify each PR
 
 Annotate every PR with the following fields and print the classification table to the user before the loop starts:
 
-- **`pure-cleanup: yes/no`** — yes if the entire PR is formatting / dead-code deletion / comment hygiene / dependency bumps with no behaviour change. Pure-cleanup PRs skip both e2e and smoke.
-- **`smoke-test: required/skip`** — binary, no middle ground:
-  - `required` if the PR changes the cluster's installed shape (operator kind, sidecar topology, namespace contents, RBAC, CRD wire format) — per [[feedback_smoke_test_scope]], "intermediate plumbing" is exactly where shape changes hide,
-  - `required` if this is the last non-cleanup PR in the stack (mandatory floor — even a CLI-only wrapper is exercised end-to-end here),
-  - `skip` for pure-cleanup PRs and for PRs that don't touch the cluster's post-install shape.
-- **`e2e: required/skip`**:
-  - `required` for any PR touching operator reconcilers, CRDs, CLI install/uninstall flows, worker contracts, or anything else `make e2e-worktree` exercises,
-  - `skip` for pure-cleanup PRs and docs-only PRs.
-
-  e2e is the automated test analog of the manual smoke. The two are independent: a PR can need both, either, or neither.
+- **`pure-cleanup: yes/no`** — yes if the entire PR is formatting / dead-code deletion / comment hygiene / dependency bumps with no behaviour change. Pure-cleanup PRs skip the smoke (the local gate suite still runs).
+- **`smoke: required/skip`** — does a consumer-observable behaviour need to be exercised on a running artifact?
+  - `required` if the PR changes runtime or wire behaviour someone can observe: route dispatch, request/response handling, content-type negotiation, the server boot/ready lifecycle, worker execution, telemetry/metrics output, the error wire format, **or codegen output** (the generated Rust a downstream crate compiles against).
+  - `required` if this is the last non-cleanup PR in the stack (mandatory floor — even a thin wrapper is exercised end-to-end here).
+  - `skip` for pure-cleanup PRs, docs-only PRs, and purely-internal refactors with no consumer-observable change.
 - **`branch-from: main | <prior-pr-branch>`** — default `main` (merge-first). Only stack if the user explicitly asked during the design discussion, or if a PR's diff cannot be built without the prior PR's code.
+
+The automated test suite is **not** a classification field — it always runs as part of the local gate suite (Phase 2a step 3) and is re-confirmed at merge. Smoke is the one gate that's per-PR optional, because running the artifact only makes sense when a consumer-observable behaviour changed.
 
 ### Phase 2: Per-PR loop
 
@@ -55,22 +54,24 @@ For each PR in order:
    git switch -c feature/<descriptive-slug> origin/main
    ```
 2. Implement only the changes scoped to this PR. Honour [[feedback_strict_migration_scope]] — don't fold in unrelated cleanups.
-3. Run the gate suite locally:
+3. Run the local gate suite (`flatc` on `PATH`). This is the always-run automated baseline, regardless of the `smoke` classification:
    ```bash
    cargo fmt --all
    cargo clippy --workspace --all-targets --all-features -- -D warnings
-   cargo test -p <touched-package>
+   cargo test --workspace          # add --all-features when feature-gated code changed
+   bash scripts/check-generated.sh # cheap diff; catches generated-code drift even when no schema changed
    ```
+   For changes to a standalone package outside the workspace (one with its own `[workspace]` table), run `cargo fmt`/`clippy -D warnings`/`test`/`build` inside that directory too — the workspace gates don't reach it.
    All must be green before pushing.
 4. Push and open a **draft** PR via `/pr`. Title and body follow the `/pr` skill's rules; link the epic when there is one.
 
-Per [[feedback_draft_pr_is_checkpoint]] — push as soon as the code compiles and unit tests pass. e2e doesn't gate the draft push (it runs in Lane B later).
+Per [[feedback_draft_pr_is_checkpoint]] — push as soon as the code compiles and the local gates pass. Smoke doesn't gate the draft push (it runs in Lane B later).
 
 #### 2b. Self-review
 
-1. Invoke `/review` against the draft PR (the review skill's Phase 1 — local self-review against the Quality checklist).
+1. Invoke `/review` against the draft PR (the review skill's Phase 1 — local self-review against the Quality checklist). For a docs/examples-only PR with no framework-logic change, a focused read of the whole change set for correctness and consistency is a sufficient self-review — don't spin up an adversarial pass that has nothing to bite on.
 2. Apply **every** finding: blocking, quality, **and nits**. Autonomous mode does not skip nits.
-3. Re-run `cargo fmt`, `cargo clippy -- -D warnings`, and `cargo test -p <pkg>` after the fix commits.
+3. Re-run the local gate suite after the fix commits.
 4. Self-review is "clean" when re-running it would surface only cosmetic phrasing already addressed and no behavioural issues remain. Apply [[feedback_review_thoroughness]] — fix the class across the whole change set; read whole files, not just diff hunks.
 
 #### 2c. Flip to ready
@@ -81,29 +82,21 @@ gh pr ready <n>
 
 This is the one place [[feedback_draft_prs]] is overridden — by invoking `/implement`, the user pre-authorized ready/merge for the agreed list (already stated in Phase 0 step 5).
 
-#### 2d. Concurrent gates — bot review + cluster tests in parallel
+#### 2d. Concurrent gates — bot review + artifact smoke in parallel
 
-Bot review (`/review --auto`) and cluster-side tests (e2e + smoke) run **concurrently** against the same HEAD to minimize wall-clock. Doing them serially wastes time when both take minutes.
+Bot review (`/review --auto`) and the smoke (Lane B) run **concurrently** against the same HEAD to minimize wall-clock. Doing them serially wastes time when both take minutes.
 
 **Lane A — `/review --auto`** (foreground in the conversation):
 - Invoke `/review <pr#> --auto`. The autonomous review loop handles wait-for-bot → apply-fixes → re-trigger until the bot returns green (or surfaces a blocker).
 - Each round of fixes Lane A pushes advances HEAD. When HEAD advances, Lane B must restart (see HEAD-pinning).
 - If `/review --auto` exits non-green, STOP the outer loop and surface to the user. Never merge over a red bot review.
 
-**Lane B — cluster test pipeline** (background, started right after 2c flips ready):
-- The pipeline is **sequential internally** — e2e and smoke share the dev cluster, so they can't overlap each other — but the whole pipeline runs **in parallel with Lane A**.
-- **B1: e2e** (when `e2e: required`). Run `make e2e-worktree` via Bash `run_in_background`. Watch with `Monitor` / `TaskOutput`. On green, proceed to B2. On red, see "Failure handling".
-- **B2: smoke test** (when `smoke-test: required`):
-  ```bash
-  make dev-reset                                           # k3d cluster delete by slot-scoped name, then re-create + kubeconfig merge with --kubeconfig-switch-context
-  make dev-load-images                                     # re-import operator + proxy + rocket + mesh-rocket from the host Docker daemon (cheap from layer cache) — required, else `plonk install` hits ErrImagePull with imagePullPolicy: IfNotPresent
-  scripts/assert-kubectl-context.sh k3d-plonk-$PLONK_SLOT  # assert before any ad-hoc plonk install / uninstall — make dev-reset does NOT guard
-  # then drive the vertical slice via the plonk CLI ONLY
-  ```
-  - The end-user invariant: every smoke interaction goes through `plonk`. `kubectl` is permitted **read-only** (`get`, `logs`, `describe`) for diagnosis — never `apply`, `delete`, `patch`, `rollout`, or any state mutation. Using `kubectl` to finish what `plonk` should do hides UX bugs the end user will hit.
-  - Honour [[feedback_never_touch_plonk_production]] — `make dev-reset` is safe *by construction* (it deletes a slot-scoped k3d cluster by name, not by current context, then `--kubeconfig-switch-context` aims the active context at the recreated dev cluster), but it does NOT call `scripts/assert-kubectl-context.sh`. Ad-hoc `plonk install` / `plonk uninstall` invocations during smoke are NOT guarded; before each one, run `scripts/assert-kubectl-context.sh k3d-plonk-$PLONK_SLOT` explicitly.
-  - Smoke scope: the vertical slice this PR completes. Honour [[feedback_smoke_test_scope]] — smoke-test any PR that changes the cluster's installed shape, not just the last PR in the stack — and [[feedback_smoke_test_differentiation]] — the two endpoint states must be visibly distinguishable via observable signals (different image refs, different startup-log fields) so the CLI can't lie about completion.
-- **Skipping**: if both `e2e: skip` AND `smoke-test: skip` (typical for pure cleanup), Lane B is a no-op for this PR.
+**Lane B — artifact smoke** (background, started right after 2c flips ready, when `smoke: required`). **Build and exercise the real artifact end-to-end**, matched to what the PR changed. There is no cluster; the artifact is a process you run on this host.
+- **Server / runtime change** (route dispatch, request/response, content negotiation, boot/ready lifecycle, workers, telemetry, error format): stand up a service that exercises it and `curl` the affected endpoints, asserting the **observable** result (response body, status, `/healthz` ↔ `/readyz` transition, `/metrics` counter value, a worker's log line). If the repo ships a runnable service that already covers the change, use it; otherwise write a throwaway binary that calls `Flatbed::run` (or the `#[flatbed::main]` macro) with the affected route. Where the change touches content negotiation, hit it with **both** `application/json` and `application/x-flatbuffers`.
+- **Codegen / macro change** (`flatbed_build`, `#[route]` / `#[worker]` output): run `flatbed generate` on a schema (or build a crate whose `build.rs` drives codegen), then compile and run the result so the generated code is actually executed, not just emitted.
+- **Runnable examples, if the repo has them**: when a change ships or touches a runnable `examples/` tree (crates with their own `docker-compose.yml`), bring the affected one up (`docker compose up --build`, or `cargo run` with `flatc` on `PATH`) and `curl` its endpoints, including any sidecar the compose file starts. If several examples bind the same host port, smoke them **sequentially** (`up` → assert → `down`).
+- The smoke must surface a signal that **distinguishes done from not-done** ([[feedback_smoke_test_differentiation]]) — a real response body, a metric value, a log line — not merely "it compiled." A green `cargo build` is necessary but is never the smoke result on its own.
+- **Skipping**: when `smoke: skip` (pure-cleanup or docs-only), Lane B is a no-op for this PR — the local gate suite from 2a is the whole automated story.
 
 **HEAD-pinning**: tag every Lane B run with the commit SHA it started against. When Lane A pushes a fix commit:
 - If Lane B is still running against the old SHA: kill it (`TaskStop`) and restart against the new SHA.
@@ -112,16 +105,16 @@ Bot review (`/review --auto`) and cluster-side tests (e2e + smoke) run **concurr
 The merge precondition is "bot green AND Lane B green against the **same** SHA as Lane A's final HEAD." Drift means re-run.
 
 **Failure handling**:
-- **Test flake** (transient infra, network blip, port collision): one automatic retry. A second failure is real.
-- **Real test failure**: push a fix commit. That fix is just another push — Lane A picks it up via its bot re-review cycle; Lane B restarts (HEAD-pinning). Do NOT bypass with `kubectl`.
-- **Design-level failure** (failure surfaces a design problem in the agreed PR, not a mechanical fix): STOP and surface to the user.
+- **Test flake** (transient infra, network blip, port collision, a slow container not yet ready): one automatic retry. A second failure is real.
+- **Real failure**: push a fix commit. That fix is just another push — Lane A picks it up via its bot re-review cycle; Lane B restarts (HEAD-pinning).
+- **Design-level failure** (the failure surfaces a problem in the agreed PR's design, not a mechanical fix): STOP and surface to the user.
 
 #### 2e. Merge
 
 Precondition (all must hold at the same HEAD):
 - Lane A green: `/review --auto` returned a green bot review.
-- Lane B green (where required): e2e green, smoke green.
-- Local gates green: unit tests + clippy `-D warnings` + fmt clean.
+- Lane B green (where required): smoke green.
+- Local gate suite green: `cargo fmt --check` clean + clippy `-D warnings` + `cargo test --workspace` (+ `--all-features` when feature code changed) + `check-generated.sh`.
 
 Squash-merge per project policy. Pin the merge-commit subject to the PR title and the body to the PR description, instead of letting GitHub concatenate every in-PR commit message into the body — that default form lets any AI-attribution slip introduced by `/review --auto`'s fix commits leak into the squash commit on `main` (the per-commit messages are out of sight by then). The PR description is what reviewers actually saw; it's the right canonical record:
 
@@ -142,19 +135,20 @@ git fetch origin main && git log -1 origin/main   # verify the merge landed
 When the loop completes (all PRs merged) OR stops on a blocker:
 
 - Print the merged PR list with URLs and commit SHAs.
-- For each PR, state which gates ran: bot review (always), e2e (yes/no + result), smoke (yes/no + result).
+- For each PR, state which gates ran: bot review (always), local gate suite (always), smoke (yes/no — and when yes, what was exercised and the observed signal).
 - If stopped on a blocker, name the PR, the failing step, and the surfaced output.
 
 ## Rules
 
-- Never invent PRs not on the agreed list.
+- Never invent PRs not on the agreed list. A clear single-PR deliverable is a valid list — don't force a split and don't re-ask to confirm it.
+- Authorization is stated once (Phase 0 step 5) and stands for the whole run. Do **not** pause to re-confirm flip-to-ready or merge — that re-prompting is the exact failure mode this skill removes. Only a red gate or a design-level failure stops the loop.
 - Never skip nits in self-review under this skill — autonomous mode applies them all.
-- Never use `kubectl` to mutate cluster state during a smoke test. `plonk` is the only mutator. `kubectl` read-only is fine for diagnosis.
-- Pure-cleanup PRs (formatting / dead-code / dependency bumps with no behaviour change) skip both smoke and e2e — even when they are the last PR.
-- `make dev-reset` is the only sanctioned cluster reset path; it is safe by construction (slot-scoped k3d delete by name + `--kubeconfig-switch-context`) but does NOT call `scripts/assert-kubectl-context.sh` — for ad-hoc `plonk install` / `plonk uninstall` during smoke, run the assertion script yourself first.
-- `make e2e-worktree` is the e2e entry point. e2e + smoke form a single sequential Lane B pipeline (they share the dev cluster), started right after flipping ready, running concurrently with Lane A's bot-review loop. `make e2e-full` is for hermetic re-runs when worktree contamination is suspected.
+- `flatc` (version pinned in `.flatc-version`) must be on `PATH` for any build that triggers codegen; version drift produces byte-level diffs that make `check-generated.sh` report stale.
+- Smoke means running the artifact and observing a distinguishing signal — never substitute "it compiled" for it. Build + run the affected example/service/CLI and assert real output.
+- Standalone packages outside the workspace (those with their own `[workspace]` table) are not reached by `cargo --workspace` gates — fmt/clippy/test/build them in their own directory.
+- Lane B (smoke) starts right after flipping ready and runs concurrently with Lane A's bot-review loop.
 - HEAD-pinning: every Lane B run is tagged with the SHA it started on. When Lane A pushes a fix, kill in-flight Lane B and restart against the new SHA. Merge requires both lanes green at the **same** SHA.
-- Merge gates: `/review --auto` green AND e2e green (when required) AND smoke green (when required) AND fmt + clippy `-D warnings` + unit tests green at HEAD. All must hold — no exceptions.
+- Merge gates: `/review --auto` green AND smoke green (when required) AND the local gate suite (fmt clean + clippy `-D warnings` + `cargo test --workspace` + `check-generated.sh`) green at HEAD. All must hold — no exceptions.
 - Test-flake policy: one automatic retry. A second failure is a real failure; do not paper over.
 - Merge form: `gh pr merge <n> --squash --delete-branch --subject "<PR title>" --body "<PR description>"` — explicit `--subject` + `--body` prevents the default body (concatenated commit messages) from leaking any AI attribution that crept into a `/review --auto` fix commit.
 - Run `/topr <pr#>` before re-opening review on a stacked PR.
