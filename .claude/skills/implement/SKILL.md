@@ -4,7 +4,7 @@
 
 Fires after a design discussion has settled an ordered list of PRs to ship. For each PR in order: implement → self-review and fix everything including nits → flip to ready → run `/review --auto` (bot review + apply-fixes loop) in parallel with an end-to-end smoke of the built artifact → merge → move on. Pure-cleanup PRs skip the smoke; the last non-cleanup PR MUST be smoke-tested by building and exercising the real artifact it completes. Invoking this skill explicitly authorizes autonomous ready/merge for the listed PRs — it overrides the default [[feedback_draft_prs]] / [[feedback_explicit_merge_authorization]] rules for *this* invocation only.
 
-flatbed is a library + codegen repo (three crates — `flatbed`, `flatbed_macros`, `flatbed_build` — plus `examples/`), not a deployed service. There is no cluster: the gates are Cargo's, the codegen check, and running the affected artifact. The `flatc` pinned in `.flatc-version` must be on `PATH` for any build that triggers codegen.
+flatbed is a library + codegen repo (three crates — `flatbed`, `flatbed_macros`, `flatbed_build`), not a deployed service. There is no cluster: the gates are Cargo's, the codegen check, and running the affected artifact. The `flatc` pinned in `.flatc-version` must be on `PATH` for any build that triggers codegen.
 
 ## Arguments
 - `$ARGUMENTS` — optional GitHub epic issue number (e.g. `/implement 614`). If given, the skill reads that epic's `## Steps` checklist (the format produced by `/spec`) as a starting hint. If both are present, the **chat conversation is the source of truth**; the epic is only consulted when the chat list is implicit.
@@ -59,9 +59,9 @@ For each PR in order:
    cargo fmt --all
    cargo clippy --workspace --all-targets --all-features -- -D warnings
    cargo test --workspace          # add --all-features when feature-gated code changed
-   bash scripts/check-generated.sh # when schemas or codegen changed
+   bash scripts/check-generated.sh # cheap diff — run it every time, per CLAUDE.md
    ```
-   For changes to a standalone package outside the workspace (e.g. an `examples/<name>/` crate with its own `[workspace]`), run `cargo fmt`/`clippy -D warnings`/`build` inside that directory too — the workspace gates don't reach it.
+   For changes to a standalone package outside the workspace (one with its own `[workspace]` table), run `cargo fmt`/`clippy -D warnings`/`build` inside that directory too — the workspace gates don't reach it.
    All must be green before pushing.
 4. Push and open a **draft** PR via `/pr`. Title and body follow the `/pr` skill's rules; link the epic when there is one.
 
@@ -92,9 +92,9 @@ Bot review (`/review --auto`) and the smoke (Lane B) run **concurrently** agains
 - If `/review --auto` exits non-green, STOP the outer loop and surface to the user. Never merge over a red bot review.
 
 **Lane B — artifact smoke** (background, started right after 2c flips ready, when `smoke: required`). **Build and exercise the real artifact end-to-end**, matched to what the PR changed. There is no cluster; the artifact is a process you run on this host.
-- **Server / runtime change** (route dispatch, request/response, content negotiation, boot/ready lifecycle, workers, telemetry, error format): run a service that exercises it — the relevant `examples/` service, or a small throwaway binary — and `curl` the affected endpoints, asserting the **observable** result (response body, status, `/healthz` ↔ `/readyz` transition, `/metrics` counter value, a worker's log line). Where the change touches content negotiation, hit it with **both** `application/json` and `application/x-flatbuffers`.
-- **Codegen / macro change** (`flatbed_build`, `#[route]` / `#[worker]` output): run `flatbed generate` on a schema (or build an example whose `build.rs` drives codegen), then compile and run the result so the generated code is actually executed, not just emitted.
-- **`examples/` change**: `docker compose up --build` for each affected example and `curl` its endpoints, including any sidecar the compose file starts (Swagger UI, Prometheus). Examples bind the same host port, so smoke them **sequentially** (`up` → assert → `down`).
+- **Server / runtime change** (route dispatch, request/response, content negotiation, boot/ready lifecycle, workers, telemetry, error format): stand up a service that exercises it and `curl` the affected endpoints, asserting the **observable** result (response body, status, `/healthz` ↔ `/readyz` transition, `/metrics` counter value, a worker's log line). If the repo ships a runnable service that already covers the change, use it; otherwise write a throwaway binary that calls `Flatbed::run` (or the `#[flatbed::main]` macro) with the affected route. Where the change touches content negotiation, hit it with **both** `application/json` and `application/x-flatbuffers`.
+- **Codegen / macro change** (`flatbed_build`, `#[route]` / `#[worker]` output): run `flatbed generate` on a schema (or build a crate whose `build.rs` drives codegen), then compile and run the result so the generated code is actually executed, not just emitted.
+- **Runnable examples, if the repo has them**: when a change ships or touches a runnable `examples/` tree (crates with their own `docker-compose.yml`), bring the affected one up (`docker compose up --build`, or `cargo run` with `flatc` on `PATH`) and `curl` its endpoints, including any sidecar the compose file starts. If several examples bind the same host port, smoke them **sequentially** (`up` → assert → `down`).
 - The smoke must surface a signal that **distinguishes done from not-done** ([[feedback_smoke_test_differentiation]]) — a real response body, a metric value, a log line — not merely "it compiled." A green `cargo build` is necessary but is never the smoke result on its own.
 - **Skipping**: when `smoke: skip` (pure-cleanup or docs-only), Lane B is a no-op for this PR — the local gate suite from 2a is the whole automated story.
 
@@ -114,7 +114,7 @@ The merge precondition is "bot green AND Lane B green against the **same** SHA a
 Precondition (all must hold at the same HEAD):
 - Lane A green: `/review --auto` returned a green bot review.
 - Lane B green (where required): smoke green.
-- Local gate suite green: `cargo fmt --check` clean + clippy `-D warnings` + `cargo test --workspace` (+ `--all-features` when feature code changed) + `check-generated.sh` (when codegen touched).
+- Local gate suite green: `cargo fmt --check` clean + clippy `-D warnings` + `cargo test --workspace` (+ `--all-features` when feature code changed) + `check-generated.sh`.
 
 Squash-merge per project policy. Pin the merge-commit subject to the PR title and the body to the PR description, instead of letting GitHub concatenate every in-PR commit message into the body — that default form lets any AI-attribution slip introduced by `/review --auto`'s fix commits leak into the squash commit on `main` (the per-commit messages are out of sight by then). The PR description is what reviewers actually saw; it's the right canonical record:
 
@@ -145,10 +145,10 @@ When the loop completes (all PRs merged) OR stops on a blocker:
 - Never skip nits in self-review under this skill — autonomous mode applies them all.
 - `flatc` (version pinned in `.flatc-version`) must be on `PATH` for any build that triggers codegen; version drift produces byte-level diffs that make `check-generated.sh` report stale.
 - Smoke means running the artifact and observing a distinguishing signal — never substitute "it compiled" for it. Build + run the affected example/service/CLI and assert real output.
-- Standalone packages outside the workspace (e.g. `examples/<name>/` with its own `[workspace]` table) are not reached by `cargo *--workspace*` gates — fmt/clippy/build them in their own directory.
+- Standalone packages outside the workspace (those with their own `[workspace]` table) are not reached by `cargo *--workspace*` gates — fmt/clippy/build them in their own directory.
 - Lane B (smoke) starts right after flipping ready and runs concurrently with Lane A's bot-review loop.
 - HEAD-pinning: every Lane B run is tagged with the SHA it started on. When Lane A pushes a fix, kill in-flight Lane B and restart against the new SHA. Merge requires both lanes green at the **same** SHA.
-- Merge gates: `/review --auto` green AND smoke green (when required) AND the local gate suite (fmt clean + clippy `-D warnings` + `cargo test --workspace`, plus `check-generated.sh` when codegen changed) green at HEAD. All must hold — no exceptions.
+- Merge gates: `/review --auto` green AND smoke green (when required) AND the local gate suite (fmt clean + clippy `-D warnings` + `cargo test --workspace` + `check-generated.sh`) green at HEAD. All must hold — no exceptions.
 - Test-flake policy: one automatic retry. A second failure is a real failure; do not paper over.
 - Merge form: `gh pr merge <n> --squash --delete-branch --subject "<PR title>" --body "<PR description>"` — explicit `--subject` + `--body` prevents the default body (concatenated commit messages) from leaking any AI attribution that crept into a `/review --auto` fix commit.
 - Run `/topr <pr#>` before re-opening review on a stacked PR.
