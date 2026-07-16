@@ -16,7 +16,7 @@ pub fn health_response() -> ResponseParts {
         body: b"OK".to_vec(),
         status: StatusCode::OK,
         headers: crate::HeaderMap::new(),
-        content_type: "text/plain",
+        content_type: "text/plain".into(),
     }
 }
 
@@ -26,7 +26,7 @@ pub fn ready_response() -> ResponseParts {
         body: b"Ready".to_vec(),
         status: StatusCode::OK,
         headers: crate::HeaderMap::new(),
-        content_type: "text/plain",
+        content_type: "text/plain".into(),
     }
 }
 
@@ -37,7 +37,7 @@ pub fn metrics_response(metrics: String) -> ResponseParts {
         body: metrics.into_bytes(),
         status: StatusCode::OK,
         headers: crate::HeaderMap::new(),
-        content_type: "text/plain; version=0.0.4; charset=utf-8",
+        content_type: "text/plain; version=0.0.4; charset=utf-8".into(),
     }
 }
 
@@ -52,7 +52,7 @@ pub fn openapi_response(config: &FlatbedConfig, version: Option<&str>) -> Respon
         body: json.into_bytes(),
         status: StatusCode::OK,
         headers: crate::HeaderMap::new(),
-        content_type: "application/json",
+        content_type: "application/json".into(),
     }
 }
 

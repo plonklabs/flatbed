@@ -21,6 +21,7 @@
 ///
 /// FlatBuffer serialization is handled automatically by the framework.
 use flatbuffers::FlatBufferBuilder;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Deref;
@@ -651,6 +652,10 @@ pub struct Response<T> {
     pub status: StatusCode,
     /// Response headers
     pub headers: HeaderMap,
+    /// When set, the body is emitted verbatim with this content-type instead
+    /// of being serialized to JSON/FlatBuffer. Set via [`Response::raw`].
+    #[doc(hidden)]
+    pub raw: Option<(Vec<u8>, Cow<'static, str>)>,
 }
 
 impl<T> Response<T> {
@@ -660,6 +665,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::OK,
             headers: HeaderMap::new(),
+            raw: None,
         }
     }
 
@@ -669,6 +675,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::CREATED,
             headers: HeaderMap::new(),
+            raw: None,
         }
     }
 
@@ -678,6 +685,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::ACCEPTED,
             headers: HeaderMap::new(),
+            raw: None,
         }
     }
 
@@ -687,6 +695,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::NO_CONTENT,
             headers: HeaderMap::new(),
+            raw: None,
         }
     }
 
@@ -696,6 +705,7 @@ impl<T> Response<T> {
             body,
             status,
             headers: HeaderMap::new(),
+            raw: None,
         }
     }
 
@@ -714,6 +724,31 @@ impl<T> Response<T> {
             self.headers.insert(name, val);
         }
         self
+    }
+}
+
+impl Response<()> {
+    /// Create a response that emits `bytes` verbatim under `content_type`,
+    /// bypassing JSON/FlatBuffer serialization.
+    ///
+    /// This is the escape hatch for handlers that need to return a body the
+    /// typed path can't express — HTML, JavaScript, CSS, images, or any other
+    /// media type. The `content_type` is written to the `Content-Type` header
+    /// as-is.
+    ///
+    /// ```rust,ignore
+    /// #[route("/index.html", method = "GET")]
+    /// async fn index(_req: Request<()>) -> Result<Response<()>, FlatbedRouteError> {
+    ///     Ok(Response::raw(b"<h1>hello</h1>".to_vec(), "text/html; charset=utf-8"))
+    /// }
+    /// ```
+    pub fn raw(bytes: impl Into<Vec<u8>>, content_type: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            body: (),
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            raw: Some((bytes.into(), content_type.into())),
+        }
     }
 }
 
@@ -961,27 +996,31 @@ pub struct ResponseParts {
     /// Response headers
     pub headers: HeaderMap,
     /// Content-Type header value
-    pub content_type: &'static str,
+    pub content_type: Cow<'static, str>,
 }
 
 impl ResponseParts {
     /// Create new ResponseParts with 200 OK status
-    pub fn ok(body: Vec<u8>, content_type: &'static str) -> Self {
+    pub fn ok(body: Vec<u8>, content_type: impl Into<Cow<'static, str>>) -> Self {
         Self {
             body,
             status: StatusCode::OK,
             headers: HeaderMap::new(),
-            content_type,
+            content_type: content_type.into(),
         }
     }
 
     /// Create new ResponseParts with custom status
-    pub fn with_status(body: Vec<u8>, status: StatusCode, content_type: &'static str) -> Self {
+    pub fn with_status(
+        body: Vec<u8>,
+        status: StatusCode,
+        content_type: impl Into<Cow<'static, str>>,
+    ) -> Self {
         Self {
             body,
             status,
             headers: HeaderMap::new(),
-            content_type,
+            content_type: content_type.into(),
         }
     }
 
@@ -2337,6 +2376,28 @@ mod tests {
         assert_eq!(parts.body, vec![1, 2, 3]);
         assert_eq!(parts.status, StatusCode::OK);
         assert_eq!(parts.content_type, "application/json");
+    }
+
+    #[test]
+    fn test_response_parts_owned_content_type() {
+        let ext = "js";
+        let parts = ResponseParts::ok(vec![], format!("application/{ext}"));
+        assert_eq!(parts.content_type, "application/js");
+    }
+
+    #[test]
+    fn test_response_raw() {
+        let resp = Response::raw(b"<h1>hi</h1>".to_vec(), "text/html; charset=utf-8");
+        assert_eq!(resp.status, StatusCode::OK);
+        let (bytes, content_type) = resp.raw.expect("raw payload set");
+        assert_eq!(bytes, b"<h1>hi</h1>");
+        assert_eq!(content_type, "text/html; charset=utf-8");
+    }
+
+    #[test]
+    fn test_response_ok_has_no_raw() {
+        let resp = Response::ok(());
+        assert!(resp.raw.is_none());
     }
 
     #[test]
