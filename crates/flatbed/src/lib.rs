@@ -652,10 +652,8 @@ pub struct Response<T> {
     pub status: StatusCode,
     /// Response headers
     pub headers: HeaderMap,
-    // Set only by `raw`: when present, these bytes and content-type are
-    // forwarded to the wire verbatim and `body` is not serialized. Private so
-    // it can't be attached to a typed `Response<T>`, which would silently drop
-    // the serialized body.
+    // Private to prevent callers from attaching raw bytes to a typed
+    // `Response<T>`, which would silently discard the serialized body.
     raw: Option<(Vec<u8>, Cow<'static, str>)>,
 }
 
@@ -727,9 +725,6 @@ impl<T> Response<T> {
         self
     }
 
-    // Consumed by the `#[route]` wrapper to choose between forwarding the raw
-    // bytes verbatim and serializing `body`. Returns `Some` only for a response
-    // built as a raw response.
     #[doc(hidden)]
     pub fn take_raw(&mut self) -> Option<(Vec<u8>, Cow<'static, str>)> {
         self.raw.take()
