@@ -12,6 +12,10 @@ use crate::{HeaderName, HeaderValue, ResponseParts, StaticRouteInfo};
 ///
 /// Returns `None` when no mount matches, the resolved file is absent, and no
 /// fallback applies — the caller then responds 404.
+///
+/// The full file is read even for a HEAD request (the caller drops the body
+/// afterward); assets are small enough that a separate metadata-only path
+/// isn't worth the branch.
 pub async fn serve(routes: &[StaticRouteInfo], path: &str) -> Option<ResponseParts> {
     for route in routes {
         if let Some(parts) = serve_one(route, path).await {
@@ -31,10 +35,12 @@ async fn serve_one(route: &StaticRouteInfo, path: &str) -> Option<ResponseParts>
         if let Some(bytes) = read_file(&full).await {
             return Some(build(bytes, &full));
         }
-        // A miss on a path that names a file (has an extension) is a genuine
-        // 404. Serving the HTML shell here would mask a broken asset URL — the
-        // browser would receive `index.html` with a 200 where it expected JS.
-        if relative.extension().is_some() {
+        // A miss on a path that names a known asset type is a genuine 404.
+        // Serving the HTML shell here would mask a broken asset URL — the
+        // browser would receive `index.html` where it expected JS. Client-side
+        // routes with a dot (e.g. `/v2.0`) aren't asset types, so they still
+        // reach the fallback below.
+        if is_known_asset(&relative) {
             return None;
         }
     }
@@ -77,31 +83,36 @@ fn sanitize(rel: &str) -> Option<PathBuf> {
 }
 
 async fn read_file(path: &Path) -> Option<Vec<u8>> {
-    let metadata = tokio::fs::metadata(path).await.ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
+    // `read` errors on a missing path and on a directory, so it doubles as the
+    // existence/regular-file check — no separate `stat` needed.
     tokio::fs::read(path).await.ok()
 }
 
 fn build(bytes: Vec<u8>, path: &Path) -> ResponseParts {
     let mut parts = ResponseParts::ok(bytes, content_type(path));
-    if let Ok(value) = HeaderValue::try_from(cache_control(path)) {
-        parts
-            .headers
-            .insert(HeaderName::from_static("cache-control"), value);
-    }
+    parts.headers.insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static(cache_control(path)),
+    );
     parts
 }
 
-/// HTML is never hard-cached (it references hashed asset URLs that change on
-/// each build); every other asset is content-hashed by the bundler and safe to
-/// cache immutably.
+/// Files a bundler content-hashes into their filename are safe to cache
+/// forever; files that keep a stable name across builds (HTML, and the
+/// conventionally-unhashed `robots.txt` / `favicon.ico` / `manifest.json` /
+/// sitemap set) must stay fresh.
 fn cache_control(path: &Path) -> &'static str {
     match extension(path).as_deref() {
-        Some("html") => "no-cache",
+        Some("html" | "json" | "txt" | "ico" | "xml" | "webmanifest") | None => "no-cache",
         _ => "public, max-age=31536000, immutable",
     }
+}
+
+/// Whether the path names a recognized asset type (its extension maps to a
+/// concrete media type). Used to tell an asset request apart from a client-side
+/// route so a missing asset 404s instead of serving the SPA shell.
+fn is_known_asset(path: &Path) -> bool {
+    content_type(path) != "application/octet-stream"
 }
 
 fn content_type(path: &Path) -> &'static str {
@@ -183,12 +194,29 @@ mod tests {
     }
 
     #[test]
-    fn cache_control_html_vs_asset() {
-        assert_eq!(cache_control(Path::new("index.html")), "no-cache");
+    fn cache_control_hashed_vs_stable_name() {
+        // Content-hashed assets: cache forever.
         assert_eq!(
             cache_control(Path::new("app-a1b2.js")),
             "public, max-age=31536000, immutable"
         );
+        assert_eq!(
+            cache_control(Path::new("style-c3d4.css")),
+            "public, max-age=31536000, immutable"
+        );
+        // Stable-name files: must stay fresh.
+        for stable in ["index.html", "robots.txt", "favicon.ico", "manifest.json"] {
+            assert_eq!(cache_control(Path::new(stable)), "no-cache", "{stable}");
+        }
+    }
+
+    #[test]
+    fn known_asset_vs_client_route() {
+        assert!(is_known_asset(Path::new("app.js")));
+        assert!(is_known_asset(Path::new("index.html")));
+        // A dotted client-side route (e.g. /v2.0) is not an asset type.
+        assert!(!is_known_asset(Path::new("v2.0")));
+        assert!(!is_known_asset(Path::new("dashboard")));
     }
 
     /// Create a throwaway `dist` dir (unique per test name) with `index.html`
@@ -234,6 +262,14 @@ mod tests {
     async fn missing_asset_is_404_not_shell() {
         let route = fixture("missasset");
         assert!(serve_one(&route, "/assets/missing-x9.js").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn dotted_client_route_serves_fallback() {
+        let route = fixture("dotted");
+        // `/v2.0` looks like it has an extension but isn't an asset type.
+        let parts = serve_one(&route, "/v2.0").await.expect("spa fallback");
+        assert_eq!(parts.content_type, "text/html; charset=utf-8");
     }
 
     #[tokio::test]
