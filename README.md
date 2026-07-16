@@ -176,7 +176,8 @@ from the file extension; `Cache-Control` is `no-cache` for HTML and
 `public, max-age=31536000, immutable` for content-hashed assets. A missing path
 *with* an extension is a real `404` (a broken asset URL isn't masked by the
 shell); an extensionless miss serves the `fallback`. Declared routes always take
-precedence, so `/api/*` keeps working under a `/` mount.
+precedence, so `/api/*` keeps working under a `/` mount. (A configured
+`splash` banner answers `GET /` ahead of a root mount — don't set both.)
 
 For a handler that needs to return a body the JSON/FlatBuffer path can't express
 — HTML, CSV, an image — `Response::raw` sets the bytes and `Content-Type`
