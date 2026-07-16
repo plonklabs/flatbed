@@ -35,6 +35,8 @@ pub struct ServiceContext<C> {
     pub context: Arc<RwLock<Option<Arc<C>>>>,
     /// Flatbed configuration
     pub config: FlatbedConfig,
+    /// Static-file mounts registered via `static_route!`
+    pub static_routes: Arc<Vec<crate::StaticRouteInfo>>,
 }
 
 impl<C> ServiceContext<C> {
@@ -57,6 +59,7 @@ impl<C> Clone for ServiceContext<C> {
             ready_rx: self.ready_rx.clone(),
             context: Arc::clone(&self.context),
             config: self.config.clone(),
+            static_routes: Arc::clone(&self.static_routes),
         }
     }
 }
@@ -136,6 +139,13 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
         let allowed = ctx.router.get_allowed_methods(&path);
         if !allowed.is_empty() {
             return build_method_not_allowed(&allowed);
+        }
+        // Declared routes take precedence; an unmatched GET falls back to a
+        // static-file mount (`static_route!`), if one serves the path.
+        if method.eq_ignore_ascii_case("GET") && !ctx.static_routes.is_empty() {
+            if let Some(parts) = super::static_files::serve(&ctx.static_routes, &path).await {
+                return build_success_response(parts);
+            }
         }
         return build_not_found();
     };

@@ -204,6 +204,36 @@ pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlatbedWorkerError> {
 }
 ```
 
+## Static File Serving and Raw Responses
+
+`static_route!` mounts a directory of static files, registered through the
+same `inventory` mechanism as `#[route]` (declare it anywhere; no
+re-export). It serves a bundled SPA + JSON API from one origin:
+
+```rust
+flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
+```
+
+- Files are read from the **container filesystem at request time** — ship
+  the directory in the image (`COPY dist/ /app/dist`); `dir` resolves
+  relative to the process working directory. This is deliberately *not*
+  compile-time embedding: the container is the packaging boundary.
+- **Declared `#[route]`s always win.** Static serving is the fallback tier
+  for an unmatched **GET**; `/api/*` routes keep working under a `/` mount.
+- `Content-Type` comes from the file extension; `Cache-Control` is
+  `no-cache` for HTML and long-lived `immutable` for other assets.
+- A missing path **with** an extension is a real 404 (don't mask a broken
+  asset URL with the HTML shell); an **extensionless** miss serves the
+  `fallback` (SPA history routing).
+- The static handler lives in `crates/flatbed/src/hyper/static_files.rs` and
+  needs tokio's `fs` feature (already enabled on the `flatbed` crate).
+
+Static files can't go through the typed JSON/FlatBuffer path, so they rely on
+the raw-response primitive: `Response::raw(bytes, content_type)` returns
+`Response<()>` and emits the bytes verbatim under any `Content-Type`. It's the
+escape hatch for any handler returning HTML/CSV/images/etc. The `#[route]`
+wrapper drains it via `Response::take_raw()` before the serialization branches.
+
 ## Releases
 
 - crates.io publishing is automated via `.github/workflows/publish.yml`,

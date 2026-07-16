@@ -375,6 +375,39 @@ The registry is built at compile time and available via `get_routes()` at runtim
 
 **Note**: Routes are collected per-binary. Test binaries, examples, and your main application each have their own independent route registry.
 
+## Static Files and Raw Responses
+
+`static_route!` serves a directory of static files (a built SPA, say)
+alongside the JSON API, from the same origin. It registers through the same
+`inventory` mechanism as `#[route]`:
+
+```rust
+// Declared #[route]s win; unmatched GETs are served from dist/, and unknown
+// non-API paths fall back to index.html for client-side routing.
+flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
+```
+
+Files are read from the container filesystem at request time (ship the
+directory in the image, e.g. `COPY dist/ /app/dist`). The `Content-Type` is
+derived from the file extension; `Cache-Control` is `no-cache` for HTML and
+`public, max-age=31536000, immutable` for content-hashed assets. A missing path
+with an extension returns `404` rather than the HTML shell; an extensionless
+miss serves the `fallback`.
+
+Static bytes can't go through the typed serialization path, so they use
+`Response::raw`, which is also available to handlers directly:
+
+```rust
+#[route("/logo.svg", method = "GET")]
+async fn logo(req: Request<LogoQuery>) -> Result<Response<()>, FlatbedRouteError> {
+    Ok(Response::raw(render_svg(&req.body), "image/svg+xml"))
+}
+```
+
+`Response::raw(bytes, content_type)` returns `Response<()>` and emits the bytes
+verbatim under the given `Content-Type`, bypassing JSON/FlatBuffer
+serialization.
+
 ## Compile-Time Validation
 
 Route conflicts are detected via `validate_routes()`:

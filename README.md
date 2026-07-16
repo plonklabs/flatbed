@@ -158,6 +158,40 @@ request/response type's fields at compile time, and the server exposes:
 Point Swagger UI, Redoc, or a client generator at those endpoints and they stay
 in sync with the code automatically.
 
+## Serving static files and a bundled SPA
+
+A flatbed service can serve a built frontend (a Vite/React `dist/`, say)
+alongside its JSON API from the **same origin** — one box, no CORS. Mount a
+directory with `static_route!`:
+
+```rust
+// Declared #[route]s win; every other GET is served from dist/.
+// Unknown non-API paths fall back to index.html for client-side routing.
+flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
+```
+
+Files are read from the container filesystem at request time, so ship the
+directory in your image (e.g. `COPY dist/ /app/dist`). The `Content-Type` comes
+from the file extension; `Cache-Control` is `no-cache` for HTML and
+`public, max-age=31536000, immutable` for content-hashed assets. A missing path
+*with* an extension is a real `404` (a broken asset URL isn't masked by the
+shell); an extensionless miss serves the `fallback`. Declared routes always take
+precedence, so `/api/*` keeps working under a `/` mount.
+
+For a handler that needs to return a body the JSON/FlatBuffer path can't express
+— HTML, CSV, an image — `Response::raw` sets the bytes and `Content-Type`
+directly:
+
+```rust
+#[route("/report.csv", method = "POST")]
+async fn report(req: Request<ReportQuery>) -> Result<Response<()>, FlatbedRouteError> {
+    Ok(Response::raw(build_csv(&req.body).into_bytes(), "text/csv; charset=utf-8"))
+}
+```
+
+The [`spa`](examples/spa) example puts both together: `/api/hello` handled by a
+route, everything else served from a bundled `dist/`.
+
 ## Crates
 
 | Crate | Purpose |

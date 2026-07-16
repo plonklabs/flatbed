@@ -31,6 +31,7 @@ mod router;
 mod server;
 mod service;
 mod shutdown;
+mod static_files;
 
 pub use endpoints::*;
 pub use router::{HandlerFn, RouteEntry, Router};
