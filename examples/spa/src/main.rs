@@ -20,9 +20,6 @@ async fn hello(req: Request<HelloRequest>) -> Result<Response<HelloResponse>, Fl
     }))
 }
 
-// Serve the built SPA from dist/. The declared /api/* route above wins; unknown
-// non-API GETs fall back to index.html so client-side routes load the app shell.
-// `dir` is resolved relative to the process working directory.
 static_route!(mount = "/", dir = "dist", fallback = "index.html");
 
 #[tokio::main]

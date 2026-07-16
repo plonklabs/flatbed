@@ -45,8 +45,8 @@ async fn serve_one(route: &StaticRouteInfo, path: &str) -> Option<ResponseParts>
         }
     }
 
-    // SPA history fallback: an extensionless miss (root or a client-side route
-    // like /dashboard) serves the fallback file so the app shell loads.
+    // Extensionless miss (root or a client-side route like /dashboard): serve
+    // the fallback.
     let fallback = route.fallback?;
     let full = dir.join(fallback);
     let bytes = read_file(&full).await?;
@@ -284,5 +284,19 @@ mod tests {
     async fn traversal_is_rejected() {
         let route = fixture("traversal");
         assert!(serve_one(&route, "/../../etc/hosts").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn missing_fallback_file_is_404() {
+        // `dir` exists but the configured fallback file does not.
+        let dir = std::env::temp_dir().join(format!("flatbed-static-{}-nofb", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let route = StaticRouteInfo {
+            mount: "/",
+            dir: Box::leak(dir.to_str().unwrap().to_string().into_boxed_str()),
+            fallback: Some("index.html"),
+        };
+        assert!(serve_one(&route, "/dashboard").await.is_none());
     }
 }
