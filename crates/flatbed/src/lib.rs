@@ -725,6 +725,10 @@ impl<T> Response<T> {
         self
     }
 
+    /// Removes and returns the raw-body override, leaving the response without one.
+    ///
+    /// Yields `Some((bytes, content_type))` only for a response constructed as a
+    /// raw response, and `None` otherwise.
     #[doc(hidden)]
     pub fn take_raw(&mut self) -> Option<(Vec<u8>, Cow<'static, str>)> {
         self.raw.take()
@@ -2402,6 +2406,13 @@ mod tests {
     fn test_response_ok_has_no_raw() {
         let mut resp = Response::ok(());
         assert!(resp.take_raw().is_none());
+    }
+
+    #[test]
+    fn test_response_raw_status_builder_preserves_raw() {
+        let mut resp = Response::raw(b"data".to_vec(), "text/plain").status(StatusCode::CREATED);
+        assert_eq!(resp.status, StatusCode::CREATED);
+        assert!(resp.take_raw().is_some(), "status() must preserve raw");
     }
 
     #[test]
