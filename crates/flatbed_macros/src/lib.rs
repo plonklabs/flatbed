@@ -732,3 +732,92 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     main_macro::main_impl(attr, item)
 }
+
+/// Parsed arguments for the `static_route!` macro
+struct StaticRouteArgs {
+    mount: LitStr,
+    dir: LitStr,
+    fallback: Option<LitStr>,
+}
+
+impl Parse for StaticRouteArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut mount = None;
+        let mut dir = None;
+        let mut fallback = None;
+
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+            let value: LitStr = input.parse()?;
+            match key.to_string().as_str() {
+                "mount" => mount = Some(value),
+                "dir" => dir = Some(value),
+                "fallback" => fallback = Some(value),
+                other => {
+                    return Err(syn::Error::new(
+                        key.span(),
+                        format!("unknown static_route key `{other}`; expected `mount`, `dir`, or `fallback`"),
+                    ));
+                }
+            }
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            }
+        }
+
+        let span = proc_macro2::Span::call_site();
+        let mount = mount
+            .ok_or_else(|| syn::Error::new(span, "static_route! requires `mount = \"...\"`"))?;
+        let dir =
+            dir.ok_or_else(|| syn::Error::new(span, "static_route! requires `dir = \"...\"`"))?;
+
+        Ok(Self {
+            mount,
+            dir,
+            fallback,
+        })
+    }
+}
+
+/// Mount a directory of static files, served under a URL prefix.
+///
+/// Files are read from `dir` on the container filesystem at request time, so
+/// the directory must be present in the running image (e.g. `COPY dist/ /app/dist`
+/// in the Dockerfile). Declared `#[route]` routes always take precedence, so an
+/// API and a static mount can share one origin.
+///
+/// # Arguments
+/// - `mount` (required): URL prefix to serve under, e.g. `"/"` or `"/assets"`.
+/// - `dir` (required): filesystem directory to read files from.
+/// - `fallback` (optional): file served for unmatched sub-paths, enabling SPA
+///   history fallback (e.g. `"index.html"`).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // Serve a built SPA at the root; unknown non-API paths fall back to index.html.
+/// flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
+/// ```
+#[proc_macro]
+pub fn static_route(input: TokenStream) -> TokenStream {
+    let args = parse_macro_input!(input as StaticRouteArgs);
+    let mount = args.mount;
+    let dir = args.dir;
+    let fallback = match args.fallback {
+        Some(f) => quote! { Some(#f) },
+        None => quote! { None },
+    };
+
+    let expanded = quote! {
+        ::flatbed::inventory::submit! {
+            ::flatbed::StaticRouteInfo {
+                mount: #mount,
+                dir: #dir,
+                fallback: #fallback,
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}

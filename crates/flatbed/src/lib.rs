@@ -395,6 +395,7 @@ impl Flatbed {
             ready_rx,
             context: Arc::clone(&context),
             config,
+            static_routes: Arc::new(crate::get_static_routes()),
         };
 
         // Create and spawn the server
@@ -547,6 +548,9 @@ pub struct OpenApiRouteInfo {
 
 // Re-export the route macro from flatbed_macros
 pub use flatbed_macros::route;
+
+// Re-export the static_route macro from flatbed_macros
+pub use flatbed_macros::static_route;
 
 // Re-export the main macro from flatbed_macros
 pub use flatbed_macros::main;
@@ -1331,6 +1335,32 @@ impl std::fmt::Debug for RouteInfo {
 }
 
 inventory::collect!(RouteInfo);
+
+/// A static-file mount registered by the `static_route!` macro.
+///
+/// Serves files from `dir` on the container filesystem under the `mount` URL
+/// prefix. Declared `#[route]` routes always take precedence, so an API mounted
+/// under `/api` keeps working alongside a static mount at `/`.
+#[derive(Clone, Copy, Debug)]
+pub struct StaticRouteInfo {
+    /// URL prefix the mount answers under (e.g. `/` or `/assets`).
+    pub mount: &'static str,
+    /// Filesystem directory the files are read from (e.g. `/app/dist`).
+    pub dir: &'static str,
+    /// File served for unmatched sub-paths, enabling SPA history fallback
+    /// (e.g. `index.html`). `None` returns 404 for a miss.
+    pub fallback: Option<&'static str>,
+}
+
+inventory::collect!(StaticRouteInfo);
+
+/// Returns the static-file mounts registered via `static_route!`.
+pub fn get_static_routes() -> Vec<StaticRouteInfo> {
+    inventory::iter::<StaticRouteInfo>
+        .into_iter()
+        .copied()
+        .collect()
+}
 
 // ============================================================================
 // Worker Registration Types
