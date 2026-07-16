@@ -652,8 +652,6 @@ pub struct Response<T> {
     pub status: StatusCode,
     /// Response headers
     pub headers: HeaderMap,
-    // Private to prevent callers from attaching raw bytes to a typed
-    // `Response<T>`, which would silently discard the serialized body.
     raw: Option<(Vec<u8>, Cow<'static, str>)>,
 }
 
