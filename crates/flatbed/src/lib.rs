@@ -549,7 +549,6 @@ pub struct OpenApiRouteInfo {
 // Re-export the route macro from flatbed_macros
 pub use flatbed_macros::route;
 
-// Re-export the static_route macro from flatbed_macros
 pub use flatbed_macros::static_route;
 
 // Re-export the main macro from flatbed_macros
