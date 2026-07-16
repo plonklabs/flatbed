@@ -723,10 +723,8 @@ impl<T> Response<T> {
         self
     }
 
-    /// Removes and returns the raw-body override, leaving the response without one.
-    ///
     /// Yields `Some((bytes, content_type))` only for a response constructed as a
-    /// raw response, and `None` otherwise.
+    /// raw response, and `None` for all other constructors.
     #[doc(hidden)]
     pub fn take_raw(&mut self) -> Option<(Vec<u8>, Cow<'static, str>)> {
         self.raw.take()
@@ -738,14 +736,15 @@ impl Response<()> {
     /// bypassing JSON/FlatBuffer serialization.
     ///
     /// This is the escape hatch for handlers that need to return a body the
-    /// typed path can't express — HTML, JavaScript, CSS, images, or any other
+    /// typed path can't express — HTML, CSV, JavaScript, images, or any other
     /// media type. The `content_type` is written to the `Content-Type` header
     /// as-is.
     ///
     /// ```rust,ignore
-    /// #[route("/index.html", method = "GET")]
-    /// async fn index(_req: Request<()>) -> Result<Response<()>, FlatbedRouteError> {
-    ///     Ok(Response::raw(b"<h1>hello</h1>".to_vec(), "text/html; charset=utf-8"))
+    /// #[route("/report.csv", method = "POST")]
+    /// async fn report(req: Request<ReportQuery>) -> Result<Response<()>, FlatbedRouteError> {
+    ///     let csv = build_report_csv(&req.body);
+    ///     Ok(Response::raw(csv.into_bytes(), "text/csv; charset=utf-8"))
     /// }
     /// ```
     pub fn raw(bytes: impl Into<Vec<u8>>, content_type: impl Into<Cow<'static, str>>) -> Self {
