@@ -140,16 +140,13 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
         if !allowed.is_empty() {
             return build_method_not_allowed(&allowed);
         }
-        // Declared routes take precedence; an unmatched GET (or HEAD) falls
-        // back to a static-file mount (`static_route!`), if one serves the path.
-        let is_get = method.eq_ignore_ascii_case("GET");
-        let is_head = method.eq_ignore_ascii_case("HEAD");
-        if (is_get || is_head) && !ctx.static_routes.is_empty() {
-            if let Some(mut parts) = super::static_files::serve(&ctx.static_routes, &path).await {
-                // HEAD carries the same headers as GET but no body.
-                if is_head {
-                    parts.body = Vec::new();
-                }
+        let serves_static =
+            method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD");
+        if serves_static && !ctx.static_routes.is_empty() {
+            if let Some(parts) = super::static_files::serve(&ctx.static_routes, &path).await {
+                // hyper omits the body for a HEAD response while still emitting
+                // the Content-Length computed from the full body, so the same
+                // parts are correct for both GET and HEAD — don't zero the body.
                 return build_success_response(parts);
             }
         }

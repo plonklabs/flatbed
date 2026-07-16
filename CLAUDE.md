@@ -225,16 +225,14 @@ flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
 - A missing path **with** an extension is a real 404 (don't mask a broken
   asset URL with the HTML shell); an **extensionless** miss serves the
   `fallback` (SPA history routing).
-- The static handler reads files with tokio's `fs` feature (already enabled
-  on the `flatbed` crate).
 - A configured `FlatbedConfig::splash(...)` answers `GET /` ahead of a root
   static mount, so don't combine a splash with a `mount = "/"` SPA.
 
 Static files can't go through the typed JSON/FlatBuffer path, so they rely on
 the raw-response primitive: `Response::raw(bytes, content_type)` returns
-`Response<()>` and emits the bytes verbatim under any `Content-Type`. It's the
-escape hatch for any handler returning HTML/CSV/images/etc. The `#[route]`
-wrapper drains it via `Response::take_raw()` before the serialization branches.
+`Response<()>` and emits the bytes verbatim under any `Content-Type`, bypassing
+JSON/FlatBuffer serialization. It's the escape hatch for any handler returning
+HTML/CSV/images/etc.
 
 ## Releases
 
