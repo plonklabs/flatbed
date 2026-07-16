@@ -13,9 +13,9 @@ use crate::{HeaderName, HeaderValue, ResponseParts, StaticRouteInfo};
 /// Returns `None` when no mount matches, the resolved file is absent, and no
 /// fallback applies — the caller then responds 404.
 ///
-/// The full file is read even for a HEAD request (the caller drops the body
-/// afterward); assets are small enough that a separate metadata-only path
-/// isn't worth the branch.
+/// The full file is read even for a HEAD request; hyper omits the body at the
+/// connection layer while still emitting the correct `Content-Length`. Assets
+/// are small enough that a separate metadata-only path isn't worth the branch.
 pub async fn serve(routes: &[StaticRouteInfo], path: &str) -> Option<ResponseParts> {
     for route in routes {
         if let Some(parts) = serve_one(route, path).await {
@@ -121,6 +121,8 @@ fn content_type(path: &Path) -> &'static str {
         Some("js" | "mjs") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("json" | "map") => "application/json",
+        Some("xml") => "application/xml",
+        Some("webmanifest") => "application/manifest+json",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",
@@ -212,8 +214,14 @@ mod tests {
 
     #[test]
     fn known_asset_vs_client_route() {
-        assert!(is_known_asset(Path::new("app.js")));
-        assert!(is_known_asset(Path::new("index.html")));
+        for asset in [
+            "app.js",
+            "index.html",
+            "sitemap.xml",
+            "manifest.webmanifest",
+        ] {
+            assert!(is_known_asset(Path::new(asset)), "{asset}");
+        }
         // A dotted client-side route (e.g. /v2.0) is not an asset type.
         assert!(!is_known_asset(Path::new("v2.0")));
         assert!(!is_known_asset(Path::new("dashboard")));
