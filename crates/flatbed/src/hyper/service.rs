@@ -251,13 +251,15 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
     }
 }
 
-/// Handle splash endpoint (GET /)
+/// Handle splash endpoint (GET / and HEAD /)
 fn handle_splash_endpoint(
     method: &str,
     path: &str,
     config: &FlatbedConfig,
 ) -> Option<Response<Full<Bytes>>> {
-    if method.to_uppercase() != "GET" || path != "/" {
+    // HEAD / must see the same headers as GET /; without this it would fall
+    // through to a root static mount and answer with the wrong content-type.
+    if !matches!(method.to_uppercase().as_str(), "GET" | "HEAD") || path != "/" {
         return None;
     }
 
