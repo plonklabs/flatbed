@@ -21,7 +21,8 @@ RUN cargo build --release --manifest-path examples/spa/Cargo.toml
 FROM debian:bookworm-slim
 WORKDIR /app
 COPY --from=builder /src/examples/spa/target/release/flatbed-example-spa /usr/local/bin/app
-# The SPA bundle. static_route!(dir = "dist") resolves relative to WORKDIR.
+# A relative static-mount dir resolves against the process working directory,
+# so WORKDIR determines where the served files are read from.
 COPY examples/spa/dist ./dist
 EXPOSE 8080
 CMD ["app"]
