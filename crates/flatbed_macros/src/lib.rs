@@ -556,12 +556,9 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let result = #fn_name(request).await;
 
                 match result {
-                    Ok(response) => {
-                        // A raw response emits its bytes verbatim under a
-                        // caller-chosen content-type; otherwise the body is
-                        // serialized per the negotiated content-type.
+                    Ok(mut response) => {
                         let (response_bytes, response_content_type): (Vec<u8>, ::std::borrow::Cow<'static, str>) =
-                            if let Some((bytes, content_type)) = response.raw {
+                            if let Some((bytes, content_type)) = response.take_raw() {
                                 (bytes, content_type)
                             } else if is_json {
                                 match ::flatbed::serde_json::to_vec(&response.body) {

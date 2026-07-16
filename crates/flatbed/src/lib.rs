@@ -652,10 +652,11 @@ pub struct Response<T> {
     pub status: StatusCode,
     /// Response headers
     pub headers: HeaderMap,
-    /// When set, the body is emitted verbatim with this content-type instead
-    /// of being serialized to JSON/FlatBuffer. Set via [`Response::raw`].
-    #[doc(hidden)]
-    pub raw: Option<(Vec<u8>, Cow<'static, str>)>,
+    // Set only by `raw`: when present, these bytes and content-type are
+    // forwarded to the wire verbatim and `body` is not serialized. Private so
+    // it can't be attached to a typed `Response<T>`, which would silently drop
+    // the serialized body.
+    raw: Option<(Vec<u8>, Cow<'static, str>)>,
 }
 
 impl<T> Response<T> {
@@ -724,6 +725,14 @@ impl<T> Response<T> {
             self.headers.insert(name, val);
         }
         self
+    }
+
+    // Consumed by the `#[route]` wrapper to choose between forwarding the raw
+    // bytes verbatim and serializing `body`. Returns `Some` only for a response
+    // built as a raw response.
+    #[doc(hidden)]
+    pub fn take_raw(&mut self) -> Option<(Vec<u8>, Cow<'static, str>)> {
+        self.raw.take()
     }
 }
 
@@ -2387,17 +2396,17 @@ mod tests {
 
     #[test]
     fn test_response_raw() {
-        let resp = Response::raw(b"<h1>hi</h1>".to_vec(), "text/html; charset=utf-8");
+        let mut resp = Response::raw(b"<h1>hi</h1>".to_vec(), "text/html; charset=utf-8");
         assert_eq!(resp.status, StatusCode::OK);
-        let (bytes, content_type) = resp.raw.expect("raw payload set");
+        let (bytes, content_type) = resp.take_raw().expect("raw payload set");
         assert_eq!(bytes, b"<h1>hi</h1>");
         assert_eq!(content_type, "text/html; charset=utf-8");
     }
 
     #[test]
     fn test_response_ok_has_no_raw() {
-        let resp = Response::ok(());
-        assert!(resp.raw.is_none());
+        let mut resp = Response::ok(());
+        assert!(resp.take_raw().is_none());
     }
 
     #[test]
