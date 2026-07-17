@@ -36,11 +36,6 @@ async fn serve_one(route: &StaticRouteInfo, path: &str) -> Option<ResponseParts>
         if let Some(bytes) = read_file(&full).await {
             return Some(build(bytes, &full));
         }
-        // A miss on a path that names a known asset type is a genuine 404.
-        // Serving the HTML shell here would mask a broken asset URL — the
-        // browser would receive `index.html` where it expected JS. Client-side
-        // routes with a dot (e.g. `/v2.0`) aren't asset types, so they still
-        // reach the fallback below.
         if is_known_asset(&relative) {
             return None;
         }
@@ -108,8 +103,7 @@ fn cache_control(path: &Path) -> &'static str {
 }
 
 /// Whether the path names a recognized asset type (its extension maps to a
-/// concrete media type). Used to tell an asset request apart from a client-side
-/// route so a missing asset 404s instead of serving the SPA shell.
+/// concrete media type).
 fn is_known_asset(path: &Path) -> bool {
     content_type(path) != "application/octet-stream"
 }
