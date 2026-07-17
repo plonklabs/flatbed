@@ -24,7 +24,7 @@ static_route!(mount = "/", dir = "dist", fallback = "index.html");
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let config = FlatbedConfig::new("spa").host("0.0.0.0").port(8080);
+    let config = FlatbedConfig::new("static-assets").host("0.0.0.0").port(8080);
     Flatbed::run(config, |_| async { Ok(()) }).await?;
     Ok(())
 }

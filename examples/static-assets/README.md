@@ -1,4 +1,4 @@
-# spa
+# static-assets
 
 A flatbed service that serves a JSON API **and** a bundled single-page app from
 one origin. The frontend and its API share a host, so there's no CORS and no
@@ -18,7 +18,7 @@ static_route!(mount = "/", dir = "dist", fallback = "index.html");
 
 `dir` is read from the container filesystem at request time and resolved
 relative to the process working directory. The `Dockerfile` sets `WORKDIR /app`
-and `COPY examples/spa/dist ./dist`, so `dir = "dist"` resolves to `/app/dist`.
+and copies `dist/` there, so `dir = "dist"` resolves to `/app/dist`.
 In a real project `dist/` is your bundler's output (e.g. Vite's `npm run build`);
 the checked-in `dist/` here is a hand-written stand-in.
 
@@ -27,7 +27,7 @@ the checked-in `dist/` here is a hand-written stand-in.
 Locally (needs `flatc` on `PATH`, matching `.flatc-version`):
 
 ```bash
-cargo run                      # cwd is examples/spa, so dir = "dist" resolves
+cargo run                      # cwd is the example dir, so dir = "dist" resolves
 curl -s -X POST localhost:8080/api/hello \
   -H 'content-type: application/json' -d '{"name":"you"}'   # {"message":"hello, you"}
 curl -s localhost:8080/                 # index.html
@@ -48,3 +48,6 @@ docker compose up --build
 `ico`, `xml`, `webmanifest`) and `public, max-age=31536000, immutable` for
 content-hashed assets (bundlers hash asset filenames, so they're safe to cache
 forever).
+
+For dynamically-generated non-JSON bodies (CSV, SVG, …) rather than static
+files, see [`raw-response`](../raw-response).

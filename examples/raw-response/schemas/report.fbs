@@ -1,0 +1,12 @@
+namespace report;
+
+table CsvRequest {
+  label: string;
+  count: int;
+}
+
+table BadgeRequest {
+  label: string;
+}
+
+root_type CsvRequest;
