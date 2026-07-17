@@ -43,8 +43,7 @@ fn xml_escape(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
-/// Quote a value as an RFC 4180 CSV field when it contains a delimiter,
-/// a quote, or a line break.
+/// RFC 4180 CSV quoting: wrap in double-quotes and double any internal quotes.
 fn csv_field(s: &str) -> String {
     if s.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", s.replace('"', "\"\""))
