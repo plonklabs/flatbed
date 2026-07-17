@@ -16,7 +16,7 @@ flatbed = { path = "../../crates/flatbed", features = ["openapi"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 # The flatc-generated wire-format code uses `extern crate flatbuffers` and
 # serde derives that reference the `serde` crate by name, so both must be
-# direct dependencies. Versions match flatbed's own (crates/flatbed/Cargo.toml).
+# direct dependencies. Keep their versions in sync with flatbed's.
 flatbuffers = "25.2.10"
 serde = { version = "1", features = ["derive"] }
 
