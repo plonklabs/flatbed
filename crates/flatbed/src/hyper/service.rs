@@ -35,6 +35,8 @@ pub struct ServiceContext<C> {
     pub context: Arc<RwLock<Option<Arc<C>>>>,
     /// Flatbed configuration
     pub config: FlatbedConfig,
+    /// Static-file mounts registered via `static_route!`
+    pub static_routes: Arc<Vec<crate::StaticRouteInfo>>,
 }
 
 impl<C> ServiceContext<C> {
@@ -57,6 +59,7 @@ impl<C> Clone for ServiceContext<C> {
             ready_rx: self.ready_rx.clone(),
             context: Arc::clone(&self.context),
             config: self.config.clone(),
+            static_routes: Arc::clone(&self.static_routes),
         }
     }
 }
@@ -104,7 +107,6 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
 
     // Check for built-in endpoints first
 
-    // Splash endpoint at GET /
     if let Some(response) = handle_splash_endpoint(&method, &path, &ctx.config) {
         return response;
     }
@@ -136,6 +138,11 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
         let allowed = ctx.router.get_allowed_methods(&path);
         if !allowed.is_empty() {
             return build_method_not_allowed(&allowed);
+        }
+        if is_get_or_head(&method) && !ctx.static_routes.is_empty() {
+            if let Some(parts) = super::static_files::serve(&ctx.static_routes, &path).await {
+                return build_success_response(parts);
+            }
         }
         return build_not_found();
     };
@@ -238,13 +245,16 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
     }
 }
 
-/// Handle splash endpoint (GET /)
+fn is_get_or_head(method: &str) -> bool {
+    method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
+}
+
 fn handle_splash_endpoint(
     method: &str,
     path: &str,
     config: &FlatbedConfig,
 ) -> Option<Response<Full<Bytes>>> {
-    if method.to_uppercase() != "GET" || path != "/" {
+    if !is_get_or_head(method) || path != "/" {
         return None;
     }
 
@@ -266,7 +276,7 @@ fn handle_telemetry_endpoint<C>(
     path: &str,
     ctx: &ServiceContext<C>,
 ) -> Option<Response<Full<Bytes>>> {
-    if method.to_uppercase() != "GET" {
+    if !is_get_or_head(method) {
         return None;
     }
 
@@ -312,7 +322,7 @@ fn handle_openapi_endpoint(
     path: &str,
     config: &FlatbedConfig,
 ) -> Option<Response<Full<Bytes>>> {
-    if method.to_uppercase() != "GET" {
+    if !is_get_or_head(method) {
         return None;
     }
 

@@ -9,6 +9,7 @@ and hit with `curl`. They are ordered from simplest to most featureful.
 | [`openapi`](openapi)                 | The `openapi` feature — routes tagged at compile time, served as a generated OpenAPI 3 spec, with a Swagger UI. |
 | [`telemetry`](telemetry)             | The `telemetry` + `prometheus` features — `/healthz`, `/readyz`, `/metrics`, a custom counter, and a Prometheus scraper. |
 | [`context-worker`](context-worker)   | An application `AppContext` built in the boot closure plus a background `Worker`. |
+| [`spa`](spa)                         | Serving a bundled single-page app and its JSON API from one origin — `static_route!` for `dist/`, `#[route]` for `/api/*`, no CORS. |
 
 ## Running an example
 
