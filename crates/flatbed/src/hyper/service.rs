@@ -249,7 +249,6 @@ fn is_get_or_head(method: &str) -> bool {
     method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
 }
 
-/// Handle splash endpoint (GET / and HEAD /)
 fn handle_splash_endpoint(
     method: &str,
     path: &str,
