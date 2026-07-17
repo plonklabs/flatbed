@@ -16,13 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl unzip \
 
 WORKDIR /src
 COPY . .
-RUN cargo build --release --manifest-path examples/spa/Cargo.toml
+RUN cargo build --release --manifest-path examples/raw-response/Cargo.toml
 
 FROM debian:bookworm-slim
-WORKDIR /app
-COPY --from=builder /src/examples/spa/target/release/flatbed-example-spa /usr/local/bin/app
-# A relative static-mount dir resolves against the process working directory,
-# so WORKDIR determines where the served files are read from.
-COPY examples/spa/dist ./dist
+COPY --from=builder \
+  /src/examples/raw-response/target/release/flatbed-example-raw-response \
+  /usr/local/bin/app
 EXPOSE 8080
 CMD ["app"]

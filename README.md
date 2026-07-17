@@ -191,8 +191,9 @@ async fn report(req: Request<ReportQuery>) -> Result<Response<()>, FlatbedRouteE
 }
 ```
 
-The [`spa`](examples/spa) example puts both together: `/api/hello` handled by a
-route, everything else served from a bundled `dist/`.
+The [`raw-response`](examples/raw-response) example returns CSV and SVG from
+handlers; the [`static-assets`](examples/static-assets) example serves a bundled
+`dist/` alongside a JSON API.
 
 ## Crates
 

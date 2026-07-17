@@ -3,6 +3,6 @@ services:
     build:
       # Repo root, so the ../../crates/flatbed path dependency resolves.
       context: ../..
-      dockerfile: examples/spa/Dockerfile
+      dockerfile: examples/raw-response/Dockerfile
     ports:
       - "8080:8080"

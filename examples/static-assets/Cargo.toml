@@ -1,5 +1,5 @@
 [package]
-name = "flatbed-example-spa"
+name = "flatbed-example-static-assets"
 version = "0.0.0"
 edition = "2021"
 publish = false
