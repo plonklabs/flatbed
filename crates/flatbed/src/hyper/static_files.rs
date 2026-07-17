@@ -1,8 +1,10 @@
 //! Static-file serving for `static_route!` mounts.
 //!
 //! Files are read from the container filesystem at request time. Path
-//! resolution rejects any component that could escape the mount directory, so a
-//! request can only reach files at or below `dir`.
+//! resolution rejects any `..` or absolute component in the request URL;
+//! symlinks under `dir` are followed by the OS and are not separately
+//! constrained (the served directory is operator-controlled, shipped in the
+//! image).
 
 use std::path::{Component, Path, PathBuf};
 
@@ -66,7 +68,7 @@ fn strip_mount<'a>(mount: &str, path: &'a str) -> Option<&'a str> {
 }
 
 /// Resolve a relative request path to a directory-relative path, rejecting any
-/// component that could escape the mount directory (`..`, absolute roots).
+/// URL component that could escape the mount directory (`..`, absolute roots).
 fn sanitize(rel: &str) -> Option<PathBuf> {
     let mut out = PathBuf::new();
     for component in Path::new(rel).components() {

@@ -253,7 +253,7 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
 /// static mounts answer. The built-ins must accept both: a static mount is the
 /// fallback for any unmatched GET-family request, so a GET-only built-in would
 /// let HEAD fall through to static serving and answer a well-known path with the
-/// wrong content. Zero-alloc, unlike `to_uppercase`.
+/// wrong content.
 fn is_get_or_head(method: &str) -> bool {
     method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
 }
