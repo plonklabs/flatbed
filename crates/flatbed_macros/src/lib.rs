@@ -784,9 +784,9 @@ impl Parse for StaticRouteArgs {
 /// Files are read from `dir` on the container filesystem at request time, so
 /// the directory must be present in the running image (e.g. `COPY dist/ /app/dist`
 /// in the Dockerfile). Declared `#[route]` routes always take precedence, so an
-/// API and a static mount can share one origin. A configured
-/// `FlatbedConfig::splash(...)` answers `GET /` ahead of a root mount, so don't
-/// pair a splash banner with a `mount = "/"` SPA.
+/// API and a static mount can share one origin. A configured splash message
+/// answers `GET /` ahead of a root mount, so don't pair a splash with a
+/// `mount = "/"` SPA.
 ///
 /// # Arguments
 /// - `mount` (required): URL prefix to serve under, e.g. `"/"` or `"/assets"`.

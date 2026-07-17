@@ -245,8 +245,6 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
     }
 }
 
-/// GET and HEAD — the read verbs the built-in endpoints and static mounts
-/// answer identically.
 fn is_get_or_head(method: &str) -> bool {
     method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
 }
