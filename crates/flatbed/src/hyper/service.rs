@@ -281,7 +281,9 @@ fn handle_telemetry_endpoint<C>(
     path: &str,
     ctx: &ServiceContext<C>,
 ) -> Option<Response<Full<Bytes>>> {
-    if method.to_uppercase() != "GET" {
+    // HEAD must reach these built-ins too, else a `mount = "/"` static mount
+    // answers HEAD for them with the wrong content-type.
+    if !matches!(method.to_uppercase().as_str(), "GET" | "HEAD") {
         return None;
     }
 
@@ -327,7 +329,7 @@ fn handle_openapi_endpoint(
     path: &str,
     config: &FlatbedConfig,
 ) -> Option<Response<Full<Bytes>>> {
-    if method.to_uppercase() != "GET" {
+    if !matches!(method.to_uppercase().as_str(), "GET" | "HEAD") {
         return None;
     }
 

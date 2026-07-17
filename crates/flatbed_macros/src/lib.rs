@@ -733,7 +733,6 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     main_macro::main_impl(attr, item)
 }
 
-/// Parsed arguments for the `static_route!` macro
 struct StaticRouteArgs {
     mount: LitStr,
     dir: LitStr,

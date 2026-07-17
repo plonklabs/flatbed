@@ -45,8 +45,6 @@ async fn serve_one(route: &StaticRouteInfo, path: &str) -> Option<ResponseParts>
         }
     }
 
-    // Extensionless miss (root or a client-side route like /dashboard): serve
-    // the fallback.
     let fallback = route.fallback?;
     let full = dir.join(fallback);
     let bytes = read_file(&full).await?;
