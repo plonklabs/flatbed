@@ -228,6 +228,9 @@ flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
   `fallback` (SPA history routing).
 - A configured `FlatbedConfig::splash(...)` answers `GET /` ahead of a root
   static mount, so don't combine a splash with a `mount = "/"` SPA.
+- Static serving sits behind the readiness gate: until the boot function
+  completes, a GET (including the SPA shell) returns `503`, same as declared
+  routes. Kubernetes won't route traffic before readiness anyway.
 
 Static files can't go through the typed JSON/FlatBuffer path, so they rely on
 the raw-response primitive: `Response::raw(bytes, content_type)` returns
