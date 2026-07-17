@@ -293,6 +293,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn serve_first_matching_mount_wins() {
+        let base = std::env::temp_dir();
+        let make = |suffix: &str, body: &[u8]| -> &'static str {
+            let dir = base.join(format!("flatbed-static-{}-{suffix}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("app.js"), body).unwrap();
+            Box::leak(dir.to_str().unwrap().to_string().into_boxed_str())
+        };
+        let routes = [
+            StaticRouteInfo {
+                mount: "/",
+                dir: make("winA", b"first"),
+                fallback: None,
+            },
+            StaticRouteInfo {
+                mount: "/",
+                dir: make("winB", b"second"),
+                fallback: None,
+            },
+        ];
+        let parts = serve(&routes, "/app.js").await.expect("hit");
+        assert_eq!(parts.body, b"first");
+    }
+
+    #[tokio::test]
     async fn no_fallback_extensionless_is_404() {
         // No fallback configured: an extensionless miss has nowhere to go.
         let route = StaticRouteInfo {

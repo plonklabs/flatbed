@@ -107,7 +107,6 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
 
     // Check for built-in endpoints first
 
-    // Splash endpoint at GET /
     if let Some(response) = handle_splash_endpoint(&method, &path, &ctx.config) {
         return response;
     }
@@ -142,9 +141,6 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
         }
         if is_get_or_head(&method) && !ctx.static_routes.is_empty() {
             if let Some(parts) = super::static_files::serve(&ctx.static_routes, &path).await {
-                // hyper omits the body for a HEAD response while still emitting
-                // the Content-Length computed from the full body, so the same
-                // parts are correct for both GET and HEAD — don't zero the body.
                 return build_success_response(parts);
             }
         }
