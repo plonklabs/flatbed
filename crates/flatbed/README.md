@@ -390,6 +390,7 @@ flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
 Files are read from the container filesystem at request time (ship the
 directory in the image, e.g. `COPY dist/ /app/dist`). The `Content-Type` is
 derived from the file extension; `Cache-Control` is `no-cache` for HTML and
+other stable-name files (`json`, `txt`, `ico`, `xml`, `webmanifest`), and
 `public, max-age=31536000, immutable` for content-hashed assets. A missing path
 with an extension returns `404` rather than the HTML shell; an extensionless
 miss serves the `fallback`.

@@ -221,7 +221,8 @@ flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
 - **Declared `#[route]`s always win.** Static serving is the fallback tier
   for an unmatched **GET**; `/api/*` routes keep working under a `/` mount.
 - `Content-Type` comes from the file extension; `Cache-Control` is
-  `no-cache` for HTML and long-lived `immutable` for other assets.
+  `no-cache` for HTML and other stable-name files (`json`/`txt`/`ico`/`xml`/
+  `webmanifest`), long-lived `immutable` for content-hashed assets.
 - A missing path **with** an extension is a real 404 (don't mask a broken
   asset URL with the HTML shell); an **extensionless** miss serves the
   `fallback` (SPA history routing).

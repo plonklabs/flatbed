@@ -207,7 +207,14 @@ mod tests {
             "public, max-age=31536000, immutable"
         );
         // Stable-name files: must stay fresh.
-        for stable in ["index.html", "robots.txt", "favicon.ico", "manifest.json"] {
+        for stable in [
+            "index.html",
+            "robots.txt",
+            "favicon.ico",
+            "manifest.json",
+            "sitemap.xml",
+            "app.webmanifest",
+        ] {
             assert_eq!(cache_control(Path::new(stable)), "no-cache", "{stable}");
         }
     }

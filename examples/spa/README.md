@@ -44,6 +44,7 @@ docker compose up --build
 ## Content types and caching
 
 `static_route!` picks the `Content-Type` from the file extension and sets
-`Cache-Control`: `no-cache` for `*.html` (it references hashed asset URLs) and
-`public, max-age=31536000, immutable` for everything else (bundlers content-hash
-asset filenames, so they're safe to cache forever).
+`Cache-Control`: `no-cache` for HTML and other stable-name files (`json`, `txt`,
+`ico`, `xml`, `webmanifest`) and `public, max-age=31536000, immutable` for
+content-hashed assets (bundlers hash asset filenames, so they're safe to cache
+forever).
