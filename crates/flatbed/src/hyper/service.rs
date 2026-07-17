@@ -342,7 +342,7 @@ fn build_success_response(parts: ResponseParts) -> Response<Full<Bytes>> {
     let mut builder = Response::builder().status(parts.status);
 
     // Set content type
-    builder = builder.header("content-type", parts.content_type);
+    builder = builder.header("content-type", parts.content_type.as_ref());
 
     // Copy headers
     for (key, value) in parts.headers.iter() {

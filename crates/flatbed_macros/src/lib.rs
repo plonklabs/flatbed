@@ -504,12 +504,6 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let is_flatbuffer = content_type.contains("application/x-flatbuffers")
                     || content_type.contains("application/x-flat-buffers");
 
-                let response_content_type: &'static str = if is_json {
-                    "application/json"
-                } else {
-                    "application/x-flatbuffers"
-                };
-
                 let request_id = request_parts.request_id.clone();
 
                 // Deserialize request body
@@ -562,20 +556,25 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                 let result = #fn_name(request).await;
 
                 match result {
-                    Ok(response) => {
-                        // Serialize response body
-                        let response_bytes = if is_json {
-                            match ::flatbed::serde_json::to_vec(&response.body) {
-                                Ok(b) => b,
-                                Err(e) => {
-                                    return Err(::flatbed::Error::SerializationError(
-                                        format!("JSON serialization error: {}", e)
-                                    ));
+                    Ok(mut response) => {
+                        let (response_bytes, response_content_type): (Vec<u8>, ::std::borrow::Cow<'static, str>) =
+                            if let Some((bytes, content_type)) = response.take_raw() {
+                                (bytes, content_type)
+                            } else if is_json {
+                                match ::flatbed::serde_json::to_vec(&response.body) {
+                                    Ok(b) => (b, ::std::borrow::Cow::Borrowed("application/json")),
+                                    Err(e) => {
+                                        return Err(::flatbed::Error::SerializationError(
+                                            format!("JSON serialization error: {}", e)
+                                        ));
+                                    }
                                 }
-                            }
-                        } else {
-                            response.body.to_flatbuffer()
-                        };
+                            } else {
+                                (
+                                    response.body.to_flatbuffer(),
+                                    ::std::borrow::Cow::Borrowed("application/x-flatbuffers"),
+                                )
+                            };
 
                         // Build response parts
                         let mut parts = ::flatbed::ResponseParts::with_status(
@@ -661,7 +660,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                             body,
                             status: err.status,
                             headers,
-                            content_type,
+                            content_type: content_type.into(),
                         })
                     }
                 }
