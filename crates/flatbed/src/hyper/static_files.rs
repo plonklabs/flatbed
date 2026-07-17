@@ -14,8 +14,7 @@ use crate::{HeaderName, HeaderValue, ResponseParts, StaticRouteInfo};
 /// fallback applies — the caller then responds 404.
 ///
 /// The full file is read even for a HEAD request; hyper omits the body at the
-/// connection layer while still emitting the correct `Content-Length`. Assets
-/// are small enough that a separate metadata-only path isn't worth the branch.
+/// connection layer while still emitting the correct `Content-Length`.
 pub async fn serve(routes: &[StaticRouteInfo], path: &str) -> Option<ResponseParts> {
     for route in routes {
         if let Some(parts) = serve_one(route, path).await {
@@ -289,6 +288,17 @@ mod tests {
     async fn traversal_is_rejected() {
         let route = fixture("traversal");
         assert!(serve_one(&route, "/../../etc/hosts").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn no_fallback_extensionless_is_404() {
+        // No fallback configured: an extensionless miss has nowhere to go.
+        let route = StaticRouteInfo {
+            mount: "/",
+            dir: "/nonexistent",
+            fallback: None,
+        };
+        assert!(serve_one(&route, "/dashboard").await.is_none());
     }
 
     #[tokio::test]

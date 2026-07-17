@@ -249,8 +249,11 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
     }
 }
 
-/// Whether `method` is GET or HEAD — the read methods the built-in endpoints
-/// and static mounts answer. Zero-alloc, unlike `to_uppercase`.
+/// Whether `method` is GET or HEAD — the read verbs the built-in endpoints and
+/// static mounts answer. The built-ins must accept both: a static mount is the
+/// fallback for any unmatched GET-family request, so a GET-only built-in would
+/// let HEAD fall through to static serving and answer a well-known path with the
+/// wrong content. Zero-alloc, unlike `to_uppercase`.
 fn is_get_or_head(method: &str) -> bool {
     method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
 }
@@ -261,8 +264,6 @@ fn handle_splash_endpoint(
     path: &str,
     config: &FlatbedConfig,
 ) -> Option<Response<Full<Bytes>>> {
-    // HEAD / must see the same headers as GET /; without this it would fall
-    // through to a root static mount and answer with the wrong content-type.
     if !is_get_or_head(method) || path != "/" {
         return None;
     }
@@ -285,8 +286,6 @@ fn handle_telemetry_endpoint<C>(
     path: &str,
     ctx: &ServiceContext<C>,
 ) -> Option<Response<Full<Bytes>>> {
-    // HEAD must reach these built-ins too, else a `mount = "/"` static mount
-    // answers HEAD for them with the wrong content-type.
     if !is_get_or_head(method) {
         return None;
     }
