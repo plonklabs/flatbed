@@ -13,7 +13,7 @@ use crate::{HeaderName, HeaderValue, ResponseParts, StaticRouteInfo};
 /// Serve a static file for `path` from the first mount that produces a hit.
 ///
 /// Returns `None` when no mount matches, the resolved file is absent, and no
-/// fallback applies — the caller then responds 404.
+/// fallback applies.
 ///
 /// The full file is read even for a HEAD request; hyper omits the body at the
 /// connection layer while still emitting the correct `Content-Length`.
