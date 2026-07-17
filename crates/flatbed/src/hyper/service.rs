@@ -140,9 +140,7 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
         if !allowed.is_empty() {
             return build_method_not_allowed(&allowed);
         }
-        let serves_static =
-            method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD");
-        if serves_static && !ctx.static_routes.is_empty() {
+        if is_get_or_head(&method) && !ctx.static_routes.is_empty() {
             if let Some(parts) = super::static_files::serve(&ctx.static_routes, &path).await {
                 // hyper omits the body for a HEAD response while still emitting
                 // the Content-Length computed from the full body, so the same
@@ -251,6 +249,12 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
     }
 }
 
+/// Whether `method` is GET or HEAD — the read methods the built-in endpoints
+/// and static mounts answer. Zero-alloc, unlike `to_uppercase`.
+fn is_get_or_head(method: &str) -> bool {
+    method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
+}
+
 /// Handle splash endpoint (GET / and HEAD /)
 fn handle_splash_endpoint(
     method: &str,
@@ -259,7 +263,7 @@ fn handle_splash_endpoint(
 ) -> Option<Response<Full<Bytes>>> {
     // HEAD / must see the same headers as GET /; without this it would fall
     // through to a root static mount and answer with the wrong content-type.
-    if !matches!(method.to_uppercase().as_str(), "GET" | "HEAD") || path != "/" {
+    if !is_get_or_head(method) || path != "/" {
         return None;
     }
 
@@ -283,7 +287,7 @@ fn handle_telemetry_endpoint<C>(
 ) -> Option<Response<Full<Bytes>>> {
     // HEAD must reach these built-ins too, else a `mount = "/"` static mount
     // answers HEAD for them with the wrong content-type.
-    if !matches!(method.to_uppercase().as_str(), "GET" | "HEAD") {
+    if !is_get_or_head(method) {
         return None;
     }
 
@@ -329,7 +333,7 @@ fn handle_openapi_endpoint(
     path: &str,
     config: &FlatbedConfig,
 ) -> Option<Response<Full<Bytes>>> {
-    if !matches!(method.to_uppercase().as_str(), "GET" | "HEAD") {
+    if !is_get_or_head(method) {
         return None;
     }
 
