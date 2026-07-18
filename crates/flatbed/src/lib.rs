@@ -450,13 +450,12 @@ pub struct SchemaInfo {
 ///
 /// One is submitted for *every* generated table — including tables that only
 /// ever appear nested inside another and never as a route body — so the
-/// registry is a complete inventory of the generated types.
+/// registry is a complete inventory of the generated types. `name` is the bare
+/// type name (the key routes use to reference their request/response types);
+/// `namespace` is the FlatBuffer namespace (`"v_1"`, `"test"`).
 #[derive(Clone, Copy, Debug)]
 pub struct TypeSchema {
-    /// Bare type name (`"UserRequest"`), matching the names routes use to
-    /// reference their request/response types.
     pub name: &'static str,
-    /// FlatBuffer namespace the type lives in (`"v_1"`, `"test"`).
     pub namespace: &'static str,
     pub fields: &'static [TypeFieldInfo],
 }
@@ -464,12 +463,13 @@ pub struct TypeSchema {
 /// A single field of a registered [`TypeSchema`].
 ///
 /// `fbs_type` is the rich adapter-language string (`"uint64"`, `"[Address]"`,
-/// `"Severity"`) — enough to recover the exact wire shape.
+/// `"Severity"`) — enough to recover the exact wire shape. `field_id` is the
+/// FlatBuffer vtable slot; `required` is false for wire-optional fields
+/// (strings, tables, vectors) and true for scalars and enums.
 #[derive(Clone, Copy, Debug)]
 pub struct TypeFieldInfo {
     pub name: &'static str,
     pub fbs_type: &'static str,
-    /// FlatBuffer field id (the vtable slot).
     pub field_id: u16,
     pub required: bool,
 }
@@ -1883,6 +1883,9 @@ pub fn get_type_schema(name: &str) -> Option<&'static TypeSchema> {
 }
 
 /// Look up a registered [`EnumSchema`] by its bare name.
+///
+/// Names are keyed bare (without the namespace); a bare name is assumed unique
+/// across namespaces, which [`validate_type_registry`] enforces at startup.
 pub fn get_enum_schema(name: &str) -> Option<&'static EnumSchema> {
     static MAP: LazyLock<HashMap<&'static str, &'static EnumSchema>> = LazyLock::new(|| {
         let mut map = HashMap::new();

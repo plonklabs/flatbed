@@ -259,9 +259,7 @@ fn generate_plain_struct_module(
 }
 
 /// Emit an `inventory::submit!` registering this table in the runtime type
-/// registry. Every generated table is registered — including tables that only
-/// ever appear nested inside another and never as a route request/response —
-/// so the registry is a complete inventory of the generated types.
+/// registry.
 fn generate_type_schema_registration(
     output: &mut String,
     table: &Table,
