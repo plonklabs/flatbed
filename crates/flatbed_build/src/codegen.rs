@@ -275,8 +275,8 @@ fn generate_type_schema_registration(
         table.name, namespace
     ));
     for field in &table.fields {
-        // Same required rule as `SCHEMA_FIELDS`: strings, tables and vectors
-        // are optional at the FB wire level; scalars and enums are not.
+        // Strings, tables and vectors are optional at the FB wire level;
+        // scalars and enums are not.
         let required =
             !is_optional_type(&field.fbs_type) && !is_table_type(&field.fbs_type, table_names);
         output.push_str(&format!(

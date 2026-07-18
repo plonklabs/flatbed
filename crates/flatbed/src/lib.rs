@@ -448,11 +448,9 @@ pub struct SchemaInfo {
 /// A generated FlatBuffer table, registered at compile time so the full set
 /// of types is discoverable at runtime.
 ///
-/// Unlike [`SchemaInfo`] (which is only attached to a route's request/response
-/// type), a `TypeSchema` is submitted for *every* generated table — including
-/// tables that only ever appear nested inside another and never as a route
-/// body. So the registry is a complete inventory of the generated types, not
-/// just the ones a route names directly.
+/// One is submitted for *every* generated table — including tables that only
+/// ever appear nested inside another and never as a route body — so the
+/// registry is a complete inventory of the generated types.
 #[derive(Clone, Copy, Debug)]
 pub struct TypeSchema {
     /// Bare type name (`"UserRequest"`), matching the names routes use to
@@ -466,8 +464,7 @@ pub struct TypeSchema {
 /// A single field of a registered [`TypeSchema`].
 ///
 /// `fbs_type` is the rich adapter-language string (`"uint64"`, `"[Address]"`,
-/// `"Severity"`) — enough to recover the exact wire shape, unlike the coarse
-/// [`FieldInfo::field_type`].
+/// `"Severity"`) — enough to recover the exact wire shape.
 #[derive(Clone, Copy, Debug)]
 pub struct TypeFieldInfo {
     pub name: &'static str,
@@ -1924,8 +1921,8 @@ impl std::error::Error for TypeConflict {}
 /// [`get_type_schema`] and [`get_enum_schema`] key on the bare name, so two
 /// same-named types in different namespaces shadow each other in the lookup —
 /// and anything built from the registry would silently use whichever won the
-/// insert race. This surfaces the collision as an error instead. Pairs with
-/// [`validate_routes`]; both run before the server binds.
+/// insert race. This surfaces the collision as an error instead, at startup
+/// before the server binds.
 pub fn validate_type_registry() -> Result<(), TypeConflict> {
     let mut types: HashMap<&str, &TypeSchema> = HashMap::new();
     for ty in inventory::iter::<TypeSchema> {

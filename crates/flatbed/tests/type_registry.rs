@@ -1,11 +1,9 @@
 //! Verifies the compile-time type registry populated by `TypeSchema` /
 //! `EnumSchema` submissions in generated code.
 //!
-//! The registry's reason for existing is that it captures *every* generated
-//! table — not just the ones a route uses as a request/response. `Address`
-//! below is nested inside `UserRequest`/`UserResponse`/`AddressBook` but is
-//! never a route body, so it exercises exactly the discovery gap the registry
-//! closes.
+//! The registry captures *every* generated table — not just the ones a route
+//! uses as a request/response. `Address` below is nested inside
+//! `UserRequest`/`UserResponse`/`AddressBook` but is never a route body.
 
 #[path = "../src/generated/test_flatbed.rs"]
 #[allow(warnings, clippy::all)]
@@ -44,8 +42,6 @@ fn field_descriptors_carry_fbs_type_id_and_requiredness() {
         .iter()
         .find(|f| f.name == "address")
         .expect("address field missing");
-    // A nested table reference keeps its rich fbs_type rather than being
-    // flattened to the coarse OpenAPI form.
     assert_eq!(address.fbs_type, "Address");
     assert!(!address.required);
 
