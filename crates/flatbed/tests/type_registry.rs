@@ -1,9 +1,6 @@
 //! Verifies the compile-time type registry populated by `TypeSchema` /
-//! `EnumSchema` submissions in generated code.
-//!
-//! The registry captures *every* generated table — not just the ones a route
-//! uses as a request/response. `Address` below is nested inside
-//! `UserRequest`/`UserResponse`/`AddressBook` but is never a route body.
+//! `EnumSchema` submissions in generated code, including tables reachable only
+//! by nesting rather than as a route request/response.
 
 #[path = "../src/generated/test_flatbed.rs"]
 #[allow(warnings, clippy::all)]
@@ -16,7 +13,7 @@ fn every_table_is_registered_including_nested_only() {
     for name in [
         "TestRequest",
         "TestResponse",
-        "Address", // nested-only — never a route body
+        "Address", // reachable only by nesting
         "UserRequest",
         "UserResponse",
         "AddressBook",
