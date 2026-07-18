@@ -1924,34 +1924,38 @@ impl std::error::Error for TypeConflict {}
 /// insert race. This surfaces the collision as an error instead, at startup
 /// before the server binds.
 pub fn validate_type_registry() -> Result<(), TypeConflict> {
-    let mut types: HashMap<&str, &TypeSchema> = HashMap::new();
-    for ty in inventory::iter::<TypeSchema> {
-        if let Some(prev) = types.insert(ty.name, ty) {
-            if prev.namespace != ty.namespace {
+    let types = inventory::iter::<TypeSchema>
+        .into_iter()
+        .map(|t| (t.name, t.namespace));
+    find_name_collision("type", types)?;
+    let enums = inventory::iter::<EnumSchema>
+        .into_iter()
+        .map(|e| (e.name, e.namespace));
+    find_name_collision("enum", enums)?;
+    Ok(())
+}
+
+/// Return a [`TypeConflict`] if the same bare name appears under two different
+/// namespaces in `entries` (`(name, namespace)` pairs). Repeats of an
+/// identical `(name, namespace)` are not a conflict — only a name shared
+/// across namespaces is, since that's what makes a bare-name lookup ambiguous.
+fn find_name_collision<'a>(
+    kind: &'static str,
+    entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Result<(), TypeConflict> {
+    let mut seen: HashMap<&str, &str> = HashMap::new();
+    for (name, namespace) in entries {
+        if let Some(prev) = seen.insert(name, namespace) {
+            if prev != namespace {
                 return Err(TypeConflict {
-                    name: ty.name.to_string(),
-                    first_namespace: prev.namespace.to_string(),
-                    second_namespace: ty.namespace.to_string(),
-                    kind: "type",
+                    name: name.to_string(),
+                    first_namespace: prev.to_string(),
+                    second_namespace: namespace.to_string(),
+                    kind,
                 });
             }
         }
     }
-
-    let mut enums: HashMap<&str, &EnumSchema> = HashMap::new();
-    for en in inventory::iter::<EnumSchema> {
-        if let Some(prev) = enums.insert(en.name, en) {
-            if prev.namespace != en.namespace {
-                return Err(TypeConflict {
-                    name: en.name.to_string(),
-                    first_namespace: prev.namespace.to_string(),
-                    second_namespace: en.namespace.to_string(),
-                    kind: "enum",
-                });
-            }
-        }
-    }
-
     Ok(())
 }
 
@@ -2588,6 +2592,31 @@ mod tests {
     // ========================================================================
     // FlatbedConfig tests
     // ========================================================================
+
+    #[test]
+    fn find_name_collision_flags_same_name_across_namespaces() {
+        let entries = [("Foo", "v_1"), ("Bar", "v_1"), ("Foo", "v_2")];
+        let err = find_name_collision("type", entries)
+            .expect_err("a name shared across namespaces must be a conflict");
+        assert_eq!(err.name, "Foo");
+        assert_eq!(err.kind, "type");
+        assert_eq!(err.first_namespace, "v_1");
+        assert_eq!(err.second_namespace, "v_2");
+    }
+
+    #[test]
+    fn find_name_collision_accepts_unique_names() {
+        let entries = [("Foo", "v_1"), ("Bar", "v_1"), ("Baz", "v_2")];
+        assert!(find_name_collision("type", entries).is_ok());
+    }
+
+    #[test]
+    fn find_name_collision_ignores_identical_reregistration() {
+        // The same (name, namespace) appearing twice is a harmless duplicate,
+        // not an ambiguous lookup — only a name split across namespaces is.
+        let entries = [("Foo", "v_1"), ("Foo", "v_1")];
+        assert!(find_name_collision("enum", entries).is_ok());
+    }
 
     #[test]
     fn test_flatbed_config_new() {

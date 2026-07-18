@@ -238,7 +238,6 @@ fn generate_plain_struct_module(
         output.push('\n');
     }
 
-    // Register every enum in the runtime type registry.
     for enum_def in enums {
         generate_enum_schema_registration(output, enum_def, namespace);
     }
