@@ -58,8 +58,8 @@ pub(crate) struct Table {
 ///
 /// `id` is the FlatBuffer field id — the vtable slot flatc assigns (the
 /// declaration index for implicit ids, the explicit `(id: N)` attribute
-/// otherwise). It's carried so the runtime type registry can expose the
-/// exact wire slot for clients that reconstruct the codec from the schema.
+/// otherwise). It's the exact wire slot the field occupies, carried alongside
+/// the field so the type registry records it.
 #[derive(Default)]
 pub(crate) struct Field {
     pub(crate) name: String,

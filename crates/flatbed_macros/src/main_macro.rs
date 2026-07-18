@@ -149,6 +149,10 @@ pub fn main_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     eprintln!("Route conflict detected: {}", conflict);
                     std::process::exit(1);
                 }
+                if let Err(conflict) = ::flatbed::validate_type_registry() {
+                    eprintln!("Type registry conflict detected: {}", conflict);
+                    std::process::exit(1);
+                }
 
                 // Initialize context
                 #context_init

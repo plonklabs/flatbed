@@ -238,8 +238,7 @@ fn generate_plain_struct_module(
         output.push('\n');
     }
 
-    // Register every enum in the runtime type registry so OpenAPI generation
-    // and client codegen can enumerate them.
+    // Register every enum in the runtime type registry.
     for enum_def in enums {
         generate_enum_schema_registration(output, enum_def, namespace);
     }
@@ -263,7 +262,7 @@ fn generate_plain_struct_module(
 /// Emit an `inventory::submit!` registering this table in the runtime type
 /// registry. Every generated table is registered — including tables that only
 /// ever appear nested inside another and never as a route request/response —
-/// so a full, `$ref`-resolvable OpenAPI spec can be built from the registry.
+/// so the registry is a complete inventory of the generated types.
 fn generate_type_schema_registration(
     output: &mut String,
     table: &Table,
@@ -290,8 +289,7 @@ fn generate_type_schema_registration(
 }
 
 /// Emit an `inventory::submit!` registering this enum in the runtime type
-/// registry. Variants are listed in FlatBuffer value order (the same order the
-/// serde adapters and OpenAPI `enum` use).
+/// registry. Variants are listed in FlatBuffer value order.
 fn generate_enum_schema_registration(output: &mut String, enum_def: &Enum, namespace: &str) {
     let variants_csv = enum_def
         .variants

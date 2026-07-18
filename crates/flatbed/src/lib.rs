@@ -368,6 +368,8 @@ impl Flatbed {
 
         // Validate routes (fails fast on conflicts)
         crate::validate_routes().map_err(|e| Error::Custom(format!("Route conflict: {}", e)))?;
+        crate::validate_type_registry()
+            .map_err(|e| Error::Custom(format!("Type registry conflict: {}", e)))?;
 
         // Build router from inventory-registered routes
         let router = Arc::new(hyper::build_router());
@@ -449,8 +451,8 @@ pub struct SchemaInfo {
 /// Unlike [`SchemaInfo`] (which is only attached to a route's request/response
 /// type), a `TypeSchema` is submitted for *every* generated table — including
 /// tables that only ever appear nested inside another and never as a route
-/// body. That makes it possible to build a complete, `$ref`-resolvable OpenAPI
-/// spec and to drive client codegen from the registry.
+/// body. So the registry is a complete inventory of the generated types, not
+/// just the ones a route names directly.
 #[derive(Clone, Copy, Debug)]
 pub struct TypeSchema {
     /// Bare type name (`"UserRequest"`), matching the names routes use to
@@ -1870,9 +1872,8 @@ pub fn get_routes() -> &'static RouteMap {
 /// Look up a registered [`TypeSchema`] by its bare type name.
 ///
 /// Names are keyed bare (without the namespace), matching how routes reference
-/// their request/response types. Two same-named types in different namespaces
-/// would collide; that's out of scope for now (versioned schemas use distinct
-/// type names).
+/// their request/response types. A bare name is therefore assumed unique across
+/// namespaces; [`validate_type_registry`] enforces that at startup.
 pub fn get_type_schema(name: &str) -> Option<&'static TypeSchema> {
     static MAP: LazyLock<HashMap<&'static str, &'static TypeSchema>> = LazyLock::new(|| {
         let mut map = HashMap::new();
@@ -1894,6 +1895,67 @@ pub fn get_enum_schema(name: &str) -> Option<&'static EnumSchema> {
         map
     });
     MAP.get(name).copied()
+}
+
+/// A bare name registered under two different namespaces in the type registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeConflict {
+    pub name: String,
+    pub first_namespace: String,
+    pub second_namespace: String,
+    /// `"type"` or `"enum"` — which registry the collision is in.
+    pub kind: &'static str,
+}
+
+impl std::fmt::Display for TypeConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} name conflict: '{}' is registered in both namespace '{}' and '{}'",
+            self.kind, self.name, self.first_namespace, self.second_namespace
+        )
+    }
+}
+
+impl std::error::Error for TypeConflict {}
+
+/// Validate that every registered type and enum has a unique bare name.
+///
+/// [`get_type_schema`] and [`get_enum_schema`] key on the bare name, so two
+/// same-named types in different namespaces shadow each other in the lookup —
+/// and anything built from the registry would silently use whichever won the
+/// insert race. This surfaces the collision as an error instead. Pairs with
+/// [`validate_routes`]; both run before the server binds.
+pub fn validate_type_registry() -> Result<(), TypeConflict> {
+    let mut types: HashMap<&str, &TypeSchema> = HashMap::new();
+    for ty in inventory::iter::<TypeSchema> {
+        if let Some(prev) = types.insert(ty.name, ty) {
+            if prev.namespace != ty.namespace {
+                return Err(TypeConflict {
+                    name: ty.name.to_string(),
+                    first_namespace: prev.namespace.to_string(),
+                    second_namespace: ty.namespace.to_string(),
+                    kind: "type",
+                });
+            }
+        }
+    }
+
+    let mut enums: HashMap<&str, &EnumSchema> = HashMap::new();
+    for en in inventory::iter::<EnumSchema> {
+        if let Some(prev) = enums.insert(en.name, en) {
+            if prev.namespace != en.namespace {
+                return Err(TypeConflict {
+                    name: en.name.to_string(),
+                    first_namespace: prev.namespace.to_string(),
+                    second_namespace: en.namespace.to_string(),
+                    kind: "enum",
+                });
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Validate that all routes are unique (no duplicate paths)

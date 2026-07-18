@@ -44,14 +44,14 @@ fn field_descriptors_carry_fbs_type_id_and_requiredness() {
         .iter()
         .find(|f| f.name == "address")
         .expect("address field missing");
-    // The rich fbs_type is preserved (a nested table reference), and table
-    // fields are optional at the wire level.
+    // A nested table reference keeps its rich fbs_type rather than being
+    // flattened to the coarse OpenAPI form.
     assert_eq!(address.fbs_type, "Address");
     assert!(!address.required);
 
     let age = ur.fields.iter().find(|f| f.name == "age").unwrap();
     assert_eq!(age.fbs_type, "int32");
-    assert!(age.required); // scalars are required
+    assert!(age.required);
 }
 
 #[test]
@@ -59,7 +59,7 @@ fn vector_and_scalar_fbs_types_are_preserved() {
     let book = get_type_schema("AddressBook").expect("AddressBook not registered");
     let addresses = book.fields.iter().find(|f| f.name == "addresses").unwrap();
     assert_eq!(addresses.fbs_type, "[Address]");
-    assert!(!addresses.required); // vectors are optional
+    assert!(!addresses.required);
 }
 
 #[test]
@@ -67,4 +67,9 @@ fn enums_are_registered_with_variants_in_value_order() {
     let sev = get_enum_schema("Severity").expect("Severity not registered");
     assert_eq!(sev.namespace, "test");
     assert_eq!(sev.variants, ["Info", "Warning", "Error"]);
+}
+
+#[test]
+fn registry_has_no_bare_name_collisions() {
+    flatbed::validate_type_registry().expect("test schema type/enum names are unique");
 }
