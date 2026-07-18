@@ -55,10 +55,17 @@ pub(crate) struct Table {
 /// variant for enums, `false` for bool). Carrying only non-trivial
 /// defaults keeps generated `_flatbed.rs` snapshots byte-identical for
 /// tables that don't use FB defaults.
+///
+/// `id` is the FlatBuffer field id — the vtable slot flatc assigns (the
+/// declaration index for implicit ids, the explicit `(id: N)` attribute
+/// otherwise). It's carried so the runtime type registry can expose the
+/// exact wire slot for clients that reconstruct the codec from the schema.
+#[derive(Default)]
 pub(crate) struct Field {
     pub(crate) name: String,
     pub(crate) fbs_type: String,
     pub(crate) default: Option<String>,
+    pub(crate) id: u16,
 }
 
 /// Codegen view of a FlatBuffer enum.
@@ -143,6 +150,7 @@ pub(crate) fn build_reflected_schema(
                     name: f.name().to_string(),
                     fbs_type: reflection_type_to_fbs_string(&ty, schema),
                     default: reflected_field_default(f, &ty, schema),
+                    id: f.id(),
                 }
             })
             .collect();

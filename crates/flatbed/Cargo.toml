@@ -69,6 +69,10 @@ required-features = ["openapi"]
 name = "flatbuffer_table_vector"
 required-features = ["openapi"]
 
+[[test]]
+name = "type_registry"
+required-features = ["openapi"]
+
 [[example]]
 name = "routes"
 required-features = ["openapi"]
