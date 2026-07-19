@@ -6,7 +6,7 @@
 //! the response the same way. Path parameters (`/users/{id}`) become leading
 //! string arguments.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::fb_plugin::FbOperation;
 
@@ -99,6 +99,16 @@ pub(crate) fn check_unique_method_names(ops: &[FbOperation]) -> Result<(), Strin
     for op in ops {
         let name = method_name(op);
         let sig = format!("{} {}", op.method, op.path);
+        let mut seen_params: BTreeSet<String> = BTreeSet::new();
+        for param in path_params(&op.path) {
+            let ident = param_ident(&param);
+            if !seen_params.insert(ident.clone()) {
+                return Err(format!(
+                    "operation `{sig}` has two path parameters that map to the argument name \
+                     `{ident}` — rename one in the spec"
+                ));
+            }
+        }
         if !is_valid_ts_identifier(&name) {
             return Err(format!(
                 "operation `{sig}` derives the client method name `{name}`, which is not a valid \
@@ -176,7 +186,7 @@ fn method(op: &FbOperation) -> String {
     let params = path_params(&op.path);
 
     // Path-param names can be non-identifiers (`item-id`) or reserved words
-    // (`type`), so the argument uses a sanitized identifier form.
+    // (`class`), so the argument uses a sanitized identifier form.
     let mut args: Vec<String> = params
         .iter()
         .map(|p| format!("{}: string", param_ident(p)))
@@ -461,6 +471,13 @@ mod tests {
         ];
         let err = check_unique_method_names(&ops).expect_err("collision must fail");
         assert!(err.contains("`getFooBar`"), "message: {err}");
+    }
+
+    #[test]
+    fn duplicate_path_params_are_rejected() {
+        let ops = [op("GET", "/users/{id}/posts/{id}", None, Some("Post"))];
+        let err = check_unique_method_names(&ops).expect_err("duplicate param must fail");
+        assert!(err.contains("`id`"), "message: {err}");
     }
 
     #[test]
