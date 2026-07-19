@@ -5,6 +5,12 @@ captures each route's request/response types, `tag`, `summary`, and `version` at
 compile time, and flatbed serves a generated OpenAPI 3 document — no hand-kept
 spec.
 
+The schema exercises the full type surface: a `Priority` enum, a nested-only
+`Tag` table (reached only by nesting inside `EchoRequest`, never a route body),
+and a `[Tag]` vector. The generated spec renders these as a string `enum`, a
+component referenced by `$ref`, and an array — each carrying `x-fbs-type` /
+`x-fbs-id` extensions — so it's a complete, `$ref`-resolvable contract.
+
 Endpoints:
 
 - `POST /greet` — tag `Greetings`
@@ -44,3 +50,17 @@ explore / call the endpoints from the browser.
 
 > Point Redoc or a client generator at `/openapi.json` and it stays in sync with
 > the code automatically.
+
+## Verify a TypeScript client generates and type-checks
+
+`scripts/verify-openapi-ts.sh` (from the repo root) boots this service, pulls
+`/openapi.json`, generates TypeScript with
+[`openapi-typescript`](https://openapi-ts.dev), and type-checks it with `tsc`:
+
+```bash
+bash scripts/verify-openapi-ts.sh
+```
+
+A green run is proof that a JSON client generated from the spec compiles — the
+enum becomes a `"Low" | "Medium" | "High"` union, `Tag` its own interface, and
+`tags` a `Tag[]`. It needs `node`/`npx` and skips cleanly when they're absent.
