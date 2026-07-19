@@ -275,8 +275,6 @@ mod tests {
 
     #[test]
     fn get_only_request_type_drives_no_imports() {
-        // The request type is dropped for GET, and there's no response type, so
-        // neither the codec nor a `Ping` type import should be emitted.
         let client = generate(&[op("GET", "/ping", Some("Ping"), None)]);
         assert!(!client.contains("import * as codec"));
         assert!(!client.contains("import type"));
