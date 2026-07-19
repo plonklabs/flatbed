@@ -49,6 +49,7 @@ pub fn gen_fb_plugin(
     let table_names: BTreeSet<String> = tables.values().flatten().map(|t| t.name.clone()).collect();
     let ops = fb_operations(&spec);
     validate(&ops, &table_names)?;
+    crate::ts_client::check_unique_method_names(&ops)?;
     println!(
         "gen-fb-plugin: validated {} FlatBuffer operation(s) against {} — all referenced types resolve.",
         ops.len(),
