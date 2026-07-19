@@ -19,3 +19,5 @@ path = "src/bin/flatbed.rs"
 flatc-rust = "0.2.0"
 flatbuffers-reflection = "0.1"
 clap = { version = "4", features = ["derive"] }
+ureq = "2"
+serde_json = "1"

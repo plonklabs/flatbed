@@ -84,14 +84,17 @@
 //! # Module layout
 //!
 //! - `compile` — build orchestration (`Config`, the two flatc invocations,
-//!   per-include Rust concatenation). Public surface.
+//!   per-include Rust concatenation) plus the `.fbs` reflection the CLI
+//!   reuses. Public surface.
 //! - `reflection` — bfbs reader + `Table`/`Field`/`Enum` shadow types
 //!   produced from the reflection graph.
 //! - `source_order` — per-file `table`/`enum` declaration-position helper
 //!   used to keep generated output in source order.
 //! - `fbs_types` — adapter from the small `fbs_type` string language to
-//!   Rust + OpenAPI shapes.
+//!   Rust types.
 //! - `codegen` — emit `<stem>_flatbed.rs` from the bucketed shadow types.
+//! - `fb_plugin` — the `gen-fb-plugin` CLI: cross-check a served OpenAPI spec
+//!   against the local `.fbs` schemas.
 //!
 //! Not yet supported:
 //! - FlatBuffer unions and `struct` (fixed-layout) types — use a `table`
@@ -107,8 +110,10 @@
 
 mod codegen;
 mod compile;
+mod fb_plugin;
 mod fbs_types;
 mod reflection;
 mod source_order;
 
-pub use compile::Config;
+pub use compile::{root_fbs_files, Config};
+pub use fb_plugin::{gen_fb_plugin, SpecSource};
