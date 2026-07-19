@@ -73,11 +73,14 @@ fn main() -> ExitCode {
             let source = match (server, openapi) {
                 (Some(url), None) => flatbed_build::SpecSource::Server(url),
                 (None, Some(file)) => flatbed_build::SpecSource::File(file),
-                _ => {
+                (None, None) => {
                     eprintln!(
                         "flatbed gen-fb-plugin: provide exactly one of --server or --openapi"
                     );
                     return ExitCode::FAILURE;
+                }
+                (Some(_), Some(_)) => {
+                    unreachable!("clap's conflicts_with rejects --server together with --openapi")
                 }
             };
             match flatbed_build::gen_fb_plugin(source, &schemas_dir) {

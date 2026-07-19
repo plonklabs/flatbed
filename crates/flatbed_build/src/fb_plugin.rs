@@ -146,9 +146,8 @@ fn validate(
             .flatten()
             .collect();
         // A FlatBuffer operation with no generated (`$ref`) request or response
-        // type has nothing a codec could be built from — flag it rather than
-        // counting it as validated. (Real routes always have a generated
-        // request type, so this only fires on hand-crafted specs.)
+        // type has nothing a codec could be built from, so flag it rather than
+        // counting it as validated.
         if refs.is_empty() {
             untyped.push(format!("{} {}", op.method, op.path));
             continue;
@@ -182,7 +181,8 @@ fn validate(
             msg.push_str(&format!("  - {op}\n"));
         }
     }
-    Err(msg.into())
+    // Trim so the caller's `eprintln!` doesn't leave a stray blank line.
+    Err(msg.trim_end().to_string().into())
 }
 
 /// Reflect every top-level `.fbs` in `schemas_dir` (subdirectories are reached
