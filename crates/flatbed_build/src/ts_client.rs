@@ -226,7 +226,10 @@ fn method(op: &FbOperation) -> String {
     } else {
         let mut tmpl = op.path.clone();
         for p in &params {
-            tmpl = tmpl.replace(&format!("{{{p}}}"), &format!("${{{}}}", param_ident(p)));
+            // Encode each value: a `/`, `?`, `#`, `&`, or space in a parameter
+            // would otherwise reshape or misroute the request URL.
+            let expr = format!("${{encodeURIComponent({})}}", param_ident(p));
+            tmpl = tmpl.replace(&format!("{{{p}}}"), &expr);
         }
         format!("`{tmpl}`")
     };
@@ -389,14 +392,18 @@ mod tests {
     fn path_params_become_leading_string_args() {
         let client = generate(&[op("POST", "/users/{id}", Some("Patch"), Some("User"))]);
         assert!(client.contains("async postUsersById(id: string, body: Patch): Promise<User> {"));
-        assert!(client.contains("return this.request(\"POST\", `/users/${id}`,"));
+        assert!(
+            client.contains("return this.request(\"POST\", `/users/${encodeURIComponent(id)}`,")
+        );
     }
 
     #[test]
     fn get_with_request_type_omits_body_argument() {
         let client = generate(&[op("GET", "/users/{id}", Some("Empty"), Some("User"))]);
         assert!(client.contains("async getUsersById(id: string): Promise<User> {"));
-        assert!(client.contains("return this.request(\"GET\", `/users/${id}`, new Uint8Array(),"));
+        assert!(client.contains(
+            "return this.request(\"GET\", `/users/${encodeURIComponent(id)}`, new Uint8Array(),"
+        ));
     }
 
     #[test]
@@ -411,7 +418,7 @@ mod tests {
     fn hyphenated_path_param_becomes_valid_identifier() {
         let client = generate(&[op("GET", "/items/{item-id}", None, Some("Item"))]);
         assert!(client.contains("async getItemsByItemId(itemId: string): Promise<Item> {"));
-        assert!(client.contains("`/items/${itemId}`"));
+        assert!(client.contains("`/items/${encodeURIComponent(itemId)}`"));
     }
 
     #[test]
@@ -420,14 +427,14 @@ mod tests {
         // the derived method name keeps its `By{Segment}` form.
         let client = generate(&[op("GET", "/items/{class}", None, Some("Item"))]);
         assert!(client.contains("async getItemsByClass(class_: string): Promise<Item> {"));
-        assert!(client.contains("`/items/${class_}`"));
+        assert!(client.contains("`/items/${encodeURIComponent(class_)}`"));
     }
 
     #[test]
     fn digit_leading_path_param_is_sanitized() {
         let client = generate(&[op("GET", "/mfa/{2fa}", None, Some("Mfa"))]);
         assert!(client.contains("async getMfaBy2fa(_2fa: string): Promise<Mfa> {"));
-        assert!(client.contains("`/mfa/${_2fa}`"));
+        assert!(client.contains("`/mfa/${encodeURIComponent(_2fa)}`"));
     }
 
     #[test]
