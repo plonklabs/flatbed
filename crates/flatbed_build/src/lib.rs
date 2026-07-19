@@ -114,6 +114,7 @@ mod fb_plugin;
 mod fbs_types;
 mod reflection;
 mod source_order;
+mod ts_codec;
 
 pub use compile::{root_fbs_files, Config};
 pub use fb_plugin::{gen_fb_plugin, SpecSource};

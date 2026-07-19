@@ -64,3 +64,20 @@ bash scripts/verify-openapi-ts.sh
 A green run is proof that a JSON client generated from the spec compiles — the
 enum becomes a `"Low" | "Medium" | "High"` union, `Tag` its own interface, and
 `tags` a `Tag[]`. It needs `node`/`npx` and skips cleanly when they're absent.
+
+## Generate a FlatBuffer binary client
+
+The JSON path above works with any OpenAPI tool. For a client that talks the
+FlatBuffer wire format directly, `flatbed gen-fb-plugin` cross-checks the served
+spec against the local `.fbs` and emits a self-contained TypeScript codec:
+
+```bash
+flatbed gen-fb-plugin --server http://localhost:8080 \
+                      --schemas-dir schemas/ --out ./fb-client
+```
+
+`fb-client/types.ts` holds the interfaces + numeric enums; `fb-client/codec.ts`
+holds per-table `encode…Root` / `decode…Root` over the zero-dependency
+[`flatbuffers`](https://www.npmjs.com/package/flatbuffers) runtime (`npm i
+flatbuffers`). `scripts/verify-fb-codec.sh` proves the codec is byte-compatible
+with the Rust side by round-tripping every value through both implementations.

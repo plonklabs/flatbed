@@ -1024,6 +1024,154 @@ impl core::fmt::Debug for LogEvent<'_> {
       ds.finish()
   }
 }
+pub enum DefaultedOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct Defaulted<'a> {
+  pub _tab: flatbuffers::Table<'a>,
+}
+
+impl<'a> flatbuffers::Follow<'a> for Defaulted<'a> {
+  type Inner = Defaulted<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> Defaulted<'a> {
+  pub const VT_COUNT: flatbuffers::VOffsetT = 4;
+  pub const VT_FLAG: flatbuffers::VOffsetT = 6;
+  pub const VT_RATIO: flatbuffers::VOffsetT = 8;
+  pub const VT_LEVEL: flatbuffers::VOffsetT = 10;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: flatbuffers::Table<'a>) -> Self {
+    Defaulted { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args DefaultedArgs
+  ) -> flatbuffers::WIPOffset<Defaulted<'bldr>> {
+    let mut builder = DefaultedBuilder::new(_fbb);
+    builder.add_ratio(args.ratio);
+    builder.add_count(args.count);
+    builder.add_level(args.level);
+    builder.add_flag(args.flag);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn count(&self) -> i32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i32>(Defaulted::VT_COUNT, Some(25)).unwrap()}
+  }
+  #[inline]
+  pub fn flag(&self) -> bool {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<bool>(Defaulted::VT_FLAG, Some(true)).unwrap()}
+  }
+  #[inline]
+  pub fn ratio(&self) -> f64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<f64>(Defaulted::VT_RATIO, Some(1.5)).unwrap()}
+  }
+  #[inline]
+  pub fn level(&self) -> Severity {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<Severity>(Defaulted::VT_LEVEL, Some(Severity::Warning)).unwrap()}
+  }
+}
+
+impl flatbuffers::Verifiable for Defaulted<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut flatbuffers::Verifier, pos: usize
+  ) -> Result<(), flatbuffers::InvalidFlatbuffer> {
+    use self::flatbuffers::Verifiable;
+    v.visit_table(pos)?
+     .visit_field::<i32>("count", Self::VT_COUNT, false)?
+     .visit_field::<bool>("flag", Self::VT_FLAG, false)?
+     .visit_field::<f64>("ratio", Self::VT_RATIO, false)?
+     .visit_field::<Severity>("level", Self::VT_LEVEL, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct DefaultedArgs {
+    pub count: i32,
+    pub flag: bool,
+    pub ratio: f64,
+    pub level: Severity,
+}
+impl<'a> Default for DefaultedArgs {
+  #[inline]
+  fn default() -> Self {
+    DefaultedArgs {
+      count: 25,
+      flag: true,
+      ratio: 1.5,
+      level: Severity::Warning,
+    }
+  }
+}
+
+pub struct DefaultedBuilder<'a: 'b, 'b, A: flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: flatbuffers::WIPOffset<flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: flatbuffers::Allocator + 'a> DefaultedBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_count(&mut self, count: i32) {
+    self.fbb_.push_slot::<i32>(Defaulted::VT_COUNT, count, 25);
+  }
+  #[inline]
+  pub fn add_flag(&mut self, flag: bool) {
+    self.fbb_.push_slot::<bool>(Defaulted::VT_FLAG, flag, true);
+  }
+  #[inline]
+  pub fn add_ratio(&mut self, ratio: f64) {
+    self.fbb_.push_slot::<f64>(Defaulted::VT_RATIO, ratio, 1.5);
+  }
+  #[inline]
+  pub fn add_level(&mut self, level: Severity) {
+    self.fbb_.push_slot::<Severity>(Defaulted::VT_LEVEL, level, Severity::Warning);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut flatbuffers::FlatBufferBuilder<'a, A>) -> DefaultedBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    DefaultedBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> flatbuffers::WIPOffset<Defaulted<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl core::fmt::Debug for Defaulted<'_> {
+  fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    let mut ds = f.debug_struct("Defaulted");
+      ds.field("count", &self.count());
+      ds.field("flag", &self.flag());
+      ds.field("ratio", &self.ratio());
+      ds.field("level", &self.level());
+      ds.finish()
+  }
+}
 #[inline]
 /// Verifies that a buffer of bytes contains a `TestRequest`
 /// and returns it.

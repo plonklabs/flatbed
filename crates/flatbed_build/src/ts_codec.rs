@@ -1,0 +1,593 @@
+//! Generate a self-contained TypeScript FlatBuffer codec from reflected `.fbs`
+//! schemas: `types.ts` (interfaces + numeric enums) and `codec.ts` (per-table
+//! `encode`/`decode` against the zero-dependency `flatbuffers` runtime).
+//!
+//! The codec drives the runtime's low-level builder/reader directly using the
+//! field ids captured during reflection. Encoding is two-phase (create child
+//! offsets, then the table), and vectors are appended in reverse because the
+//! FlatBuffer builder writes back-to-front.
+
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+use crate::reflection::{Enum, EnumsByNamespace, Field, Table, TablesByNamespace};
+
+/// A `HashMap`'s values in ascending key order, so emission is deterministic.
+fn sorted_by_key<V>(map: &HashMap<String, V>) -> Vec<&V> {
+    let mut entries: Vec<_> = map.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    entries.into_iter().map(|(_, v)| v).collect()
+}
+
+/// Everything the emitters need to classify an `fbs_type` string, gathered once
+/// from the reflected schema.
+struct Schema<'a> {
+    tables: Vec<&'a Table>,
+    enums: Vec<&'a Enum>,
+    table_names: BTreeSet<&'a str>,
+    /// enum name → its underlying integer fbs type (`"int8"`, `"int32"`, …).
+    enum_underlying: BTreeMap<&'a str, &'a str>,
+}
+
+impl<'a> Schema<'a> {
+    fn new(tables: &'a TablesByNamespace, enums: &'a EnumsByNamespace) -> Self {
+        // Iterate namespaces in a stable order — the maps are `HashMap`s, so
+        // otherwise the emitted type order would vary run to run. Within a
+        // namespace the reflected order is already source order.
+        let tables: Vec<&Table> = sorted_by_key(tables).into_iter().flatten().collect();
+        let enums: Vec<&Enum> = sorted_by_key(enums).into_iter().flatten().collect();
+        let table_names = tables.iter().map(|t| t.name.as_str()).collect();
+        let enum_underlying = enums
+            .iter()
+            .map(|e| (e.name.as_str(), e.underlying.as_str()))
+            .collect();
+        Self {
+            tables,
+            enums,
+            table_names,
+            enum_underlying,
+        }
+    }
+
+    fn is_table(&self, fbs: &str) -> bool {
+        self.table_names.contains(fbs)
+    }
+    fn is_enum(&self, fbs: &str) -> bool {
+        self.enum_underlying.contains_key(fbs)
+    }
+    /// Resolve a scalar or enum `fbs_type` to the underlying integer/float type.
+    fn scalar_fbs(&self, fbs: &'a str) -> &'a str {
+        self.enum_underlying.get(fbs).copied().unwrap_or(fbs)
+    }
+
+    /// The integer value of `variant` in enum `name` (0 if not found).
+    fn enum_value(&self, name: &str, variant: &str) -> i64 {
+        self.enums
+            .iter()
+            .find(|e| e.name == name)
+            .and_then(|e| {
+                e.variants
+                    .iter()
+                    .position(|v| v == variant)
+                    .map(|i| e.values[i])
+            })
+            .unwrap_or(0)
+    }
+}
+
+/// The FlatBuffer wire default a field is compared against (for encode's
+/// omit-if-equal) and the value it decodes to when absent, both as TS literals.
+///
+/// A declared default (`age: int = 25`) is honoured; otherwise the type's zero
+/// value is used. `Field.default` is a Rust literal, converted here to TS:
+/// `_f32`/`_f64` suffixes are stripped, a `bool` becomes `0`/`1` on the wire,
+/// and an `Enum::Variant` path becomes the variant's integer value.
+fn field_defaults(f: &Field, schema: &Schema) -> (String, String) {
+    let fbs = f.fbs_type.as_str();
+    let is64 = matches!(schema.scalar_fbs(fbs), "int64" | "uint64");
+    // `scalar().zero` is already `"0n"` for 64-bit ints, `"0"` otherwise.
+    let zero = scalar(schema.scalar_fbs(fbs)).zero;
+
+    match &f.default {
+        None if fbs == "bool" => ("0".into(), "false".into()),
+        // `zero` is already `"0n"` for a 64-bit-backed enum (via its underlying
+        // type), so enums share this arm.
+        None => (zero.into(), zero.into()),
+        Some(lit) if schema.is_enum(fbs) => {
+            let variant = lit.rsplit("::").next().unwrap_or(lit);
+            let v = schema.enum_value(fbs, variant);
+            let lit = if is64 { format!("{v}n") } else { v.to_string() };
+            (lit.clone(), lit)
+        }
+        Some(lit) if fbs == "bool" => {
+            let b = lit == "true";
+            (if b { "1" } else { "0" }.into(), b.to_string())
+        }
+        Some(lit) => {
+            let num = lit.trim_end_matches("_f32").trim_end_matches("_f64");
+            let n = if is64 {
+                format!("{num}n")
+            } else {
+                num.to_string()
+            };
+            (n.clone(), n)
+        }
+    }
+}
+
+/// Generate the `(types.ts, codec.ts)` pair for a reflected schema.
+pub(crate) fn generate(tables: &TablesByNamespace, enums: &EnumsByNamespace) -> (String, String) {
+    let schema = Schema::new(tables, enums);
+    (generate_types(&schema), generate_codec(&schema))
+}
+
+const HEADER: &str = "// Auto-generated by flatbed — do not edit.\n\n";
+
+// ---------------------------------------------------------------------------
+// types.ts
+// ---------------------------------------------------------------------------
+
+fn generate_types(schema: &Schema) -> String {
+    let mut out = String::from(HEADER);
+    for e in &schema.enums {
+        out.push_str(&format!("export enum {} {{\n", e.name));
+        for (name, value) in e.variants.iter().zip(&e.values) {
+            out.push_str(&format!("  {name} = {value},\n"));
+        }
+        out.push_str("}\n\n");
+    }
+    for t in &schema.tables {
+        out.push_str(&format!("export interface {} {{\n", t.name));
+        for f in &t.fields {
+            let optional = if is_wire_optional(&f.fbs_type, schema) {
+                "?"
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "  {}{}: {};\n",
+                f.name,
+                optional,
+                ts_type(&f.fbs_type, schema)
+            ));
+        }
+        out.push_str("}\n\n");
+    }
+    out
+}
+
+/// Strings, tables and vectors are absent-able on the wire → optional in TS.
+fn is_wire_optional(fbs: &str, schema: &Schema) -> bool {
+    is_vector(fbs) || fbs == "string" || schema.is_table(fbs)
+}
+
+fn ts_type(fbs: &str, schema: &Schema) -> String {
+    if is_vector(fbs) {
+        return format!("{}[]", ts_type(vector_inner(fbs), schema));
+    }
+    if schema.is_table(fbs) || schema.is_enum(fbs) {
+        return fbs.to_string();
+    }
+    ts_scalar(fbs).to_string()
+}
+
+fn ts_scalar(fbs: &str) -> &'static str {
+    match fbs {
+        "bool" => "boolean",
+        "string" => "string",
+        "int64" | "long" | "uint64" | "ulong" => "bigint",
+        _ => "number",
+    }
+}
+
+// ---------------------------------------------------------------------------
+// codec.ts
+// ---------------------------------------------------------------------------
+
+fn generate_codec(schema: &Schema) -> String {
+    let mut out = String::from(HEADER);
+    out.push_str("import * as flatbuffers from \"flatbuffers\";\n");
+    let type_list = schema
+        .tables
+        .iter()
+        .map(|t| t.name.as_str())
+        .chain(schema.enums.iter().map(|e| e.name.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    out.push_str(&format!(
+        "import type {{ {type_list} }} from \"./types.js\";\n\n"
+    ));
+
+    for t in &schema.tables {
+        out.push_str(&encode_table(t, schema));
+        out.push_str(&decode_table(t, schema));
+    }
+    out
+}
+
+fn encode_table(table: &Table, schema: &Schema) -> String {
+    let name = &table.name;
+    let mut prep = String::new();
+    let mut adds = String::new();
+    for f in &table.fields {
+        let (p, a) = encode_field(f, schema);
+        prep.push_str(&p);
+        adds.push_str(&a);
+    }
+    format!(
+        "export function encode{name}(builder: flatbuffers.Builder, value: {name}): flatbuffers.Offset {{\n\
+{prep}  builder.startObject({n});\n\
+{adds}  return builder.endObject();\n\
+}}\n\n\
+export function encode{name}Root(value: {name}): Uint8Array {{\n\
+  const builder = new flatbuffers.Builder();\n\
+  builder.finish(encode{name}(builder, value));\n\
+  return builder.asUint8Array();\n\
+}}\n\n",
+        // The vtable needs one slot per field id (not per field): a table with
+        // gapped explicit ids allocates up to `max id + 1` slots.
+        n = table.fields.iter().map(|f| f.id as usize + 1).max().unwrap_or(0),
+    )
+}
+
+/// `(offset-prep lines, addField line)` for one field's encode.
+fn encode_field(f: &Field, schema: &Schema) -> (String, String) {
+    let name = &f.name;
+    let id = f.id;
+    let fbs = &f.fbs_type;
+    let val = format!("value.{name}");
+    let off = format!("{name}Offset");
+
+    if is_vector(fbs) {
+        let prep = format!(
+            "  const {off} = {val} != null ? {} : 0;\n",
+            build_vector(&val, vector_inner(fbs), schema)
+        );
+        let add = format!("  if ({off}) builder.addFieldOffset({id}, {off}, 0);\n");
+        return (prep, add);
+    }
+    if schema.is_table(fbs) {
+        let prep = format!("  const {off} = {val} != null ? encode{fbs}(builder, {val}) : 0;\n");
+        let add = format!("  if ({off}) builder.addFieldOffset({id}, {off}, 0);\n");
+        return (prep, add);
+    }
+    if fbs == "string" {
+        let prep = format!("  const {off} = {val} != null ? builder.createString({val}) : 0;\n");
+        let add = format!("  if ({off}) builder.addFieldOffset({id}, {off}, 0);\n");
+        return (prep, add);
+    }
+    // scalar / bool / enum
+    let s = scalar(schema.scalar_fbs(fbs));
+    let (encode_default, _) = field_defaults(f, schema);
+    let arg = if fbs == "bool" {
+        format!("{val} ? 1 : 0")
+    } else {
+        val
+    };
+    let add = format!(
+        "  builder.{}({id}, {arg}, {encode_default});\n",
+        s.add_field
+    );
+    (String::new(), add)
+}
+
+/// A TS IIFE expression that builds a vector of `inner` from `expr` and returns
+/// its offset. Elements are appended in reverse (the builder writes back-to-front).
+fn build_vector(expr: &str, inner: &str, schema: &Schema) -> String {
+    if schema.is_table(inner) {
+        format!(
+            "(() => {{ const o = {expr}.map((x) => encode{inner}(builder, x)); \
+             builder.startVector(4, o.length, 4); \
+             for (let i = o.length - 1; i >= 0; i--) builder.addOffset(o[i]); \
+             return builder.endVector(); }})()"
+        )
+    } else if inner == "string" {
+        format!(
+            "(() => {{ const o = {expr}.map((x) => builder.createString(x)); \
+             builder.startVector(4, o.length, 4); \
+             for (let i = o.length - 1; i >= 0; i--) builder.addOffset(o[i]); \
+             return builder.endVector(); }})()"
+        )
+    } else {
+        let s = scalar(schema.scalar_fbs(inner));
+        let elem = if inner == "bool" { "x ? 1 : 0" } else { "x" };
+        format!(
+            "(() => {{ const a = {expr}; \
+             builder.startVector({sz}, a.length, {sz}); \
+             for (let i = a.length - 1; i >= 0; i--) {{ const x = a[i]; builder.{va}({elem}); }} \
+             return builder.endVector(); }})()",
+            sz = s.size,
+            va = s.vec_add,
+        )
+    }
+}
+
+fn decode_table(table: &Table, schema: &Schema) -> String {
+    let name = &table.name;
+    let mut offsets = String::new();
+    let mut fields = String::new();
+    for f in &table.fields {
+        offsets.push_str(&format!(
+            "  const {}_o = bb.__offset(pos, {});\n",
+            f.name,
+            // Widen before doubling — `f.id` is `u16`, and `id * 2` would
+            // overflow for a field id at the top of the range.
+            4 + u32::from(f.id) * 2
+        ));
+        fields.push_str(&format!("    {}: {},\n", f.name, decode_field(f, schema)));
+    }
+    format!(
+        "export function decode{name}(bb: flatbuffers.ByteBuffer, pos: number): {name} {{\n\
+{offsets}  return {{\n\
+{fields}  }};\n\
+}}\n\n\
+export function decode{name}Root(bytes: Uint8Array): {name} {{\n\
+  const bb = new flatbuffers.ByteBuffer(bytes);\n\
+  return decode{name}(bb, bb.__indirect(bb.position()));\n\
+}}\n\n",
+    )
+}
+
+/// The TS expression reading one field, given `{name}_o` (its vtable offset).
+fn decode_field(f: &Field, schema: &Schema) -> String {
+    let name = &f.name;
+    let o = format!("{name}_o");
+    let fbs = &f.fbs_type;
+
+    if is_vector(fbs) {
+        let inner = vector_inner(fbs);
+        return format!(
+            "{o} ? (() => {{ const len = bb.__vector_len(pos + {o}); const base = bb.__vector(pos + {o}); \
+             const arr: {ty}[] = []; for (let i = 0; i < len; i++) arr.push({elem}); return arr; }})() : undefined",
+            ty = ts_type(inner, schema),
+            elem = decode_element(inner, schema),
+        );
+    }
+    if schema.is_table(fbs) {
+        return format!("{o} ? decode{fbs}(bb, bb.__indirect(pos + {o})) : undefined");
+    }
+    if fbs == "string" {
+        return format!("{o} ? (bb.__string(pos + {o}) as string) : undefined");
+    }
+    let (_, absent_default) = field_defaults(f, schema);
+    if fbs == "bool" {
+        return format!("{o} ? bb.readInt8(pos + {o}) !== 0 : {absent_default}");
+    }
+    let s = scalar(schema.scalar_fbs(fbs));
+    if schema.is_enum(fbs) {
+        // Numeric enum: the wire integer is the enum value.
+        return format!(
+            "({o} ? bb.{}(pos + {o}) : {absent_default}) as {fbs}",
+            s.read
+        );
+    }
+    format!("{o} ? bb.{}(pos + {o}) : {absent_default}", s.read)
+}
+
+/// The TS expression reading the `i`-th element of a vector whose data starts
+/// at `base`, for element type `inner`.
+fn decode_element(inner: &str, schema: &Schema) -> String {
+    if schema.is_table(inner) {
+        return format!("decode{inner}(bb, bb.__indirect(base + i * 4))");
+    }
+    if inner == "string" {
+        return "bb.__string(base + i * 4) as string".to_string();
+    }
+    if inner == "bool" {
+        return "bb.readInt8(base + i) !== 0".to_string();
+    }
+    let s = scalar(schema.scalar_fbs(inner));
+    let read = format!("bb.{}(base + i * {})", s.read, s.size);
+    if schema.is_enum(inner) {
+        format!("{read} as {inner}")
+    } else {
+        read
+    }
+}
+
+// ---------------------------------------------------------------------------
+// scalar tables
+// ---------------------------------------------------------------------------
+
+struct Scalar {
+    add_field: &'static str,
+    vec_add: &'static str,
+    read: &'static str,
+    size: u8,
+    /// The TS literal for this scalar's zero/default (`"0n"` for 64-bit).
+    zero: &'static str,
+}
+
+/// Runtime method names + element size for a bare scalar fbs type. `bool` is
+/// stored as `int8`; callers convert the boolean at the call site.
+fn scalar(fbs: &str) -> Scalar {
+    let (af, va, rd, sz, zero) = match fbs {
+        "bool" | "int8" | "byte" => ("addFieldInt8", "addInt8", "readInt8", 1, "0"),
+        "uint8" | "ubyte" => ("addFieldInt8", "addInt8", "readUint8", 1, "0"),
+        "int16" | "short" => ("addFieldInt16", "addInt16", "readInt16", 2, "0"),
+        "uint16" | "ushort" => ("addFieldInt16", "addInt16", "readUint16", 2, "0"),
+        "int32" | "int" => ("addFieldInt32", "addInt32", "readInt32", 4, "0"),
+        "uint32" | "uint" => ("addFieldInt32", "addInt32", "readUint32", 4, "0"),
+        "int64" | "long" => ("addFieldInt64", "addInt64", "readInt64", 8, "0n"),
+        "uint64" | "ulong" => ("addFieldInt64", "addInt64", "readUint64", 8, "0n"),
+        "float32" | "float" => ("addFieldFloat32", "addFloat32", "readFloat32", 4, "0"),
+        "float64" | "double" => ("addFieldFloat64", "addFloat64", "readFloat64", 8, "0"),
+        // Unreachable for reflected schemas; keep total.
+        _ => ("addFieldInt32", "addInt32", "readInt32", 4, "0"),
+    };
+    Scalar {
+        add_field: af,
+        vec_add: va,
+        read: rd,
+        size: sz,
+        zero,
+    }
+}
+
+fn is_vector(fbs: &str) -> bool {
+    fbs.starts_with('[') && fbs.ends_with(']')
+}
+
+fn vector_inner(fbs: &str) -> &str {
+    fbs.trim_start_matches('[').trim_end_matches(']')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reflection::{Enum, Field};
+    use std::collections::HashMap;
+
+    fn field(name: &str, fbs: &str, id: u16) -> Field {
+        Field {
+            name: name.to_string(),
+            fbs_type: fbs.to_string(),
+            id,
+            ..Default::default()
+        }
+    }
+
+    fn fixture() -> (TablesByNamespace, EnumsByNamespace) {
+        let mut tables = HashMap::new();
+        tables.insert(
+            "v".to_string(),
+            vec![
+                Table {
+                    name: "Tag".to_string(),
+                    fields: vec![field("label", "string", 0)],
+                },
+                Table {
+                    name: "Item".to_string(),
+                    fields: vec![
+                        field("count", "uint32", 0),
+                        field("priority", "Priority", 1),
+                        field("tag", "Tag", 2),
+                        field("labels", "[string]", 3),
+                        field("big", "uint64", 4),
+                    ],
+                },
+            ],
+        );
+        let mut enums = HashMap::new();
+        enums.insert(
+            "v".to_string(),
+            vec![Enum {
+                name: "Priority".to_string(),
+                variants: vec!["Low".to_string(), "High".to_string()],
+                values: vec![0, 1],
+                underlying: "int8".to_string(),
+            }],
+        );
+        (tables, enums)
+    }
+
+    #[test]
+    fn types_ts_maps_every_field_kind() {
+        let (t, e) = fixture();
+        let (types, _) = generate(&t, &e);
+        assert!(types.contains("export enum Priority {\n  Low = 0,\n  High = 1,\n}"));
+        assert!(types.contains("  label?: string;")); // string optional
+        assert!(types.contains("  count: number;")); // scalar required
+        assert!(types.contains("  priority: Priority;")); // enum required
+        assert!(types.contains("  tag?: Tag;")); // nested table optional
+        assert!(types.contains("  labels?: string[];")); // vector optional
+        assert!(types.contains("  big: bigint;")); // uint64 -> bigint
+    }
+
+    #[test]
+    fn codec_encode_covers_scalar_enum_string_table() {
+        let (t, e) = fixture();
+        let (_, codec) = generate(&t, &e);
+        assert!(codec.contains(
+            "const labelOffset = value.label != null ? builder.createString(value.label) : 0;"
+        ));
+        assert!(codec.contains("builder.addFieldInt32(0, value.count, 0);"));
+        assert!(codec.contains("builder.addFieldInt8(1, value.priority, 0);")); // enum width int8
+        assert!(codec.contains("builder.addFieldInt64(4, value.big, 0n);")); // 64-bit default 0n
+        assert!(codec
+            .contains("const tagOffset = value.tag != null ? encodeTag(builder, value.tag) : 0;"));
+        assert!(codec.contains("builder.finish(encodeItem(builder, value));"));
+    }
+
+    #[test]
+    fn codec_honours_declared_defaults() {
+        let mut tables = HashMap::new();
+        tables.insert(
+            "v".to_string(),
+            vec![Table {
+                name: "D".to_string(),
+                fields: vec![
+                    Field {
+                        name: "count".to_string(),
+                        fbs_type: "int32".to_string(),
+                        id: 0,
+                        default: Some("25".to_string()),
+                    },
+                    Field {
+                        name: "flag".to_string(),
+                        fbs_type: "bool".to_string(),
+                        id: 1,
+                        default: Some("true".to_string()),
+                    },
+                    Field {
+                        name: "level".to_string(),
+                        fbs_type: "Sev".to_string(),
+                        id: 2,
+                        default: Some("Sev::Warn".to_string()),
+                    },
+                ],
+            }],
+        );
+        let mut enums = HashMap::new();
+        enums.insert(
+            "v".to_string(),
+            vec![Enum {
+                name: "Sev".to_string(),
+                variants: vec!["Info".to_string(), "Warn".to_string()],
+                values: vec![0, 1],
+                underlying: "int8".to_string(),
+            }],
+        );
+        let (_, codec) = generate(&tables, &enums);
+        // Encode compares against the declared default (omit-if-equal).
+        assert!(codec.contains("builder.addFieldInt32(0, value.count, 25);"));
+        assert!(codec.contains("builder.addFieldInt8(1, value.flag ? 1 : 0, 1);")); // true -> 1
+        assert!(codec.contains("builder.addFieldInt8(2, value.level, 1);")); // Warn -> 1
+                                                                             // Decode restores the declared default when the field is absent.
+        assert!(codec.contains("count: count_o ? bb.readInt32(pos + count_o) : 25,"));
+        assert!(codec.contains("flag: flag_o ? bb.readInt8(pos + flag_o) !== 0 : true,"));
+        assert!(codec.contains("level: (level_o ? bb.readInt8(pos + level_o) : 1) as Sev,"));
+    }
+
+    #[test]
+    fn startobject_sizes_to_max_field_id() {
+        let mut tables = HashMap::new();
+        tables.insert(
+            "v".to_string(),
+            vec![Table {
+                name: "Gapped".to_string(),
+                fields: vec![Field {
+                    name: "x".to_string(),
+                    fbs_type: "int32".to_string(),
+                    id: 2,
+                    default: None,
+                }],
+            }],
+        );
+        let enums: EnumsByNamespace = HashMap::new();
+        let (_, codec) = generate(&tables, &enums);
+        assert!(codec.contains("builder.startObject(3);")); // slot for id 2 -> 3
+    }
+
+    #[test]
+    fn codec_decode_uses_vtable_offsets() {
+        let (t, e) = fixture();
+        let (_, codec) = generate(&t, &e);
+        assert!(codec.contains("const count_o = bb.__offset(pos, 4);")); // id 0 -> 4
+        assert!(codec.contains("const big_o = bb.__offset(pos, 12);")); // id 4 -> 12
+        assert!(codec.contains("count: count_o ? bb.readUint32(pos + count_o) : 0,"));
+        assert!(codec
+            .contains("priority: (priority_o ? bb.readInt8(pos + priority_o) : 0) as Priority,"));
+        assert!(codec.contains("big: big_o ? bb.readUint64(pos + big_o) : 0n,"));
+        assert!(codec.contains("return decodeItem(bb, bb.__indirect(bb.position()));"));
+    }
+}

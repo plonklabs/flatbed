@@ -77,6 +77,14 @@ required-features = ["openapi"]
 name = "openapi_schema"
 required-features = ["openapi"]
 
+[[test]]
+name = "serde_defaults"
+required-features = ["openapi"]
+
 [[example]]
 name = "routes"
+required-features = ["openapi"]
+
+[[example]]
+name = "fb_roundtrip"
 required-features = ["openapi"]

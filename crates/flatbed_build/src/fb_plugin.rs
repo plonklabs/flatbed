@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::compile::{reflect_schema_file, root_fbs_files};
+use crate::reflection::{EnumsByNamespace, TablesByNamespace};
 
 /// Where to read the OpenAPI spec from.
 pub enum SpecSource {
@@ -35,13 +36,16 @@ struct FbOperation {
 }
 
 /// Load the spec, reflect the local schemas, and validate that every
-/// FlatBuffer operation's referenced types exist locally.
+/// FlatBuffer operation's referenced types exist locally. When `out` is set,
+/// also emit the `types.ts` + `codec.ts` TypeScript FlatBuffer codec there.
 pub fn gen_fb_plugin(
     source: SpecSource,
     schemas_dir: &Path,
+    out: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let spec = load_spec(source)?;
-    let table_names = reflect_table_names(schemas_dir)?;
+    let (tables, enums) = reflect_schemas(schemas_dir)?;
+    let table_names: BTreeSet<String> = tables.values().flatten().map(|t| t.name.clone()).collect();
     let ops = fb_operations(&spec);
     validate(&ops, &table_names)?;
     println!(
@@ -49,6 +53,18 @@ pub fn gen_fb_plugin(
         ops.len(),
         schemas_dir.display(),
     );
+
+    if let Some(out) = out {
+        std::fs::create_dir_all(out)
+            .map_err(|e| format!("failed to create output dir '{}': {e}", out.display()))?;
+        let (types_ts, codec_ts) = crate::ts_codec::generate(&tables, &enums);
+        std::fs::write(out.join("types.ts"), types_ts)?;
+        std::fs::write(out.join("codec.ts"), codec_ts)?;
+        println!(
+            "gen-fb-plugin: wrote types.ts + codec.ts to {}",
+            out.display()
+        );
+    }
     Ok(())
 }
 
@@ -186,8 +202,10 @@ fn validate(
 }
 
 /// Reflect every top-level `.fbs` in `schemas_dir` (subdirectories are reached
-/// via `include` directives) and collect the bare names of all tables.
-fn reflect_table_names(schemas_dir: &Path) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+/// via `include` directives) and merge the tables/enums across all roots.
+fn reflect_schemas(
+    schemas_dir: &Path,
+) -> Result<(TablesByNamespace, EnumsByNamespace), Box<dyn std::error::Error>> {
     let scratch = std::env::temp_dir().join(format!("flatbed-fb-plugin-{}", std::process::id()));
     std::fs::create_dir_all(&scratch)?;
     let _guard = ScratchDir(scratch.clone());
@@ -202,16 +220,30 @@ fn reflect_table_names(schemas_dir: &Path) -> Result<BTreeSet<String>, Box<dyn s
         return Err(format!("no .fbs files found in '{}'", schemas_dir.display()).into());
     }
 
-    let mut names = BTreeSet::new();
+    // Two roots that both `include` a common schema reflect the shared types
+    // once each; dedup by name so the generated TS declares each type only once.
+    let mut tables = TablesByNamespace::new();
+    let mut enums = EnumsByNamespace::new();
     for root in roots {
-        let (tables, _enums, _includes) = reflect_schema_file(&root, &scratch)?;
-        for tables_in_ns in tables.values() {
-            for table in tables_in_ns {
-                names.insert(table.name.clone());
+        let (t, e, _includes) = reflect_schema_file(&root, &scratch)?;
+        for (ns, v) in t {
+            let bucket = tables.entry(ns).or_default();
+            for table in v {
+                if !bucket.iter().any(|seen| seen.name == table.name) {
+                    bucket.push(table);
+                }
+            }
+        }
+        for (ns, v) in e {
+            let bucket = enums.entry(ns).or_default();
+            for en in v {
+                if !bucket.iter().any(|seen| seen.name == en.name) {
+                    bucket.push(en);
+                }
             }
         }
     }
-    Ok(names)
+    Ok((tables, enums))
 }
 
 struct ScratchDir(PathBuf);

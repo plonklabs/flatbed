@@ -72,14 +72,22 @@ pub(crate) struct Field {
 /// `name` is the bare identifier (`Severity`, `BoxProtocol`); the namespace
 /// prefix is stripped off when bucketing.
 ///
+/// `underlying` is the enum's backing integer type as an fbs scalar string
+/// (`"int8"` for `: byte`, `"int32"` for `: int`, …); enums encode as this
+/// integer on the wire.
+///
 /// `variants` lists the variant identifiers ordered by their FlatBuffer
 /// integer value. For schemas with the default implicit values (0, 1, 2, …)
 /// this matches source order. For schemas with explicit values out of source
 /// order, the variant-name serde adapters still round-trip correctly because
 /// the adapter is keyed by variant name, not position.
+#[derive(Default)]
 pub(crate) struct Enum {
     pub(crate) name: String,
     pub(crate) variants: Vec<String>,
+    /// The declared integer value of each variant, parallel to `variants`.
+    pub(crate) values: Vec<i64>,
+    pub(crate) underlying: String,
 }
 
 pub(crate) type TablesByNamespace = HashMap<String, Vec<Table>>;
@@ -171,6 +179,7 @@ pub(crate) fn build_reflected_schema(
         let mut sorted_vals: Vec<_> = en.values().iter().collect();
         sorted_vals.sort_by_key(|v| v.value());
         let variants: Vec<String> = sorted_vals.iter().map(|v| v.name().to_string()).collect();
+        let values: Vec<i64> = sorted_vals.iter().map(|v| v.value()).collect();
         let key = sort_key(
             en.declaration_file(),
             &bare,
@@ -181,6 +190,8 @@ pub(crate) fn build_reflected_schema(
             Enum {
                 name: bare,
                 variants,
+                values,
+                underlying: enum_underlying_fbs(en.underlying_type().base_type()),
             },
             key,
         ));
@@ -202,6 +213,24 @@ pub(crate) fn build_reflected_schema(
         .collect();
 
     Ok((tables_sorted, enums_sorted))
+}
+
+/// Map an enum's underlying `BaseType` (always an integer) to the fbs scalar
+/// string the codegen keys on.
+fn enum_underlying_fbs(bt: BaseType) -> String {
+    match bt {
+        BaseType::Byte => "int8",
+        BaseType::UByte => "uint8",
+        BaseType::Short => "int16",
+        BaseType::UShort => "uint16",
+        BaseType::Int => "int32",
+        BaseType::UInt => "uint32",
+        BaseType::Long => "int64",
+        BaseType::ULong => "uint64",
+        // Enums are always integer-typed; fall back defensively.
+        _ => "int32",
+    }
+    .to_string()
 }
 
 fn sort_key(
