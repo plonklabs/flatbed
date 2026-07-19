@@ -38,6 +38,21 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Cross-check a served OpenAPI spec against local `.fbs` schemas: every
+    /// `application/x-flatbuffers` operation's request/response types must be
+    /// present in `--schemas-dir`, or the local schemas are out of sync with
+    /// the deployed server.
+    GenFbPlugin {
+        /// Base URL of a running flatbed server; its `/openapi.json` is fetched.
+        #[arg(long, conflicts_with = "openapi")]
+        server: Option<String>,
+        /// A saved OpenAPI spec file, read instead of fetching from a server.
+        #[arg(long, conflicts_with = "server")]
+        openapi: Option<PathBuf>,
+        /// Directory of `.fbs` schemas to validate the spec against.
+        #[arg(long)]
+        schemas_dir: PathBuf,
+    },
 }
 
 fn main() -> ExitCode {
@@ -50,6 +65,29 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Command::GenFbPlugin {
+            server,
+            openapi,
+            schemas_dir,
+        } => {
+            let source = match (server, openapi) {
+                (Some(url), None) => flatbed_build::SpecSource::Server(url),
+                (None, Some(file)) => flatbed_build::SpecSource::File(file),
+                _ => {
+                    eprintln!(
+                        "flatbed gen-fb-plugin: provide exactly one of --server or --openapi"
+                    );
+                    return ExitCode::FAILURE;
+                }
+            };
+            match flatbed_build::gen_fb_plugin(source, &schemas_dir) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("flatbed gen-fb-plugin failed: {e}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
     }
 }
 

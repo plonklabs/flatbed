@@ -107,8 +107,10 @@
 
 mod codegen;
 mod compile;
+mod fb_plugin;
 mod fbs_types;
 mod reflection;
 mod source_order;
 
 pub use compile::Config;
+pub use fb_plugin::{run as gen_fb_plugin, SpecSource};
