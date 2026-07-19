@@ -12,10 +12,11 @@ use crate::fb_plugin::FbOperation;
 
 const CONTENT_TYPE: &str = "application/x-flatbuffers";
 
-/// Method names that would collide with a member `FlatbedClient` always emits
-/// (`request`) or that TypeScript reserves on a class (`constructor`). A derived
-/// name matching one of these compiles to a duplicate-identifier error.
-const RESERVED_METHOD_NAMES: &[&str] = &["constructor", "request"];
+/// Method names that would collide with a member `FlatbedClient` always emits —
+/// the `request` method, the `options` constructor-parameter property, and the
+/// `constructor` itself. A derived name matching one compiles to a
+/// duplicate-identifier error.
+const RESERVED_METHOD_NAMES: &[&str] = &["constructor", "options", "request"];
 
 /// Whether `name` is a valid TypeScript identifier: non-empty, starting with a
 /// letter, `_`, or `$`, and otherwise made of letters, digits, `_`, or `$`. A
@@ -375,11 +376,14 @@ mod tests {
     }
 
     #[test]
-    fn reserved_method_name_is_rejected() {
-        let mut o = op("POST", "/x", Some("Req"), Some("Res"));
-        o.operation_id = Some("request".to_string());
-        let err = check_unique_method_names(&[o]).expect_err("reserved name must fail");
-        assert!(err.contains("collides"), "message: {err}");
+    fn reserved_method_names_are_rejected() {
+        for reserved in RESERVED_METHOD_NAMES {
+            let mut o = op("POST", "/x", Some("Req"), Some("Res"));
+            o.operation_id = Some((*reserved).to_string());
+            let err = check_unique_method_names(&[o])
+                .expect_err(&format!("reserved name `{reserved}` must fail"));
+            assert!(err.contains("collides"), "message: {err}");
+        }
     }
 
     #[test]
