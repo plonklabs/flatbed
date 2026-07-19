@@ -1,14 +1,11 @@
 namespace api;
 
-// Exercises the enum codegen + OpenAPI path (renders as a string enum).
 enum Priority : byte {
   Low,
   Medium,
   High,
 }
 
-// A nested-only table: never a route body, only reached by nesting inside
-// EchoRequest. It must still appear as its own OpenAPI component.
 table Tag {
   label: string;
 }

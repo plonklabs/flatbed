@@ -53,7 +53,15 @@ fi
 echo "verify-openapi-ts: generating TypeScript with openapi-typescript…"
 cd "$WORK"
 echo '{"name":"flatbed-openapi-verify","private":true,"type":"module"}' >package.json
-npm install --silent --no-audit --no-fund openapi-typescript typescript >npm.log 2>&1
+# Pin the generator's major version so the grep assertions below stay stable
+# across generator releases. Surface install failures before the EXIT trap
+# deletes the log.
+if ! npm install --silent --no-audit --no-fund \
+    "openapi-typescript@7" "typescript@5" >npm.log 2>&1; then
+  echo "verify-openapi-ts: npm install failed:" >&2
+  cat npm.log >&2
+  exit 1
+fi
 npx --yes openapi-typescript "$SPEC" -o types.ts
 
 echo "verify-openapi-ts: type-checking generated output with tsc…"
