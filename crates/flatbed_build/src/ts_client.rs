@@ -18,14 +18,20 @@ const CONTENT_TYPE: &str = "application/x-flatbuffers";
 /// duplicate-identifier error.
 const RESERVED_METHOD_NAMES: &[&str] = &["constructor", "options", "request"];
 
-/// Reserved words TypeScript rejects as a binding name inside a generated
-/// `async` method — an argument named one of these fails to parse. Verified
-/// against `tsc --strict`; contextual keywords (`type`, `interface`, `get`,
-/// `let`, `catch`, …) are legal argument names and deliberately absent.
+/// Words that can't safely be an argument name inside a generated `async`
+/// method: ECMAScript reserved words, strict-mode reserved words, the
+/// strict-restricted `eval`/`arguments`, and `this` (which would otherwise be
+/// parsed as a `this`-parameter, not an argument). Class bodies are always
+/// strict, and whether some of these actually error depends on how the argument
+/// is used — so this errs wide on purpose: an unnecessary trailing `_` is
+/// harmless, a missing one produces non-compiling TypeScript. True contextual
+/// keywords (`type`, `get`, `string`, `as`, …) are valid identifiers and absent.
 const TS_KEYWORDS: &[&str] = &[
+    "arguments",
     "await",
     "break",
     "case",
+    "catch",
     "class",
     "const",
     "continue",
@@ -35,6 +41,7 @@ const TS_KEYWORDS: &[&str] = &[
     "do",
     "else",
     "enum",
+    "eval",
     "export",
     "extends",
     "false",
@@ -42,14 +49,23 @@ const TS_KEYWORDS: &[&str] = &[
     "for",
     "function",
     "if",
+    "implements",
     "import",
     "in",
     "instanceof",
+    "interface",
+    "let",
     "new",
     "null",
+    "package",
+    "private",
+    "protected",
+    "public",
     "return",
+    "static",
     "super",
     "switch",
+    "this",
     "throw",
     "true",
     "try",
@@ -58,6 +74,7 @@ const TS_KEYWORDS: &[&str] = &[
     "void",
     "while",
     "with",
+    "yield",
 ];
 
 /// A path parameter rendered as a valid TypeScript identifier for the generated
@@ -258,23 +275,30 @@ fn path_params(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Turn an `operationId` into a camelCase method name: `GetUser`, `get_user`
-/// and `get-user` all become `getUser`.
+/// Turn an identifier fragment into camelCase: `GetUser`, `get_user`,
+/// `get-user`, and `GET_USER` all become `getUser`. Any non-alphanumeric run
+/// delimits words. A segment with no lowercase letter (a `SCREAMING` run)
+/// carries no internal word breaks, so it is lowercased wholesale; a segment
+/// that has lowercase letters keeps its own capitals as boundaries.
 fn camel_case(s: &str) -> String {
     let mut out = String::new();
-    let mut first = true;
-    let mut capitalize_next = false;
-    for c in s.chars() {
-        if !c.is_alphanumeric() {
-            capitalize_next = !first;
-        } else if first {
-            out.extend(c.to_lowercase());
-            first = false;
-        } else if capitalize_next {
-            out.extend(c.to_uppercase());
-            capitalize_next = false;
+    for segment in s.split(|c: char| !c.is_alphanumeric()) {
+        let mut chars = segment.chars();
+        let Some(head) = chars.next() else {
+            continue;
+        };
+        if out.is_empty() {
+            out.extend(head.to_lowercase());
         } else {
-            out.push(c);
+            out.extend(head.to_uppercase());
+        }
+        let screaming = !segment.chars().any(char::is_lowercase);
+        for c in chars {
+            if screaming {
+                out.extend(c.to_lowercase());
+            } else {
+                out.push(c);
+            }
         }
     }
     out
@@ -508,5 +532,31 @@ mod tests {
         o.operation_id = Some("create_user".to_string());
         let client = generate(&[o]);
         assert!(client.contains("async createUser("));
+    }
+
+    #[test]
+    fn screaming_snake_operation_id_becomes_camel() {
+        let mut o = op("POST", "/x", Some("Req"), Some("Res"));
+        o.operation_id = Some("CREATE_USER".to_string());
+        let client = generate(&[o]);
+        assert!(client.contains("async createUser("));
+    }
+
+    #[test]
+    fn restricted_word_path_params_are_sanitized() {
+        // Strict-mode restricted names (`eval`, `arguments`) and `this` would
+        // otherwise emit an argument that fails to compile or becomes a
+        // this-parameter; each gets a trailing `_`.
+        for (param, ident) in [
+            ("eval", "eval_"),
+            ("arguments", "arguments_"),
+            ("this", "this_"),
+        ] {
+            let client = generate(&[op("GET", &format!("/run/{{{param}}}"), None, Some("Out"))]);
+            assert!(
+                client.contains(&format!("({ident}: string)")),
+                "param `{param}` should sanitize to `{ident}`"
+            );
+        }
     }
 }
