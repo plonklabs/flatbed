@@ -215,8 +215,6 @@ fn method(op: &FbOperation) -> String {
     let name = method_name(op);
     let params = path_params(&op.path);
 
-    // Path-param names can be non-identifiers (`item-id`) or reserved words
-    // (`class`), so the argument uses a sanitized identifier form.
     let mut args: Vec<String> = params
         .iter()
         .map(|p| format!("{}: string", param_ident(p)))
@@ -256,8 +254,8 @@ fn method(op: &FbOperation) -> String {
     )
 }
 
-/// `operationId` when present, else `<method><PascalPathSegments>` — e.g.
-/// `GET /users/{id}` → `getUsersById`.
+/// The camelCased `operationId` when present (`CreateUser` → `createUser`),
+/// else `<method><PascalPathSegments>` — e.g. `GET /users/{id}` → `getUsersById`.
 fn method_name(op: &FbOperation) -> String {
     if let Some(id) = &op.operation_id {
         return camel_case(id);
