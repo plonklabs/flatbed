@@ -116,6 +116,24 @@ pub(crate) fn check_unique_method_names(ops: &[FbOperation]) -> Result<(), Strin
     for op in ops {
         let name = method_name(op);
         let sig = format!("{} {}", op.method, op.path);
+        if !is_valid_ts_identifier(&name) {
+            return Err(format!(
+                "operation `{sig}` derives the client method name `{name}`, which is not a valid \
+                 TypeScript identifier — set an explicit operationId"
+            ));
+        }
+        if RESERVED_METHOD_NAMES.contains(&name.as_str()) {
+            return Err(format!(
+                "operation `{sig}` derives the client method name `{name}`, which collides with a \
+                 member `FlatbedClient` already defines — set a different operationId"
+            ));
+        }
+        if let Some(prev) = seen.insert(name.clone(), sig.clone()) {
+            return Err(format!(
+                "two operations derive the same client method `{name}`: `{prev}` and `{sig}` — \
+                 give one an explicit operationId to disambiguate"
+            ));
+        }
         // A method that encodes a request takes a trailing `body` argument, so a
         // path param sanitizing to `body` would be a duplicate argument.
         let has_body = effective_request_type(op).is_some();
@@ -135,24 +153,6 @@ pub(crate) fn check_unique_method_names(ops: &[FbOperation]) -> Result<(), Strin
                 ));
             }
         }
-        if !is_valid_ts_identifier(&name) {
-            return Err(format!(
-                "operation `{sig}` derives the client method name `{name}`, which is not a valid \
-                 TypeScript identifier — set an explicit operationId"
-            ));
-        }
-        if RESERVED_METHOD_NAMES.contains(&name.as_str()) {
-            return Err(format!(
-                "operation `{sig}` derives the client method name `{name}`, which collides with a \
-                 member `FlatbedClient` already defines — set a different operationId"
-            ));
-        }
-        if let Some(prev) = seen.insert(name.clone(), sig.clone()) {
-            return Err(format!(
-                "two operations derive the same client method `{name}`: `{prev}` and `{sig}` — \
-                 give one an explicit operationId to disambiguate"
-            ));
-        }
     }
     Ok(())
 }
@@ -169,6 +169,10 @@ fn effective_request_type(op: &FbOperation) -> Option<&str> {
 }
 
 /// Generate `client.ts` for the FlatBuffer operations discovered in the spec.
+///
+/// Assumes [`check_unique_method_names`] has returned `Ok` for `ops` — it
+/// emits method and argument names verbatim without re-validating, so an
+/// unchecked collision or invalid identifier would surface as broken output.
 pub(crate) fn generate(ops: &[FbOperation]) -> String {
     let mut imports_types: Vec<&str> = Vec::new();
     for op in ops {
