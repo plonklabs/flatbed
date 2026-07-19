@@ -58,10 +58,24 @@ impl Config {
     }
 }
 
+/// The sorted top-level `.fbs` files in `dir`. Subdirectories are intentionally
+/// ignored — the convention is that root files live in `<dir>/*.fbs` and pull
+/// in versioned schemas via FlatBuffer `include` from subdirs like `v1/`.
+/// Sorting gives deterministic output across re-runs.
+pub fn root_fbs_files(dir: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+    let mut roots: Vec<PathBuf> = std::fs::read_dir(dir)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("fbs"))
+        .collect();
+    roots.sort();
+    Ok(roots)
+}
+
 /// Emit a `.bfbs` for `schema_path` into `out_dir`, decode it, and return the
 /// reflected `(tables, enums)` plus the resolved transitive `.fbs` files (the
-/// root included). Shared by the build-time codegen and the `flatbed` CLI,
-/// which need the same reflection but do different things with it.
+/// root included).
 ///
 /// `-b --schema` (`binary: true, schema: true`) emits a `.bfbs` covering the
 /// full include graph in one file; `flatbuffers-reflection` decodes it, so the
@@ -253,7 +267,64 @@ fn extract_module_content(generated: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
+
+    /// Build a temp tree containing the given relative filenames as empty
+    /// files. An atomic counter (process-id + monotone index) keeps parallel
+    /// `cargo test` threads from colliding on the same directory.
+    fn make_tree(files: &[&str]) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let base = std::env::temp_dir().join(format!(
+            "flatbed_test_{}_{}",
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed),
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        for rel in files {
+            let p = base.join(rel);
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&p, "").unwrap();
+        }
+        base
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        root_fbs_files(dir)
+            .unwrap()
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn root_fbs_files_picks_up_top_level() {
+        let dir = make_tree(&["operator.fbs", "user.fbs"]);
+        assert_eq!(names(&dir), vec!["operator.fbs", "user.fbs"]);
+    }
+
+    #[test]
+    fn root_fbs_files_ignores_subdirectories() {
+        // Versioned schemas under `v1/` are reached via `include` from the
+        // roots; compiling them as their own root would double up the output.
+        let dir = make_tree(&["operator.fbs", "v1/operator.fbs", "v1/user.fbs"]);
+        assert_eq!(names(&dir), vec!["operator.fbs"]);
+    }
+
+    #[test]
+    fn root_fbs_files_ignores_non_fbs() {
+        let dir = make_tree(&["operator.fbs", "README.md", "operator.fbs.bak"]);
+        assert_eq!(names(&dir), vec!["operator.fbs"]);
+    }
+
+    #[test]
+    fn root_fbs_files_returns_sorted() {
+        let dir = make_tree(&["zzz.fbs", "aaa.fbs", "mmm.fbs"]);
+        assert_eq!(names(&dir), vec!["aaa.fbs", "mmm.fbs", "zzz.fbs"]);
+    }
 
     #[test]
     fn test_compile_error_includes_schema_path() {

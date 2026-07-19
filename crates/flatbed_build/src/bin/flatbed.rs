@@ -92,7 +92,7 @@ fn main() -> ExitCode {
 }
 
 fn run_generate(schemas_dir: &Path, out: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let schemas = discover_root_schemas(schemas_dir)?;
+    let schemas = flatbed_build::root_fbs_files(schemas_dir)?;
     if schemas.is_empty() {
         return Err(format!(
             "no top-level .fbs files found in {} — codegen has nothing to do",
@@ -118,109 +118,4 @@ fn run_generate(schemas_dir: &Path, out: &Path) -> Result<(), Box<dyn std::error
         out.display(),
     );
     Ok(())
-}
-
-/// Return the sorted set of `.fbs` files at the top level of `dir`.
-/// Subdirectories are intentionally ignored — the convention is that
-/// root files live in `<schemas-dir>/*.fbs` and pull in versioned
-/// schemas via FlatBuffer `include` from subdirs like `v1/`. Sorting
-/// gives the generator a deterministic order so re-runs against the
-/// same inputs emit byte-identical output.
-fn discover_root_schemas(dir: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
-    let mut roots: Vec<PathBuf> = std::fs::read_dir(dir)?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("fbs"))
-        .collect();
-    roots.sort();
-    Ok(roots)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use super::*;
-
-    /// Build a temp tree containing the given relative filenames as
-    /// empty files. Caller owns the returned path; the directory
-    /// persists in `/tmp` until the OS's temp-cleanup job sweeps it.
-    /// Test runs leave behind a handful of small empty dirs, which
-    /// the platform's tmpwatch / systemd-tmpfiles reaps in due
-    /// course — fine for a test scratch helper.
-    ///
-    /// Uses an atomic counter (process-id + monotone index) so
-    /// parallel `cargo test` threads never land on the same directory,
-    /// keeping each test's filesystem state isolated.
-    fn make_tree(files: &[&str]) -> PathBuf {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let base = std::env::temp_dir().join(format!(
-            "flatbed_test_{}_{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed),
-        ));
-        std::fs::create_dir_all(&base).unwrap();
-        for rel in files {
-            let p = base.join(rel);
-            if let Some(parent) = p.parent() {
-                std::fs::create_dir_all(parent).unwrap();
-            }
-            std::fs::write(&p, "").unwrap();
-        }
-        base
-    }
-
-    #[test]
-    fn discover_picks_up_top_level_fbs_files() {
-        let dir = make_tree(&["operator.fbs", "user.fbs"]);
-        let found = discover_root_schemas(&dir).unwrap();
-        let names: Vec<_> = found
-            .iter()
-            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
-            .collect();
-        assert_eq!(names, vec!["operator.fbs", "user.fbs"]);
-    }
-
-    #[test]
-    fn discover_ignores_subdirectory_fbs_files() {
-        // Versioned schemas under `v1/` are reached via `include`
-        // from the root files; the binary must NOT compile them as
-        // their own root or the operator's compiled output would
-        // double up (root + version) and the diff against the
-        // committed `_generated.rs` would never converge.
-        let dir = make_tree(&["operator.fbs", "v1/operator.fbs", "v1/user.fbs"]);
-        let found = discover_root_schemas(&dir).unwrap();
-        let names: Vec<_> = found
-            .iter()
-            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
-            .collect();
-        assert_eq!(names, vec!["operator.fbs"]);
-    }
-
-    #[test]
-    fn discover_ignores_non_fbs_files() {
-        let dir = make_tree(&["operator.fbs", "README.md", "operator.fbs.bak"]);
-        let found = discover_root_schemas(&dir).unwrap();
-        let names: Vec<_> = found
-            .iter()
-            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
-            .collect();
-        assert_eq!(names, vec!["operator.fbs"]);
-    }
-
-    #[test]
-    fn discover_returns_sorted_order() {
-        // Sort order is what makes the codegen deterministic across
-        // re-runs. Without it, filesystem readdir order would leak
-        // into the output's `mod` declaration order and produce
-        // spurious diffs on every run on a different OS.
-        let dir = make_tree(&["zzz.fbs", "aaa.fbs", "mmm.fbs"]);
-        let found = discover_root_schemas(&dir).unwrap();
-        let names: Vec<_> = found
-            .iter()
-            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
-            .collect();
-        assert_eq!(names, vec!["aaa.fbs", "mmm.fbs", "zzz.fbs"]);
-    }
 }

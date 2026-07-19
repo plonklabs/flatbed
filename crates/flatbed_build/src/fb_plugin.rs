@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::compile::reflect_schema_file;
+use crate::compile::{reflect_schema_file, root_fbs_files};
 
 /// Where to read the OpenAPI spec from.
 pub enum SpecSource {
@@ -36,7 +36,10 @@ struct FbOperation {
 
 /// Load the spec, reflect the local schemas, and validate that every
 /// FlatBuffer operation's referenced types exist locally.
-pub fn run(source: SpecSource, schemas_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn gen_fb_plugin(
+    source: SpecSource,
+    schemas_dir: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let spec = load_spec(source)?;
     let table_names = reflect_table_names(schemas_dir)?;
     let ops = fb_operations(&spec);
@@ -88,6 +91,18 @@ fn advertises_flatbuffers(content: Option<&Value>) -> bool {
         .is_some()
 }
 
+/// The `content` of the operation's first success (`2xx`) response. flatbed
+/// emits `200`, but a spec may use another success code (`201`, `2XX`), so
+/// hard-coding `200` would silently skip those and let validation pass over a
+/// missing type.
+fn success_response_content(op: &Value) -> Option<&Value> {
+    op.get("responses")?
+        .as_object()?
+        .iter()
+        .filter(|(code, _)| code.starts_with('2'))
+        .find_map(|(_, resp)| resp.get("content"))
+}
+
 const HTTP_METHODS: &[&str] = &["get", "put", "post", "delete", "patch", "head", "options"];
 
 fn fb_operations(spec: &Value) -> Vec<FbOperation> {
@@ -104,10 +119,7 @@ fn fb_operations(spec: &Value) -> Vec<FbOperation> {
                 continue;
             }
             let req_content = op.get("requestBody").and_then(|b| b.get("content"));
-            let resp_content = op
-                .get("responses")
-                .and_then(|r| r.get("200"))
-                .and_then(|r| r.get("content"));
+            let resp_content = success_response_content(op);
             if !advertises_flatbuffers(req_content) && !advertises_flatbuffers(resp_content) {
                 continue;
             }
@@ -155,8 +167,18 @@ fn reflect_table_names(schemas_dir: &Path) -> Result<BTreeSet<String>, Box<dyn s
     std::fs::create_dir_all(&scratch)?;
     let _guard = ScratchDir(scratch.clone());
 
+    let roots = root_fbs_files(schemas_dir).map_err(|e| {
+        format!(
+            "failed to read schemas dir '{}': {e}",
+            schemas_dir.display()
+        )
+    })?;
+    if roots.is_empty() {
+        return Err(format!("no .fbs files found in '{}'", schemas_dir.display()).into());
+    }
+
     let mut names = BTreeSet::new();
-    for root in root_schemas(schemas_dir)? {
+    for root in roots {
         let (tables, _enums, _includes) = reflect_schema_file(&root, &scratch)?;
         for tables_in_ns in tables.values() {
             for table in tables_in_ns {
@@ -167,24 +189,6 @@ fn reflect_table_names(schemas_dir: &Path) -> Result<BTreeSet<String>, Box<dyn s
     Ok(names)
 }
 
-/// Top-level `.fbs` files in `dir`, sorted. Subdirectories are intentionally
-/// ignored — versioned schemas are pulled in via `include` from the roots.
-fn root_schemas(dir: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
-    let mut roots: Vec<PathBuf> = std::fs::read_dir(dir)
-        .map_err(|e| format!("failed to read schemas dir '{}': {e}", dir.display()))?
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("fbs"))
-        .collect();
-    roots.sort();
-    if roots.is_empty() {
-        return Err(format!("no .fbs files found in '{}'", dir.display()).into());
-    }
-    Ok(roots)
-}
-
-/// Removes the scratch bfbs directory on drop.
 struct ScratchDir(PathBuf);
 impl Drop for ScratchDir {
     fn drop(&mut self) {
@@ -221,7 +225,6 @@ mod tests {
     #[test]
     fn fb_operations_picks_only_flatbuffer_ops() {
         let ops = fb_operations(&spec_json());
-        // `/users` advertises x-flatbuffers; `/health` (JSON only) does not.
         assert_eq!(ops.len(), 1);
         let op = &ops[0];
         assert_eq!(op.path, "/users");
@@ -241,9 +244,27 @@ mod tests {
     }
 
     #[test]
+    fn success_response_under_non_200_code_is_still_seen() {
+        let spec = serde_json::json!({
+            "paths": { "/create": { "post": {
+                "requestBody": { "content": {
+                    "application/json": { "schema": { "$ref": "#/components/schemas/CreateReq" } },
+                    "application/x-flatbuffers": { "schema": { "type": "string" } }
+                }},
+                "responses": { "201": { "content": {
+                    "application/json": { "schema": { "$ref": "#/components/schemas/CreateResp" } },
+                    "application/x-flatbuffers": { "schema": { "type": "string" } }
+                }}}
+            }}}
+        });
+        let ops = fb_operations(&spec);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].response_type.as_deref(), Some("CreateResp"));
+    }
+
+    #[test]
     fn validate_reports_missing_type_with_operation() {
         let ops = fb_operations(&spec_json());
-        // UserResponse is absent — schemas are out of sync with the server.
         let names: BTreeSet<String> = ["UserRequest"].into_iter().map(String::from).collect();
         let err = validate(&ops, &names).expect_err("missing type must fail");
         let msg = err.to_string();

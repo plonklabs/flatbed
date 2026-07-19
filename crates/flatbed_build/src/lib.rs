@@ -112,5 +112,5 @@ mod fbs_types;
 mod reflection;
 mod source_order;
 
-pub use compile::Config;
-pub use fb_plugin::{run as gen_fb_plugin, SpecSource};
+pub use compile::{root_fbs_files, Config};
+pub use fb_plugin::{gen_fb_plugin, SpecSource};
