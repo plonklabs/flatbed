@@ -325,8 +325,10 @@ fn generate_plain_struct(
     // can't be used here — utoipa's `ToSchema` would try to serialise the whole
     // default struct, and the flatc enum isn't `Serialize` — so each defaulted
     // field points at its own named `default = "…"` function instead. The table
-    // name keeps its original case so its boundary with the snake_case field
-    // name can't collapse into a different table's fn name.
+    // name keeps its original case, keeping the table/field boundary distinct
+    // for the usual PascalCase-table + snake_case-field pairing; a residual
+    // collision (a table name with underscores lining up) would surface as a
+    // duplicate fn — a compile error, not silent misbehaviour.
     let default_fn = |field: &Field| format!("default_{}_{}", table.name, field.name);
     for field in &table.fields {
         if let Some(lit) = &field.default {

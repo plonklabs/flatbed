@@ -89,12 +89,15 @@ fn field_defaults(f: &Field, schema: &Schema) -> (String, String) {
 
     match &f.default {
         None if fbs == "bool" => ("0".into(), "false".into()),
-        None if schema.is_enum(fbs) => ("0".into(), "0".into()),
+        // Enums read via their underlying integer, so a 64-bit-backed enum
+        // needs the `0n` zero, matching `readInt64`/`readUint64`.
+        None if schema.is_enum(fbs) => (zero.into(), zero.into()),
         None => (zero.into(), zero.into()),
         Some(lit) if schema.is_enum(fbs) => {
             let variant = lit.rsplit("::").next().unwrap_or(lit);
-            let v = schema.enum_value(fbs, variant).to_string();
-            (v.clone(), v)
+            let v = schema.enum_value(fbs, variant);
+            let lit = if is64 { format!("{v}n") } else { v.to_string() };
+            (lit.clone(), lit)
         }
         Some(lit) if fbs == "bool" => {
             let b = lit == "true";
@@ -307,7 +310,9 @@ fn decode_table(table: &Table, schema: &Schema) -> String {
         offsets.push_str(&format!(
             "  const {}_o = bb.__offset(pos, {});\n",
             f.name,
-            4 + f.id * 2
+            // Widen before doubling — `f.id` is `u16`, and `id * 2` would
+            // overflow for a field id at the top of the range.
+            4 + u32::from(f.id) * 2
         ));
         fields.push_str(&format!("    {}: {},\n", f.name, decode_field(f, schema)));
     }
