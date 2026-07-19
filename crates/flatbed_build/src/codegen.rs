@@ -663,6 +663,7 @@ mod tests {
             vec![Enum {
                 name: "Severity".to_string(),
                 variants: vec!["Info".to_string(), "Error".to_string()],
+                ..Default::default()
             }],
         );
         let module = generate_flatbed_module(&schemas, &enums, "test");
@@ -812,10 +813,12 @@ mod tests {
             Enum {
                 name: "Severity".to_string(),
                 variants: vec!["Info".to_string()],
+                ..Default::default()
             },
             Enum {
                 name: "severity".to_string(),
                 variants: vec!["Info".to_string()],
+                ..Default::default()
             },
         ];
         let mut output = String::new();
@@ -862,6 +865,7 @@ mod tests {
                     "TCP".to_string(),
                     "GRPC".to_string(),
                 ],
+                ..Default::default()
             }],
         );
         let module = generate_flatbed_module(&schemas, &enums, "test");
@@ -988,6 +992,7 @@ mod tests {
                     "Warning".to_string(),
                     "Error".to_string(),
                 ],
+                ..Default::default()
             }],
         );
         let module = generate_flatbed_module(&schemas, &enums, "test");

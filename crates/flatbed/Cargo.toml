@@ -80,3 +80,7 @@ required-features = ["openapi"]
 [[example]]
 name = "routes"
 required-features = ["openapi"]
+
+[[example]]
+name = "fb_roundtrip"
+required-features = ["openapi"]

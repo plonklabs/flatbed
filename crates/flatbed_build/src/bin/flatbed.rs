@@ -52,6 +52,10 @@ enum Command {
         /// Directory of `.fbs` schemas to validate the spec against.
         #[arg(long)]
         schemas_dir: PathBuf,
+        /// Output directory for the generated `types.ts` + `codec.ts`. When
+        /// omitted, the command only validates.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -69,6 +73,7 @@ fn main() -> ExitCode {
             server,
             openapi,
             schemas_dir,
+            out,
         } => {
             let source = match (server, openapi) {
                 (Some(url), None) => flatbed_build::SpecSource::Server(url),
@@ -83,7 +88,7 @@ fn main() -> ExitCode {
                     unreachable!("clap's conflicts_with rejects --server together with --openapi")
                 }
             };
-            match flatbed_build::gen_fb_plugin(source, &schemas_dir) {
+            match flatbed_build::gen_fb_plugin(source, &schemas_dir, out.as_deref()) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     eprintln!("flatbed gen-fb-plugin failed: {e}");
