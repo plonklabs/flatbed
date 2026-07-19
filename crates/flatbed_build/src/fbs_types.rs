@@ -162,21 +162,6 @@ pub(crate) fn is_enum_vector(fbs_type: &str, enum_names: &[String]) -> bool {
     enum_names.iter().any(|e| e == inner)
 }
 
-/// Convert FlatBuffer type to OpenAPI schema type
-pub(crate) fn fbs_type_to_openapi(fbs_type: &str) -> &'static str {
-    if is_vector_type(fbs_type) {
-        return "array";
-    }
-    match fbs_type {
-        "string" => "string",
-        "bool" => "boolean",
-        "byte" | "int8" | "ubyte" | "uint8" | "short" | "int16" | "ushort" | "uint16" | "int"
-        | "int32" | "uint" | "uint32" | "long" | "int64" | "ulong" | "uint64" => "integer",
-        "float" | "float32" | "double" | "float64" => "number",
-        _ => "string", // Default fallback
-    }
-}
-
 /// Determine if a FlatBuffer type maps to an optional Rust type
 pub(crate) fn is_optional_type(fbs_type: &str) -> bool {
     // In FlatBuffers, strings and vector reference types are optional by default
@@ -193,14 +178,6 @@ mod tests {
         assert_eq!(fbs_type_to_rust_serde("bool"), "bool");
         assert_eq!(fbs_type_to_rust_serde("long"), "i64");
         assert_eq!(fbs_type_to_rust_serde("int"), "i32");
-    }
-
-    #[test]
-    fn test_fbs_type_to_openapi() {
-        assert_eq!(fbs_type_to_openapi("string"), "string");
-        assert_eq!(fbs_type_to_openapi("bool"), "boolean");
-        assert_eq!(fbs_type_to_openapi("long"), "integer");
-        assert_eq!(fbs_type_to_openapi("float"), "number");
     }
 
     #[test]
@@ -316,11 +293,6 @@ mod tests {
         let tables = vec!["Address".to_string()];
         assert!(is_table_type("Address", &tables));
         assert!(!is_table_type("[Address]", &tables));
-    }
-
-    #[test]
-    fn test_fbs_type_to_openapi_vector() {
-        assert_eq!(fbs_type_to_openapi("[string]"), "array");
     }
 
     #[test]

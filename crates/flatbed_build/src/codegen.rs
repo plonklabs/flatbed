@@ -9,8 +9,8 @@
 //! - `flatbed::ToFlatBuffer` / `HasJsonCompanion` / `HasPlainStruct` impls
 
 use crate::fbs_types::{
-    fbs_type_to_openapi, fbs_type_to_rust_type, is_enum_type, is_enum_vector, is_optional_type,
-    is_table_type, is_table_vector, is_vector_type, vector_inner_type,
+    fbs_type_to_rust_type, is_enum_type, is_enum_vector, is_optional_type, is_table_type,
+    is_table_vector, is_vector_type, vector_inner_type,
 };
 use crate::reflection::{Enum, EnumsByNamespace, Table, TablesByNamespace};
 
@@ -580,16 +580,11 @@ fn generate_flatbed_trait_impls(
     // SCHEMA_FIELDS associated const
     output.push_str("        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[\n");
     for field in &table.fields {
-        let openapi_type = if is_table_type(&field.fbs_type, table_names) {
-            "object"
-        } else {
-            fbs_type_to_openapi(&field.fbs_type)
-        };
         let required =
             !is_optional_type(&field.fbs_type) && !is_table_type(&field.fbs_type, table_names);
         output.push_str(&format!(
-            "            ::flatbed::FieldInfo {{ name: \"{}\", field_type: \"{}\", fbs_type: \"{}\", required: {} }},\n",
-            field.name, openapi_type, field.fbs_type, required
+            "            ::flatbed::FieldInfo {{ name: \"{}\", fbs_type: \"{}\", required: {} }},\n",
+            field.name, field.fbs_type, required
         ));
     }
     output.push_str("        ];\n\n");

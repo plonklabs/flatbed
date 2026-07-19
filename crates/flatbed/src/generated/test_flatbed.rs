@@ -220,13 +220,11 @@ pub mod test {
         const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
             ::flatbed::FieldInfo {
                 name: "message",
-                field_type: "string",
                 fbs_type: "string",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "value",
-                field_type: "integer",
                 fbs_type: "uint64",
                 required: true,
             },
@@ -302,19 +300,16 @@ pub mod test {
         const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
             ::flatbed::FieldInfo {
                 name: "message",
-                field_type: "string",
                 fbs_type: "string",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "value",
-                field_type: "integer",
                 fbs_type: "uint64",
                 required: true,
             },
             ::flatbed::FieldInfo {
                 name: "success",
-                field_type: "boolean",
                 fbs_type: "bool",
                 required: true,
             },
@@ -392,19 +387,16 @@ pub mod test {
         const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
             ::flatbed::FieldInfo {
                 name: "street",
-                field_type: "string",
                 fbs_type: "string",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "city",
-                field_type: "string",
                 fbs_type: "string",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "zip_code",
-                field_type: "integer",
                 fbs_type: "int32",
                 required: true,
             },
@@ -482,19 +474,16 @@ pub mod test {
         const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
             ::flatbed::FieldInfo {
                 name: "name",
-                field_type: "string",
                 fbs_type: "string",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "age",
-                field_type: "integer",
                 fbs_type: "int32",
                 required: true,
             },
             ::flatbed::FieldInfo {
                 name: "address",
-                field_type: "object",
                 fbs_type: "Address",
                 required: false,
             },
@@ -574,25 +563,21 @@ pub mod test {
         const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
             ::flatbed::FieldInfo {
                 name: "user_id",
-                field_type: "integer",
                 fbs_type: "uint64",
                 required: true,
             },
             ::flatbed::FieldInfo {
                 name: "name",
-                field_type: "string",
                 fbs_type: "string",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "address",
-                field_type: "object",
                 fbs_type: "Address",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "success",
-                field_type: "boolean",
                 fbs_type: "bool",
                 required: true,
             },
@@ -685,19 +670,16 @@ pub mod test {
         const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
             ::flatbed::FieldInfo {
                 name: "owner",
-                field_type: "string",
                 fbs_type: "string",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "addresses",
-                field_type: "array",
                 fbs_type: "[Address]",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "contact_names",
-                field_type: "array",
                 fbs_type: "[string]",
                 required: false,
             },
@@ -775,19 +757,16 @@ pub mod test {
         const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
             ::flatbed::FieldInfo {
                 name: "message",
-                field_type: "string",
                 fbs_type: "string",
                 required: false,
             },
             ::flatbed::FieldInfo {
                 name: "severity",
-                field_type: "string",
                 fbs_type: "Severity",
                 required: true,
             },
             ::flatbed::FieldInfo {
                 name: "history",
-                field_type: "array",
                 fbs_type: "[Severity]",
                 required: false,
             },
