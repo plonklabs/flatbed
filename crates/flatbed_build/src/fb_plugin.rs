@@ -38,7 +38,7 @@ pub(crate) struct FbOperation {
 
 /// Load the spec, reflect the local schemas, and validate that every
 /// FlatBuffer operation's referenced types exist locally. When `out` is set,
-/// also emit the `types.ts` + `codec.ts` TypeScript FlatBuffer codec there.
+/// also emit the `types.ts` + `codec.ts` + `client.ts` TypeScript client there.
 pub fn gen_fb_plugin(
     source: SpecSource,
     schemas_dir: &Path,

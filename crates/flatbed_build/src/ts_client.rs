@@ -46,7 +46,12 @@ fn method(op: &FbOperation) -> String {
     let name = method_name(op);
     let params = path_params(&op.path);
 
-    let mut args: Vec<String> = params.iter().map(|p| format!("{p}: string")).collect();
+    // Path-param names can contain characters (e.g. `-`) that aren't valid JS
+    // identifiers, so the argument uses a camelCased form.
+    let mut args: Vec<String> = params
+        .iter()
+        .map(|p| format!("{}: string", camel_case(p)))
+        .collect();
     let (body_expr, ret_type) = match (&op.request_type, &op.response_type) {
         (Some(req), _) => {
             args.push(format!("body: {req}"));
@@ -64,7 +69,7 @@ fn method(op: &FbOperation) -> String {
     } else {
         let mut tmpl = op.path.clone();
         for p in &params {
-            tmpl = tmpl.replace(&format!("{{{p}}}"), &format!("${{{p}}}"));
+            tmpl = tmpl.replace(&format!("{{{p}}}"), &format!("${{{}}}", camel_case(p)));
         }
         format!("`{tmpl}`")
     };
@@ -87,8 +92,8 @@ fn method_name(op: &FbOperation) -> String {
     let mut name = op.method.to_lowercase();
     for seg in op.path.split('/').filter(|s| !s.is_empty()) {
         let word = match seg.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
-            Some(param) => format!("By{}", pascal(param)),
-            None => pascal(seg),
+            Some(param) => format!("By{}", pascal_case(param)),
+            None => pascal_case(seg),
         };
         name.push_str(&word);
     }
@@ -141,6 +146,12 @@ fn pascal(s: &str) -> String {
         Some(first) => first.to_uppercase().chain(chars).collect(),
         None => s.to_string(),
     }
+}
+
+/// Like [`camel_case`] but with an uppercase first character — a PascalCase
+/// path segment fragment for a method name (`user-id` → `UserId`).
+fn pascal_case(s: &str) -> String {
+    pascal(&camel_case(s))
 }
 
 const PREAMBLE: &str = "\
@@ -214,6 +225,13 @@ mod tests {
         let client = generate(&[op("GET", "/users/{id}", Some("Empty"), Some("User"))]);
         assert!(client.contains("async getUsersById(id: string, body: Empty): Promise<User> {"));
         assert!(client.contains("return this.request(\"GET\", `/users/${id}`,"));
+    }
+
+    #[test]
+    fn hyphenated_path_param_becomes_valid_identifier() {
+        let client = generate(&[op("GET", "/items/{item-id}", None, Some("Item"))]);
+        assert!(client.contains("async getItemsByItemId(itemId: string): Promise<Item> {"));
+        assert!(client.contains("`/items/${itemId}`"));
     }
 
     #[test]
