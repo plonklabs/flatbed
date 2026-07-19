@@ -435,7 +435,6 @@ mod tests {
 
     #[test]
     fn reserved_word_path_param_is_sanitized() {
-        // `class` is a reserved argument name, so the local gets a trailing `_`.
         let client = generate(&[op("GET", "/items/{class}", None, Some("Item"))]);
         assert!(client.contains("async getItemsByClass(class_: string): Promise<Item> {"));
         assert!(client.contains("`/items/${encodeURIComponent(class_)}`"));
