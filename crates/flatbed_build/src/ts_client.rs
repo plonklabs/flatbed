@@ -12,10 +12,9 @@ use crate::fb_plugin::FbOperation;
 
 const CONTENT_TYPE: &str = "application/x-flatbuffers";
 
-/// Method names that would collide with a member `FlatbedClient` always emits —
-/// the `request` method, the `options` constructor-parameter property, and the
-/// `constructor` itself. A derived name matching one compiles to a
-/// duplicate-identifier error.
+/// Names a derived method can't take: the generated client class already
+/// declares a member with each of these, which TypeScript rejects as a
+/// duplicate identifier.
 const RESERVED_METHOD_NAMES: &[&str] = &["constructor", "options", "request"];
 
 /// Words that can't safely be an argument name inside a generated `async`
@@ -436,8 +435,7 @@ mod tests {
 
     #[test]
     fn reserved_word_path_param_is_sanitized() {
-        // `class` is a reserved argument name; the local gets a trailing `_`, but
-        // the derived method name keeps its `By{Segment}` form.
+        // `class` is a reserved argument name, so the local gets a trailing `_`.
         let client = generate(&[op("GET", "/items/{class}", None, Some("Item"))]);
         assert!(client.contains("async getItemsByClass(class_: string): Promise<Item> {"));
         assert!(client.contains("`/items/${encodeURIComponent(class_)}`"));
