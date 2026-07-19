@@ -175,14 +175,29 @@ pub mod test {
         pub history: Option<Vec<Severity>>,
     }
 
+    fn default_defaulted_count() -> i32 {
+        25
+    }
+    fn default_defaulted_flag() -> bool {
+        true
+    }
+    fn default_defaulted_ratio() -> f64 {
+        1.5_f64
+    }
+    fn default_defaulted_level() -> Severity {
+        Severity::Warning
+    }
     #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ToSchema)]
     #[serde(crate = "::flatbed::serde")]
     pub struct Defaulted {
+        #[serde(default = "default_defaulted_count")]
         pub count: i32,
+        #[serde(default = "default_defaulted_flag")]
         pub flag: bool,
+        #[serde(default = "default_defaulted_ratio")]
         pub ratio: f64,
         #[schema(value_type = String)]
-        #[serde(with = "_severity_serde", default)]
+        #[serde(with = "_severity_serde", default = "default_defaulted_level")]
         pub level: Severity,
     }
 

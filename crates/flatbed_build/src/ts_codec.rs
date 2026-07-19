@@ -3,10 +3,9 @@
 //! `encode`/`decode` against the zero-dependency `flatbuffers` runtime).
 //!
 //! The codec drives the runtime's low-level builder/reader directly using the
-//! field ids captured during reflection, rather than shelling out to
-//! `flatc --ts`. Encoding is two-phase (create child offsets, then the table),
-//! and vectors are appended in reverse because the FlatBuffer builder writes
-//! back-to-front.
+//! field ids captured during reflection. Encoding is two-phase (create child
+//! offsets, then the table), and vectors are appended in reverse because the
+//! FlatBuffer builder writes back-to-front.
 
 use std::collections::{BTreeMap, BTreeSet};
 

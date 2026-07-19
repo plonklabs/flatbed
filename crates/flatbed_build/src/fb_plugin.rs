@@ -220,15 +220,27 @@ fn reflect_schemas(
         return Err(format!("no .fbs files found in '{}'", schemas_dir.display()).into());
     }
 
+    // Two roots that both `include` a common schema reflect the shared types
+    // once each; dedup by name so the generated TS declares each type only once.
     let mut tables = TablesByNamespace::new();
     let mut enums = EnumsByNamespace::new();
     for root in roots {
         let (t, e, _includes) = reflect_schema_file(&root, &scratch)?;
-        for (ns, mut v) in t {
-            tables.entry(ns).or_default().append(&mut v);
+        for (ns, v) in t {
+            let bucket = tables.entry(ns).or_default();
+            for table in v {
+                if !bucket.iter().any(|seen| seen.name == table.name) {
+                    bucket.push(table);
+                }
+            }
         }
-        for (ns, mut v) in e {
-            enums.entry(ns).or_default().append(&mut v);
+        for (ns, v) in e {
+            let bucket = enums.entry(ns).or_default();
+            for en in v {
+                if !bucket.iter().any(|seen| seen.name == en.name) {
+                    bucket.push(en);
+                }
+            }
         }
     }
     Ok((tables, enums))

@@ -12,7 +12,7 @@ use crate::fbs_types::{
     fbs_type_to_rust_type, is_enum_type, is_enum_vector, is_optional_type, is_table_type,
     is_table_vector, is_vector_type, vector_inner_type,
 };
-use crate::reflection::{Enum, EnumsByNamespace, Table, TablesByNamespace};
+use crate::reflection::{Enum, EnumsByNamespace, Field, Table, TablesByNamespace};
 
 /// Generate all-in-one flatbed module content with plain Rust structs as primary API
 ///
@@ -320,6 +320,23 @@ fn generate_plain_struct(
     } else {
         "Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema"
     };
+    // A missing JSON key for a field with a declared default must deserialise
+    // to that default, not the type's zero. Container-level `#[serde(default)]`
+    // can't be used here — utoipa's `ToSchema` would try to serialise the whole
+    // default struct, and the flatc enum isn't `Serialize` — so each defaulted
+    // field points at its own named `default = "…"` function instead.
+    let default_fn =
+        |field: &Field| format!("default_{}_{}", table.name.to_lowercase(), field.name);
+    for field in &table.fields {
+        if let Some(lit) = &field.default {
+            let rust_type = fbs_type_to_rust_type(&field.fbs_type, table_names, enum_names);
+            output.push_str(&format!(
+                "    fn {}() -> {rust_type} {{ {lit} }}\n",
+                default_fn(field)
+            ));
+        }
+    }
+
     output.push_str(&format!("    #[derive({})]\n", derives));
     output.push_str("    #[serde(crate = \"::flatbed::serde\")]\n");
     output.push_str(&format!("    pub struct {} {{\n", table.name));
@@ -337,22 +354,31 @@ fn generate_plain_struct(
         //    variant-name string ("Info", "Warning", …). The flatc enum
         //    doesn't derive Serialize/Deserialize and the orphan rule
         //    blocks us from adding the impls ourselves.
+        // A declared default resolves a missing key to that variant via the
+        // named default fn above; without one, a bare `default` gives the
+        // flatc-derived zero variant (FlatBuffers' "absent scalar = zero").
+        let enum_default = match &field.default {
+            Some(_) => format!(", default = \"{}\"", default_fn(field)),
+            None => ", default".to_string(),
+        };
         if is_enum_type(&field.fbs_type, enum_names) {
-            // `default` matches FlatBuffers' "absent scalar = zero variant"
-            // wire semantics; without it, JSON callers that omit the key
-            // would hit a hard deserialisation error instead of getting the
-            // first variant (which the flatc enum already derives Default for).
             output.push_str("        #[schema(value_type = String)]\n");
             output.push_str(&format!(
-                "        #[serde(with = \"_{}_serde\", default)]\n",
+                "        #[serde(with = \"_{}_serde\"{enum_default})]\n",
                 field.fbs_type.to_lowercase()
             ));
         } else if is_enum_vector(&field.fbs_type, enum_names) {
+            // `[Enum]` fields never carry a declared default.
             let inner = vector_inner_type(&field.fbs_type);
             output.push_str("        #[schema(value_type = Vec<String>)]\n");
             output.push_str(&format!(
                 "        #[serde(with = \"_{}_opt_vec_serde\", default)]\n",
                 inner.to_lowercase()
+            ));
+        } else if field.default.is_some() {
+            output.push_str(&format!(
+                "        #[serde(default = \"{}\")]\n",
+                default_fn(field)
             ));
         }
 
@@ -965,6 +991,48 @@ mod tests {
             "#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]\n"
         ));
         assert!(!module.contains("impl Default for Plain"));
+    }
+
+    #[test]
+    fn test_enum_field_with_declared_default_uses_named_default_fn() {
+        // An enum field with a non-zero declared default must deserialise a
+        // missing key to that variant — via a named `default = "…"` fn, not the
+        // bare `default` (which would give the enum's zero variant).
+        let mut schemas = HashMap::new();
+        schemas.insert(
+            "v_1".to_string(),
+            vec![Table {
+                name: "Cfg".to_string(),
+                fields: vec![Field {
+                    name: "mode".to_string(),
+                    fbs_type: "Level".to_string(),
+                    default: Some("Level::Warn".to_string()),
+                    ..Default::default()
+                }],
+            }],
+        );
+        let mut enums = HashMap::new();
+        enums.insert(
+            "v_1".to_string(),
+            vec![Enum {
+                name: "Level".to_string(),
+                variants: vec!["Info".to_string(), "Warn".to_string()],
+                ..Default::default()
+            }],
+        );
+        let module = generate_flatbed_module(&schemas, &enums, "test");
+
+        // A named default fn returns the declared variant, and the field points
+        // at it (not the bare `default`, which resolves to the zero variant).
+        assert!(module.contains("fn default_cfg_mode() -> Level { Level::Warn }"));
+        assert!(
+            module.contains("#[serde(with = \"_level_serde\", default = \"default_cfg_mode\")]")
+        );
+        assert!(!module.contains("#[serde(with = \"_level_serde\", default)]"));
+        // The container is not forced to `default` (utoipa's ToSchema can't
+        // serialise the enum for a container-level default).
+        assert!(!module.contains("#[serde(crate = \"::flatbed::serde\", default)]"));
+        assert!(module.contains("mode: Level::Warn,"));
     }
 
     #[test]
