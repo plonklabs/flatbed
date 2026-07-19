@@ -56,11 +56,11 @@ cat >"$WORK/tsconfig.json" <<'JSON'
   "moduleResolution": "node", "lib": ["es2022", "dom"], "outDir": "dist",
   "strict": true, "skipLibCheck": true }, "include": ["src/**/*.ts"] }
 JSON
-cat >"$WORK/src/main.ts" <<'TS'
+cat >"$WORK/src/main.ts" <<TS
 import { FlatbedClient } from "./client.js";
 import { Priority } from "./types.js";
 
-const client = new FlatbedClient({ baseUrl: "http://127.0.0.1:8080" });
+const client = new FlatbedClient({ baseUrl: "http://127.0.0.1:$PORT" });
 
 const echo = await client.postEcho({ message: "hi", times: 3, priority: Priority.Low });
 if (echo.message !== "hi hi hi") {

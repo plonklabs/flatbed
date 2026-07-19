@@ -12,13 +12,46 @@ use crate::fb_plugin::FbOperation;
 
 const CONTENT_TYPE: &str = "application/x-flatbuffers";
 
-/// Error if two operations derive the same client method name — they would emit
-/// a TypeScript class with a duplicate identifier that won't compile.
+/// Method names that would collide with a member `FlatbedClient` always emits
+/// (`request`) or that TypeScript reserves on a class (`constructor`). A derived
+/// name matching one of these compiles to a duplicate-identifier error.
+const RESERVED_METHOD_NAMES: &[&str] = &["constructor", "request"];
+
+/// Whether `name` is a valid TypeScript identifier: non-empty, starting with a
+/// letter, `_`, or `$`, and otherwise made of letters, digits, `_`, or `$`. A
+/// derived name that isn't (empty, or digit-leading like `1start`) would emit a
+/// method declaration that fails to parse.
+fn is_valid_ts_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_alphabetic() || first == '_' || first == '$') {
+        return false;
+    }
+    chars.all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+}
+
+/// Error if any operation derives a client method name that won't compile: an
+/// invalid TypeScript identifier, a name reserved by `FlatbedClient`, or a
+/// duplicate of another operation's name.
 pub(crate) fn check_unique_method_names(ops: &[FbOperation]) -> Result<(), String> {
     let mut seen: BTreeMap<String, String> = BTreeMap::new();
     for op in ops {
         let name = method_name(op);
         let sig = format!("{} {}", op.method, op.path);
+        if !is_valid_ts_identifier(&name) {
+            return Err(format!(
+                "operation `{sig}` derives the client method name `{name}`, which is not a valid \
+                 TypeScript identifier — set an explicit operationId"
+            ));
+        }
+        if RESERVED_METHOD_NAMES.contains(&name.as_str()) {
+            return Err(format!(
+                "operation `{sig}` derives the client method name `{name}`, which collides with a \
+                 member `FlatbedClient` already defines — set a different operationId"
+            ));
+        }
         if let Some(prev) = seen.insert(name.clone(), sig.clone()) {
             return Err(format!(
                 "two operations derive the same client method `{name}`: `{prev}` and `{sig}` — \
@@ -328,6 +361,36 @@ mod tests {
         let err = check_unique_method_names(&[a.clone(), b]).expect_err("duplicate must fail");
         assert!(err.contains("`fetch`"), "message: {err}");
         assert!(check_unique_method_names(&[a]).is_ok());
+    }
+
+    #[test]
+    fn path_derived_names_that_collide_are_rejected() {
+        // `foo-bar` and `fooBar` both collapse to `getFooBar` with no operationId.
+        let ops = [
+            op("GET", "/foo-bar", None, Some("Foo")),
+            op("GET", "/fooBar", None, Some("Foo")),
+        ];
+        let err = check_unique_method_names(&ops).expect_err("collision must fail");
+        assert!(err.contains("`getFooBar`"), "message: {err}");
+    }
+
+    #[test]
+    fn reserved_method_name_is_rejected() {
+        let mut o = op("POST", "/x", Some("Req"), Some("Res"));
+        o.operation_id = Some("request".to_string());
+        let err = check_unique_method_names(&[o]).expect_err("reserved name must fail");
+        assert!(err.contains("collides"), "message: {err}");
+    }
+
+    #[test]
+    fn digit_leading_method_name_is_rejected() {
+        let mut o = op("POST", "/x", Some("Req"), Some("Res"));
+        o.operation_id = Some("1start".to_string());
+        let err = check_unique_method_names(&[o]).expect_err("invalid identifier must fail");
+        assert!(
+            err.contains("valid TypeScript identifier"),
+            "message: {err}"
+        );
     }
 
     #[test]
