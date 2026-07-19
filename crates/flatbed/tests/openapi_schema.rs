@@ -28,14 +28,24 @@ async fn create_user(
 #[serde(crate = "flatbed::serde")]
 struct HandWritten {
     note: Option<String>,
+    // `count` uses the FlatBuffer source alias `long` (not the canonical
+    // `int64`) to exercise alias handling in the inline fallback path.
+    count: i64,
 }
 
 impl flatbed::ToFlatBuffer for HandWritten {
-    const SCHEMA_FIELDS: &'static [flatbed::FieldInfo] = &[flatbed::FieldInfo {
-        name: "note",
-        fbs_type: "string",
-        required: false,
-    }];
+    const SCHEMA_FIELDS: &'static [flatbed::FieldInfo] = &[
+        flatbed::FieldInfo {
+            name: "note",
+            fbs_type: "string",
+            required: false,
+        },
+        flatbed::FieldInfo {
+            name: "count",
+            fbs_type: "long",
+            required: true,
+        },
+    ];
     const SCHEMA_NAME: &'static str = "HandWritten";
     fn to_flatbuffer(&self) -> Vec<u8> {
         Vec::new()
@@ -186,4 +196,8 @@ fn unregistered_response_type_is_inlined_not_a_dangling_ref() {
     assert_eq!(schema["type"].as_str(), Some("object"));
     assert!(schema.get("$ref").is_none());
     assert!(schema["properties"]["note"].is_object());
+    // The `long` alias resolves to integer/int64, not the string fallback.
+    let count = &schema["properties"]["count"];
+    assert_eq!(count["type"].as_str(), Some("integer"));
+    assert_eq!(count["format"].as_str(), Some("int64"));
 }

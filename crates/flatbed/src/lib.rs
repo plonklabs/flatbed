@@ -2076,17 +2076,19 @@ mod openapi_generation {
     /// `format`. 64-bit integers get the `int64` format so a client generator
     /// can pick a wide-enough representation.
     fn scalar_schema(fbs_type: &str, extensions: Option<Extensions>) -> Schema {
+        // Both the canonical widths from `flatc` reflection (`int32`, `uint64`,
+        // …) and the FlatBuffer source aliases (`int`, `long`, `byte`, …) are
+        // matched, since a hand-written `ToFlatBuffer` may use either.
         let (schema_type, format) = match fbs_type {
             "bool" => (Type::Boolean, None),
             "string" => (Type::String, None),
             // OpenAPI has no standard unsigned integer format; unsigned widths
             // map to the same int32/int64 format as their signed counterparts.
-            "int8" | "int16" | "int32" | "uint8" | "uint16" | "uint32" => {
-                (Type::Integer, Some(KnownFormat::Int32))
-            }
-            "int64" | "uint64" => (Type::Integer, Some(KnownFormat::Int64)),
-            "float32" => (Type::Number, Some(KnownFormat::Float)),
-            "float64" => (Type::Number, Some(KnownFormat::Double)),
+            "int8" | "byte" | "uint8" | "ubyte" | "int16" | "short" | "uint16" | "ushort"
+            | "int32" | "int" | "uint32" | "uint" => (Type::Integer, Some(KnownFormat::Int32)),
+            "int64" | "long" | "uint64" | "ulong" => (Type::Integer, Some(KnownFormat::Int64)),
+            "float32" | "float" => (Type::Number, Some(KnownFormat::Float)),
+            "float64" | "double" => (Type::Number, Some(KnownFormat::Double)),
             // Unknown scalar — fall back to string so the spec still validates.
             _ => (Type::String, None),
         };
