@@ -1,9 +1,10 @@
 //! Generate `client.ts`: a zero-dependency `fetch` client that calls each
 //! FlatBuffer operation of a flatbed service.
 //!
-//! Each method encodes the typed request with the generated codec, POSTs it as
-//! `application/x-flatbuffers`, and decodes the response the same way. Path
-//! parameters (`/users/{id}`) become leading string arguments.
+//! Each method encodes the typed request with the generated codec, sends it as
+//! `application/x-flatbuffers` using the operation's HTTP method, and decodes
+//! the response the same way. Path parameters (`/users/{id}`) become leading
+//! string arguments.
 
 use crate::fb_plugin::FbOperation;
 
@@ -59,7 +60,6 @@ fn method(op: &FbOperation) -> String {
         None => "(bytes: Uint8Array) => bytes".to_string(),
     };
 
-    // Build the request path, substituting `${param}` for each `{param}`.
     let path_expr = if params.is_empty() {
         format!("\"{}\"", op.path)
     } else {
@@ -117,21 +117,28 @@ fn path_params(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Lowercase the first character, leave the rest — turns a PascalCase or
-/// snake `operationId` into a camelCase method name.
+/// Turn an `operationId` into a camelCase method name: `GetUser`, `get_user`
+/// and `get-user` all become `getUser`.
 fn camel_case(s: &str) -> String {
-    let cleaned: String = s
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect();
-    let mut chars = cleaned.chars();
-    match chars.next() {
-        Some(first) => first.to_lowercase().chain(chars).collect(),
-        None => cleaned,
+    let mut out = String::new();
+    let mut first = true;
+    let mut capitalize_next = false;
+    for c in s.chars() {
+        if !c.is_alphanumeric() {
+            capitalize_next = !first;
+        } else if first {
+            out.extend(c.to_lowercase());
+            first = false;
+        } else if capitalize_next {
+            out.extend(c.to_uppercase());
+            capitalize_next = false;
+        } else {
+            out.push(c);
+        }
     }
+    out
 }
 
-/// Uppercase the first character of a path segment.
 fn pascal(s: &str) -> String {
     let mut chars = s.chars();
     match chars.next() {
@@ -162,13 +169,14 @@ const REQUEST_METHOD: &str = "  private async request<T>(
     decode: (bytes: Uint8Array) => T,
   ): Promise<T> {
     const fetchImpl = this.options.fetch ?? globalThis.fetch;
-    const res = await fetchImpl(this.options.baseUrl + path, {
-      method,
-      headers: { \"content-type\": CONTENT_TYPE, accept: CONTENT_TYPE },
-      // `asUint8Array()` is a view of exactly the finished bytes; cast past the
-      // generic-`Uint8Array` vs `BodyInit` friction (the bytes are a valid body).
-      body: body as BodyInit,
-    });
+    const init: RequestInit = { method, headers: { accept: CONTENT_TYPE } };
+    // A bodyless operation (GET/HEAD) must not set a body — browser `fetch`
+    // rejects it. `body as BodyInit` casts past the generic-`Uint8Array` friction.
+    if (body.length > 0) {
+      (init.headers as Record<string, string>)[\"content-type\"] = CONTENT_TYPE;
+      init.body = body as BodyInit;
+    }
+    const res = await fetchImpl(this.options.baseUrl + path, init);
     if (!res.ok) {
       throw new FlatbedError(res.status, `${method} ${path} failed: ${res.status}`);
     }
@@ -225,5 +233,22 @@ mod tests {
         let client = generate(&[op("POST", "/raw", Some("Req"), None)]);
         assert!(client.contains("Promise<Uint8Array>"));
         assert!(client.contains("(bytes: Uint8Array) => bytes"));
+    }
+
+    #[test]
+    fn bodyless_get_sends_no_body() {
+        let client = generate(&[op("GET", "/health", None, Some("Health"))]);
+        assert!(client.contains("async getHealth(): Promise<Health> {"));
+        // the request helper only attaches a body/content-type when non-empty,
+        // so a GET (empty body) doesn't trip browser fetch's no-body rule
+        assert!(client.contains("if (body.length > 0) {"));
+    }
+
+    #[test]
+    fn snake_case_operation_id_becomes_camel() {
+        let mut o = op("POST", "/x", Some("Req"), Some("Res"));
+        o.operation_id = Some("create_user".to_string());
+        let client = generate(&[o]);
+        assert!(client.contains("async createUser("));
     }
 }

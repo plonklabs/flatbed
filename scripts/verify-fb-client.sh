@@ -35,6 +35,11 @@ for _ in $(seq 1 60); do
   curl -fsS "http://127.0.0.1:$PORT/openapi.json" -o /dev/null 2>/dev/null && break
   sleep 0.5
 done
+if ! curl -fsS "http://127.0.0.1:$PORT/openapi.json" -o /dev/null 2>/dev/null; then
+  echo "verify-fb-client: server failed to start within 30s" >&2
+  cat "$WORK/server.log" >&2
+  exit 1
+fi
 
 echo "verify-fb-client: generating the FlatBuffer client…"
 cargo build --quiet -p flatbed_build --bin flatbed
