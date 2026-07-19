@@ -27,14 +27,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# A pre-existing listener on the port would answer the readiness probe below,
+# so the test would run against the wrong server while our binary fails to bind.
+if curl -fsS "http://127.0.0.1:$PORT/openapi.json" -o /dev/null 2>/dev/null; then
+  echo "verify-fb-client: something is already listening on port $PORT — free it first." >&2
+  exit 1
+fi
+
 echo "verify-fb-client: starting the openapi example service…"
 ( cd examples/openapi && cargo build --quiet )
 ./examples/openapi/target/debug/flatbed-example-openapi >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 60); do
+  # Bail as soon as our process dies (e.g. failed to bind) rather than waiting
+  # out the timeout against a port nothing is serving.
+  kill -0 "$SERVER_PID" 2>/dev/null || break
   curl -fsS "http://127.0.0.1:$PORT/openapi.json" -o /dev/null 2>/dev/null && break
   sleep 0.5
 done
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+  echo "verify-fb-client: server process exited during startup" >&2
+  cat "$WORK/server.log" >&2
+  exit 1
+fi
 if ! curl -fsS "http://127.0.0.1:$PORT/openapi.json" -o /dev/null 2>/dev/null; then
   echo "verify-fb-client: server failed to start within 30s" >&2
   cat "$WORK/server.log" >&2

@@ -309,12 +309,12 @@ const REQUEST_METHOD: &str = "  private async request<T>(
     const fetchImpl = this.options.fetch ?? globalThis.fetch;
     const init: RequestInit = { method, headers: { accept: CONTENT_TYPE } };
     // Browser `fetch` rejects a body on GET/HEAD, so never attach one there.
-    // `body as BodyInit` casts past the generic-`Uint8Array` friction.
     if (method !== \"GET\" && method !== \"HEAD\" && body.length > 0) {
       (init.headers as Record<string, string>)[\"content-type\"] = CONTENT_TYPE;
       init.body = body as BodyInit;
     }
-    const res = await fetchImpl(this.options.baseUrl + path, init);
+    const base = this.options.baseUrl.replace(/\\/+$/, \"\");
+    const res = await fetchImpl(base + path, init);
     if (!res.ok) {
       throw new FlatbedError(res.status, `${method} ${path} failed: ${res.status}`);
     }
@@ -426,6 +426,12 @@ mod tests {
         assert!(
             client.contains("if (method !== \"GET\" && method !== \"HEAD\" && body.length > 0) {")
         );
+    }
+
+    #[test]
+    fn base_url_trailing_slash_is_trimmed() {
+        let client = generate(&[op("POST", "/echo", Some("Req"), Some("Res"))]);
+        assert!(client.contains("this.options.baseUrl.replace(/\\/+$/, \"\")"));
     }
 
     #[test]
