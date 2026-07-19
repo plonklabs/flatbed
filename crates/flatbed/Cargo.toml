@@ -73,6 +73,10 @@ required-features = ["openapi"]
 name = "type_registry"
 required-features = ["openapi"]
 
+[[test]]
+name = "openapi_schema"
+required-features = ["openapi"]
+
 [[example]]
 name = "routes"
 required-features = ["openapi"]

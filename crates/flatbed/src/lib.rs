@@ -2007,17 +2007,24 @@ pub fn validate_routes() -> Result<(), RouteConflict> {
 // OpenAPI generation (enabled with "openapi" feature)
 #[cfg(feature = "openapi")]
 mod openapi_generation {
-    use super::{get_routes, FlatbedConfig, HttpMethod, RouteInfo, SchemaInfo};
+    use super::{
+        get_routes, EnumSchema, FlatbedConfig, HttpMethod, RouteInfo, SchemaInfo, TypeFieldInfo,
+        TypeSchema,
+    };
     use std::collections::BTreeSet;
     use utoipa::openapi::{
-        content::ContentBuilder,
+        content::{Content, ContentBuilder},
+        extensions::{Extensions, ExtensionsBuilder},
         path::{OperationBuilder, PathItemBuilder},
         request_body::RequestBodyBuilder,
         response::ResponseBuilder,
-        schema::{ObjectBuilder, Schema, SchemaFormat, SchemaType, Type},
+        schema::{
+            AllOfBuilder, ArrayBuilder, KnownFormat, ObjectBuilder, Schema, SchemaFormat,
+            SchemaType, Type,
+        },
         server::ServerBuilder,
-        ComponentsBuilder, Deprecated, InfoBuilder, OpenApi, OpenApiBuilder, PathsBuilder, RefOr,
-        Required,
+        ComponentsBuilder, Deprecated, InfoBuilder, OpenApi, OpenApiBuilder, PathsBuilder, Ref,
+        RefOr, Required,
     };
 
     /// Get all unique versions from registered routes
@@ -2051,50 +2058,136 @@ mod openapi_generation {
         fbs
     }
 
-    /// Build JSON schema from field info
-    fn build_json_schema(schema: &SchemaInfo) -> Schema {
-        let mut obj_builder = ObjectBuilder::new();
+    /// The bare names of every registered table and enum, used to classify an
+    /// `fbs_type` string as a scalar, a table reference, or an enum reference.
+    fn registered_names() -> (BTreeSet<&'static str>, BTreeSet<&'static str>) {
+        let types = crate::inventory::iter::<TypeSchema>
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        let enums = crate::inventory::iter::<EnumSchema>
+            .into_iter()
+            .map(|e| e.name)
+            .collect();
+        (types, enums)
+    }
 
-        let mut required_fields = Vec::new();
-        for field in schema.fields {
-            let field_schema: RefOr<Schema> = match field.field_type {
-                "string" => RefOr::T(Schema::Object(
-                    ObjectBuilder::new()
-                        .schema_type(SchemaType::new(Type::String))
-                        .build(),
-                )),
-                "integer" => RefOr::T(Schema::Object(
-                    ObjectBuilder::new()
-                        .schema_type(SchemaType::new(Type::Integer))
-                        .build(),
-                )),
-                "number" => RefOr::T(Schema::Object(
-                    ObjectBuilder::new()
-                        .schema_type(SchemaType::new(Type::Number))
-                        .build(),
-                )),
-                "boolean" => RefOr::T(Schema::Object(
-                    ObjectBuilder::new()
-                        .schema_type(SchemaType::new(Type::Boolean))
-                        .build(),
-                )),
-                _ => RefOr::T(Schema::Object(
-                    ObjectBuilder::new()
-                        .schema_type(SchemaType::new(Type::String))
-                        .build(),
-                )),
-            };
-            obj_builder = obj_builder.property(field.name, field_schema);
-            if field.required {
-                required_fields.push(field.name.to_string());
+    /// Map a scalar `fbs_type` to an OpenAPI schema with the matching type and
+    /// `format`. 64-bit integers get the `int64` format so a client generator
+    /// can pick a wide-enough representation.
+    fn scalar_schema(fbs_type: &str, extensions: Option<Extensions>) -> Schema {
+        let (schema_type, format) = match fbs_type {
+            "bool" => (Type::Boolean, None),
+            "string" => (Type::String, None),
+            // OpenAPI has no standard unsigned integer format; unsigned widths
+            // map to the same int32/int64 format as their signed counterparts.
+            "int8" | "int16" | "int32" | "uint8" | "uint16" | "uint32" => {
+                (Type::Integer, Some(KnownFormat::Int32))
             }
+            "int64" | "uint64" => (Type::Integer, Some(KnownFormat::Int64)),
+            "float32" => (Type::Number, Some(KnownFormat::Float)),
+            "float64" => (Type::Number, Some(KnownFormat::Double)),
+            // Unknown scalar — fall back to string so the spec still validates.
+            _ => (Type::String, None),
+        };
+        let mut builder = ObjectBuilder::new().schema_type(SchemaType::new(schema_type));
+        if let Some(format) = format {
+            builder = builder.format(Some(SchemaFormat::KnownFormat(format)));
+        }
+        Schema::Object(builder.extensions(extensions).build())
+    }
+
+    /// Schema for a bare `fbs_type` string, without field-level extensions: an
+    /// array for `[T]`, a `$ref` for a registered table or enum, a scalar
+    /// object otherwise. Used for array elements and for inlined fallback
+    /// bodies (see [`json_ref_content`]).
+    fn schema_for_fbs_type(
+        fbs_type: &str,
+        type_names: &BTreeSet<&str>,
+        enum_names: &BTreeSet<&str>,
+    ) -> RefOr<Schema> {
+        if let Some(inner) = fbs_type.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            let items = schema_for_fbs_type(inner, type_names, enum_names);
+            return RefOr::T(Schema::Array(ArrayBuilder::new().items(items).build()));
+        }
+        if type_names.contains(fbs_type) || enum_names.contains(fbs_type) {
+            RefOr::Ref(Ref::from_schema_name(fbs_type))
+        } else {
+            RefOr::T(scalar_schema(fbs_type, None))
+        }
+    }
+
+    /// Build the property schema for one field, carrying `x-fbs-type` /
+    /// `x-fbs-id` vendor extensions. A table/enum reference is wrapped in
+    /// `allOf` so the `$ref` keeps its meaning while the extensions attach to
+    /// the wrapper — a bare `$ref` can't carry sibling keywords.
+    fn property_schema(
+        field: &TypeFieldInfo,
+        type_names: &BTreeSet<&str>,
+        enum_names: &BTreeSet<&str>,
+    ) -> RefOr<Schema> {
+        let extensions = || {
+            ExtensionsBuilder::new()
+                .add("x-fbs-type", field.fbs_type)
+                .add("x-fbs-id", field.field_id)
+                .build()
+        };
+
+        if let Some(inner) = field
+            .fbs_type
+            .strip_prefix('[')
+            .and_then(|s| s.strip_suffix(']'))
+        {
+            let items = schema_for_fbs_type(inner, type_names, enum_names);
+            return RefOr::T(Schema::Array(
+                ArrayBuilder::new()
+                    .items(items)
+                    .extensions(Some(extensions()))
+                    .build(),
+            ));
         }
 
-        for required in required_fields {
-            obj_builder = obj_builder.required(required);
+        if type_names.contains(field.fbs_type) || enum_names.contains(field.fbs_type) {
+            return RefOr::T(Schema::AllOf(
+                AllOfBuilder::new()
+                    .item(Ref::from_schema_name(field.fbs_type))
+                    .extensions(Some(extensions()))
+                    .build(),
+            ));
         }
 
-        Schema::Object(obj_builder.build())
+        RefOr::T(scalar_schema(field.fbs_type, Some(extensions())))
+    }
+
+    /// Register a component schema for every generated table and enum. Nested
+    /// tables and enums are referenced by `$ref`, so the components form a
+    /// closed, resolvable graph — including tables reachable only by nesting.
+    fn add_type_components(
+        components_builder: &mut ComponentsBuilder,
+        type_names: &BTreeSet<&str>,
+        enum_names: &BTreeSet<&str>,
+    ) {
+        for ty in crate::inventory::iter::<TypeSchema> {
+            let mut obj = ObjectBuilder::new().schema_type(SchemaType::new(Type::Object));
+            for field in ty.fields {
+                obj = obj.property(field.name, property_schema(field, type_names, enum_names));
+                if field.required {
+                    obj = obj.required(field.name);
+                }
+            }
+            *components_builder =
+                std::mem::take(components_builder).schema(ty.name, Schema::Object(obj.build()));
+        }
+
+        for en in crate::inventory::iter::<EnumSchema> {
+            // Enums cross the JSON wire as their variant-name string.
+            let obj = ObjectBuilder::new()
+                .schema_type(SchemaType::new(Type::String))
+                .enum_values(Some(en.variants.iter().copied()))
+                .build();
+            *components_builder =
+                std::mem::take(components_builder).schema(en.name, Schema::Object(obj));
+        }
     }
 
     /// Convert our HttpMethod to utoipa's HttpMethod
@@ -2110,92 +2203,103 @@ mod openapi_generation {
         }
     }
 
-    /// Build an OpenAPI operation from a route
-    fn build_operation(
-        route: &RouteInfo,
-        components_builder: &mut ComponentsBuilder,
-        schemas_added: &mut BTreeSet<String>,
-    ) -> utoipa::openapi::path::Operation {
-        // Build request body content
-        let mut request_content = ContentBuilder::new();
-
-        // Add JSON content type
-        if let Some(req_schema) = &route.openapi.request_schema {
-            let json_schema = build_json_schema(req_schema);
-            request_content = request_content.schema(Some(json_schema));
-
-            // Add schema to components if not already added
-            if !schemas_added.contains(req_schema.name) {
-                let component_schema = build_json_schema(req_schema);
-                *components_builder =
-                    std::mem::take(components_builder).schema(req_schema.name, component_schema);
-                schemas_added.insert(req_schema.name.to_string());
-            }
-        }
-
-        let request_body = RequestBodyBuilder::new()
-            .content("application/json", request_content.build())
-            .content(
-                "application/x-flatbuffers",
-                ContentBuilder::new()
-                    .schema(Some(Schema::Object(
-                        ObjectBuilder::new()
-                            .schema_type(SchemaType::new(Type::String))
-                            .format(Some(SchemaFormat::Custom("binary".to_string())))
-                            .description(Some(format!(
-                                "FlatBuffers binary data.\n\nSchema:\n```fbs\n{}\n```",
-                                route
-                                    .openapi
-                                    .request_schema
-                                    .as_ref()
-                                    .map(generate_fbs_schema_text)
-                                    .unwrap_or_default()
-                            )))
-                            .build(),
+    /// The `application/x-flatbuffers` content entry: opaque binary, with the
+    /// table's `.fbs` text embedded in the description for human readers.
+    fn flatbuffers_content(schema: Option<&SchemaInfo>) -> Content {
+        ContentBuilder::new()
+            .schema(Some(Schema::Object(
+                ObjectBuilder::new()
+                    .schema_type(SchemaType::new(Type::String))
+                    .format(Some(SchemaFormat::Custom("binary".to_string())))
+                    .description(Some(format!(
+                        "FlatBuffers binary data.\n\nSchema:\n```fbs\n{}\n```",
+                        schema.map(generate_fbs_schema_text).unwrap_or_default()
                     )))
                     .build(),
+            )))
+            .build()
+    }
+
+    /// JSON content for a route body: a `$ref` to the shared component when the
+    /// body is a generated (registered) type, an inlined object built from the
+    /// route's field info otherwise (a bodyless `()` or a hand-written
+    /// `ToFlatBuffer` that never registered a component), and empty content when
+    /// there is no typed body.
+    fn json_ref_content(
+        schema: Option<&SchemaInfo>,
+        type_names: &BTreeSet<&str>,
+        enum_names: &BTreeSet<&str>,
+    ) -> Content {
+        let mut content = ContentBuilder::new();
+        if let Some(schema) = schema {
+            let body: RefOr<Schema> = if type_names.contains(schema.name) {
+                RefOr::Ref(Ref::from_schema_name(schema.name))
+            } else {
+                RefOr::T(inline_schema(schema, type_names, enum_names))
+            };
+            content = content.schema(Some(body));
+        }
+        content.build()
+    }
+
+    /// Flat object schema built directly from a route's [`SchemaInfo`], for
+    /// body types absent from the component registry. Nested tables and enums
+    /// still resolve by `$ref` where those are registered.
+    fn inline_schema(
+        schema: &SchemaInfo,
+        type_names: &BTreeSet<&str>,
+        enum_names: &BTreeSet<&str>,
+    ) -> Schema {
+        let mut obj = ObjectBuilder::new().schema_type(SchemaType::new(Type::Object));
+        for field in schema.fields {
+            obj = obj.property(
+                field.name,
+                schema_for_fbs_type(field.fbs_type, type_names, enum_names),
+            );
+            if field.required {
+                obj = obj.required(field.name);
+            }
+        }
+        Schema::Object(obj.build())
+    }
+
+    /// Build an OpenAPI operation from a route. Generated bodies reference the
+    /// shared component schemas by `$ref`; components are registered once by
+    /// [`add_type_components`].
+    fn build_operation(
+        route: &RouteInfo,
+        type_names: &BTreeSet<&str>,
+        enum_names: &BTreeSet<&str>,
+    ) -> utoipa::openapi::path::Operation {
+        let request_body = RequestBodyBuilder::new()
+            .content(
+                "application/json",
+                json_ref_content(
+                    route.openapi.request_schema.as_ref(),
+                    type_names,
+                    enum_names,
+                ),
+            )
+            .content(
+                "application/x-flatbuffers",
+                flatbuffers_content(route.openapi.request_schema.as_ref()),
             )
             .required(Some(Required::True))
             .build();
 
-        // Build response content
-        let mut response_content = ContentBuilder::new();
-
-        if let Some(resp_schema) = &route.openapi.response_schema {
-            let json_schema = build_json_schema(resp_schema);
-            response_content = response_content.schema(Some(json_schema));
-
-            // Add schema to components if not already added
-            if !schemas_added.contains(resp_schema.name) {
-                let component_schema = build_json_schema(resp_schema);
-                *components_builder =
-                    std::mem::take(components_builder).schema(resp_schema.name, component_schema);
-                schemas_added.insert(resp_schema.name.to_string());
-            }
-        }
-
         let response = ResponseBuilder::new()
             .description("Successful response")
-            .content("application/json", response_content.build())
+            .content(
+                "application/json",
+                json_ref_content(
+                    route.openapi.response_schema.as_ref(),
+                    type_names,
+                    enum_names,
+                ),
+            )
             .content(
                 "application/x-flatbuffers",
-                ContentBuilder::new()
-                    .schema(Some(Schema::Object(
-                        ObjectBuilder::new()
-                            .schema_type(SchemaType::new(Type::String))
-                            .format(Some(SchemaFormat::Custom("binary".to_string())))
-                            .description(Some(format!(
-                                "FlatBuffers binary data.\n\nSchema:\n```fbs\n{}\n```",
-                                route
-                                    .openapi
-                                    .response_schema
-                                    .as_ref()
-                                    .map(generate_fbs_schema_text)
-                                    .unwrap_or_default()
-                            )))
-                            .build(),
-                    )))
-                    .build(),
+                flatbuffers_content(route.openapi.response_schema.as_ref()),
             )
             .build();
 
@@ -2222,9 +2326,10 @@ mod openapi_generation {
 
     /// Generate OpenAPI spec for a specific version
     pub fn generate_openapi_spec(config: &FlatbedConfig, version: &str) -> OpenApi {
+        let (type_names, enum_names) = registered_names();
         let mut paths_builder = PathsBuilder::new();
         let mut components_builder = ComponentsBuilder::new();
-        let mut schemas_added: BTreeSet<String> = BTreeSet::new();
+        add_type_components(&mut components_builder, &type_names, &enum_names);
 
         // Filter routes by version and group by path
         let routes: Vec<&RouteInfo> = get_routes()
@@ -2242,7 +2347,7 @@ mod openapi_generation {
         for (path, path_routes) in &path_groups {
             let mut path_item_builder = PathItemBuilder::new();
             for route in path_routes {
-                let operation = build_operation(route, &mut components_builder, &mut schemas_added);
+                let operation = build_operation(route, &type_names, &enum_names);
                 let http_method = to_utoipa_method(&route.method);
                 path_item_builder = path_item_builder.operation(http_method, operation);
             }
