@@ -139,23 +139,48 @@ fn validate(
     table_names: &BTreeSet<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut missing: Vec<(String, String)> = Vec::new();
+    let mut untyped: Vec<String> = Vec::new();
     for op in ops {
-        for ty in [&op.request_type, &op.response_type].into_iter().flatten() {
+        let refs: Vec<&String> = [&op.request_type, &op.response_type]
+            .into_iter()
+            .flatten()
+            .collect();
+        // A FlatBuffer operation with no generated (`$ref`) request or response
+        // type has nothing a codec could be built from — flag it rather than
+        // counting it as validated. (Real routes always have a generated
+        // request type, so this only fires on hand-crafted specs.)
+        if refs.is_empty() {
+            untyped.push(format!("{} {}", op.method, op.path));
+            continue;
+        }
+        for ty in refs {
             if !table_names.contains(ty) {
                 missing.push((format!("{} {}", op.method, op.path), ty.clone()));
             }
         }
     }
-    if missing.is_empty() {
+    if missing.is_empty() && untyped.is_empty() {
         return Ok(());
     }
-    let mut msg = String::from(
-        "local .fbs schemas are out of sync with the deployed server — these types are \
-         referenced by application/x-flatbuffers operations but were not found in the schemas \
-         directory:\n",
-    );
-    for (op, ty) in &missing {
-        msg.push_str(&format!("  - {op} needs type `{ty}`\n"));
+    let mut msg = String::new();
+    if !missing.is_empty() {
+        msg.push_str(
+            "local .fbs schemas are out of sync with the deployed server — these types are \
+             referenced by application/x-flatbuffers operations but were not found in the \
+             schemas directory:\n",
+        );
+        for (op, ty) in &missing {
+            msg.push_str(&format!("  - {op} needs type `{ty}`\n"));
+        }
+    }
+    if !untyped.is_empty() {
+        msg.push_str(
+            "these application/x-flatbuffers operations reference no generated type, so no \
+             FlatBuffer client can be built for them:\n",
+        );
+        for op in &untyped {
+            msg.push_str(&format!("  - {op}\n"));
+        }
     }
     Err(msg.into())
 }
@@ -260,6 +285,31 @@ mod tests {
         let ops = fb_operations(&spec);
         assert_eq!(ops.len(), 1);
         assert_eq!(ops[0].response_type.as_deref(), Some("CreateResp"));
+    }
+
+    #[test]
+    fn validate_flags_flatbuffer_op_with_no_generated_type() {
+        // Both bodies are inlined (no $ref), so nothing is codec-generatable.
+        let spec = serde_json::json!({
+            "paths": { "/opaque": { "post": {
+                "requestBody": { "content": {
+                    "application/json": { "schema": { "type": "object" } },
+                    "application/x-flatbuffers": { "schema": { "type": "string" } }
+                }},
+                "responses": { "200": { "content": {
+                    "application/json": { "schema": { "type": "object" } },
+                    "application/x-flatbuffers": { "schema": { "type": "string" } }
+                }}}
+            }}}
+        });
+        let ops = fb_operations(&spec);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].request_type, None);
+        assert_eq!(ops[0].response_type, None);
+        let err = validate(&ops, &BTreeSet::new()).expect_err("untyped fb op must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("no generated type"), "message: {msg}");
+        assert!(msg.contains("POST /opaque"), "message: {msg}");
     }
 
     #[test]

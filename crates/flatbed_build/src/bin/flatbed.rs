@@ -4,11 +4,11 @@
 //! driven directly — without compiling the full workspace — by
 //! passing a schemas directory and an output path.
 //!
-//! The binary exposes one subcommand, `generate`, that walks a
-//! schemas directory non-recursively and runs every top-level `.fbs`
-//! file through `Config::compile`. Subdirectories (`v1/`, `v2/`, …)
-//! are reached via FlatBuffer `include` directives from the root
-//! files, the same way the operator's `build.rs` drives them.
+//! Two subcommands: `generate` walks a schemas directory non-recursively
+//! and runs every top-level `.fbs` file through `Config::compile`
+//! (subdirectories like `v1/` are reached via FlatBuffer `include` from the
+//! roots); `gen-fb-plugin` cross-checks a served OpenAPI spec against those
+//! same schemas before a FlatBuffer client is generated.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
