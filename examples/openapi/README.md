@@ -76,8 +76,18 @@ flatbed gen-fb-plugin --server http://localhost:8080 \
                       --schemas-dir schemas/ --out ./fb-client
 ```
 
-`fb-client/types.ts` holds the interfaces + numeric enums; `fb-client/codec.ts`
-holds per-table `encode…Root` / `decode…Root` over the zero-dependency
-[`flatbuffers`](https://www.npmjs.com/package/flatbuffers) runtime (`npm i
-flatbuffers`). `scripts/verify-fb-codec.sh` proves the codec is byte-compatible
-with the Rust side by round-tripping every value through both implementations.
+It writes three files: `types.ts` (interfaces + numeric enums), `codec.ts`
+(per-table `encode…Root` / `decode…Root` over the zero-dependency
+[`flatbuffers`](https://www.npmjs.com/package/flatbuffers) runtime — `npm i
+flatbuffers`), and `client.ts` (a `fetch` client with one method per route):
+
+```ts
+const client = new FlatbedClient({ baseUrl: "http://localhost:8080" });
+const res = await client.postEcho({ message: "hi", times: 3, priority: Priority.Low });
+// => { message: "hi hi hi" }  — sent and received as application/x-flatbuffers
+```
+
+Two scripts prove it end to end: `scripts/verify-fb-codec.sh` round-trips every
+value through the Rust and TS codecs to show they agree byte-for-byte, and
+`scripts/verify-fb-client.sh` boots this service and has the generated client
+call it over `application/x-flatbuffers`.

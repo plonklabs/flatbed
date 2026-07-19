@@ -28,11 +28,12 @@ pub enum SpecSource {
 /// with the bare component names of its JSON request/response schemas (`None`
 /// when the body is absent or inlined rather than referenced by `$ref`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FbOperation {
-    path: String,
-    method: String,
-    request_type: Option<String>,
-    response_type: Option<String>,
+pub(crate) struct FbOperation {
+    pub(crate) path: String,
+    pub(crate) method: String,
+    pub(crate) operation_id: Option<String>,
+    pub(crate) request_type: Option<String>,
+    pub(crate) response_type: Option<String>,
 }
 
 /// Load the spec, reflect the local schemas, and validate that every
@@ -60,8 +61,9 @@ pub fn gen_fb_plugin(
         let (types_ts, codec_ts) = crate::ts_codec::generate(&tables, &enums);
         std::fs::write(out.join("types.ts"), types_ts)?;
         std::fs::write(out.join("codec.ts"), codec_ts)?;
+        std::fs::write(out.join("client.ts"), crate::ts_client::generate(&ops))?;
         println!(
-            "gen-fb-plugin: wrote types.ts + codec.ts to {}",
+            "gen-fb-plugin: wrote types.ts + codec.ts + client.ts to {}",
             out.display()
         );
     }
@@ -142,6 +144,10 @@ fn fb_operations(spec: &Value) -> Vec<FbOperation> {
             ops.push(FbOperation {
                 path: path.clone(),
                 method: method.to_uppercase(),
+                operation_id: op
+                    .get("operationId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 request_type: json_ref(req_content),
                 response_type: json_ref(resp_content),
             });
