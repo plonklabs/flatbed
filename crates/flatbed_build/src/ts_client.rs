@@ -78,12 +78,17 @@ fn method(op: &FbOperation) -> String {
         .iter()
         .map(|p| format!("{}: string", camel_case(p)))
         .collect();
-    let (body_expr, ret_type) = match (&op.request_type, &op.response_type) {
-        (Some(req), _) => {
+    let ret_type = response_type(op);
+    // GET/HEAD can't carry a body (browser `fetch` rejects it), so don't emit a
+    // `body` argument or encode call for them even if the spec typed one — the
+    // argument would be encoded and then silently dropped by `request()`.
+    let bodyless = matches!(op.method.as_str(), "GET" | "HEAD");
+    let body_expr = match &op.request_type {
+        Some(req) if !bodyless => {
             args.push(format!("body: {req}"));
-            (format!("codec.encode{req}Root(body)"), response_type(op))
+            format!("codec.encode{req}Root(body)")
         }
-        (None, _) => ("new Uint8Array()".to_string(), response_type(op)),
+        _ => "new Uint8Array()".to_string(),
     };
     let decode = match &op.response_type {
         Some(res) => format!("codec.decode{res}Root"),
@@ -174,8 +179,9 @@ fn pascal(s: &str) -> String {
     }
 }
 
-/// Like [`camel_case`] but with an uppercase first character — a PascalCase
-/// path segment fragment for a method name (`user-id` → `UserId`).
+/// PascalCase form of a path-segment fragment for a method name: separators are
+/// dropped with each following word capitalized, and the first character is
+/// uppercased (`user-id` → `UserId`).
 fn pascal_case(s: &str) -> String {
     pascal(&camel_case(s))
 }
@@ -248,9 +254,16 @@ mod tests {
 
     #[test]
     fn path_params_become_leading_string_args() {
+        let client = generate(&[op("POST", "/users/{id}", Some("Patch"), Some("User"))]);
+        assert!(client.contains("async postUsersById(id: string, body: Patch): Promise<User> {"));
+        assert!(client.contains("return this.request(\"POST\", `/users/${id}`,"));
+    }
+
+    #[test]
+    fn get_with_request_type_omits_body_argument() {
         let client = generate(&[op("GET", "/users/{id}", Some("Empty"), Some("User"))]);
-        assert!(client.contains("async getUsersById(id: string, body: Empty): Promise<User> {"));
-        assert!(client.contains("return this.request(\"GET\", `/users/${id}`,"));
+        assert!(client.contains("async getUsersById(id: string): Promise<User> {"));
+        assert!(client.contains("return this.request(\"GET\", `/users/${id}`, new Uint8Array(),"));
     }
 
     #[test]
