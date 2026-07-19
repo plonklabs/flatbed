@@ -320,15 +320,8 @@ fn generate_plain_struct(
     } else {
         "Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema"
     };
-    // A missing JSON key for a field with a declared default must deserialise
-    // to that default, not the type's zero. Container-level `#[serde(default)]`
-    // can't be used here — utoipa's `ToSchema` would try to serialise the whole
-    // default struct, and the flatc enum isn't `Serialize` — so each defaulted
-    // field points at its own named `default = "…"` function instead. The table
-    // name keeps its original case, keeping the table/field boundary distinct
-    // for the usual PascalCase-table + snake_case-field pairing; a residual
-    // collision (a table name with underscores lining up) would surface as a
-    // duplicate fn — a compile error, not silent misbehaviour.
+    // Per-field named default fns — container `#[serde(default)]` is out because
+    // utoipa's `ToSchema` can't serialise the non-`Serialize` flatc enum.
     let default_fn = |field: &Field| format!("default_{}_{}", table.name, field.name);
     for field in &table.fields {
         if let Some(lit) = &field.default {

@@ -89,9 +89,8 @@ fn field_defaults(f: &Field, schema: &Schema) -> (String, String) {
 
     match &f.default {
         None if fbs == "bool" => ("0".into(), "false".into()),
-        // Enums read via their underlying integer, so a 64-bit-backed enum
-        // needs the `0n` zero, matching `readInt64`/`readUint64`.
-        None if schema.is_enum(fbs) => (zero.into(), zero.into()),
+        // `zero` is already `"0n"` for a 64-bit-backed enum (via its underlying
+        // type), so enums share this arm.
         None => (zero.into(), zero.into()),
         Some(lit) if schema.is_enum(fbs) => {
             let variant = lit.rsplit("::").next().unwrap_or(lit);
