@@ -24,9 +24,12 @@ pub enum SpecSource {
     File(PathBuf),
 }
 
-/// An operation that advertises the `application/x-flatbuffers` content type,
-/// with the bare component names of its JSON request/response schemas (`None`
-/// when the body is absent or inlined rather than referenced by `$ref`).
+/// An operation that advertises the `application/x-flatbuffers` content type.
+/// `operation_id` is the spec's `operationId` when present (used to name the
+/// generated client method, else it's derived from the method and path).
+/// `request_type`/`response_type` are the bare component names of the JSON
+/// request/response schemas, `None` when that body is absent or inlined rather
+/// than referenced by `$ref`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FbOperation {
     pub(crate) path: String,
@@ -293,6 +296,7 @@ mod tests {
         let op = &ops[0];
         assert_eq!(op.path, "/users");
         assert_eq!(op.method, "POST");
+        assert_eq!(op.operation_id, None);
         assert_eq!(op.request_type.as_deref(), Some("UserRequest"));
         assert_eq!(op.response_type.as_deref(), Some("UserResponse"));
     }
