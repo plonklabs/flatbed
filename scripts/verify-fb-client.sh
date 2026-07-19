@@ -29,7 +29,9 @@ trap cleanup EXIT
 
 # A pre-existing listener on the port would answer the readiness probe below,
 # so the test would run against the wrong server while our binary fails to bind.
-if curl -fsS "http://127.0.0.1:$PORT/openapi.json" -o /dev/null 2>/dev/null; then
+# Probe the TCP port itself, not an HTTP GET: a service that answers 404/5xx on
+# /openapi.json still conflicts, and `curl -f` would wave it through.
+if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
   echo "verify-fb-client: something is already listening on port $PORT — free it first." >&2
   exit 1
 fi
