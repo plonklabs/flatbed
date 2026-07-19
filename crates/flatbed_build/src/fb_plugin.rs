@@ -24,20 +24,23 @@ pub enum SpecSource {
     File(PathBuf),
 }
 
-/// An operation that advertises the `application/x-flatbuffers` content type,
-/// with the bare component names of its JSON request/response schemas (`None`
-/// when the body is absent or inlined rather than referenced by `$ref`).
+/// An operation that advertises the `application/x-flatbuffers` content type.
+/// `operation_id` is the spec's `operationId`, `None` when the spec omits it.
+/// `request_type`/`response_type` are the bare component names of the JSON
+/// request/response schemas, `None` when that body is absent or inlined rather
+/// than referenced by `$ref`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct FbOperation {
-    path: String,
-    method: String,
-    request_type: Option<String>,
-    response_type: Option<String>,
+pub(crate) struct FbOperation {
+    pub(crate) path: String,
+    pub(crate) method: String,
+    pub(crate) operation_id: Option<String>,
+    pub(crate) request_type: Option<String>,
+    pub(crate) response_type: Option<String>,
 }
 
 /// Load the spec, reflect the local schemas, and validate that every
 /// FlatBuffer operation's referenced types exist locally. When `out` is set,
-/// also emit the `types.ts` + `codec.ts` TypeScript FlatBuffer codec there.
+/// also emit the `types.ts` + `codec.ts` + `client.ts` TypeScript client there.
 pub fn gen_fb_plugin(
     source: SpecSource,
     schemas_dir: &Path,
@@ -55,13 +58,15 @@ pub fn gen_fb_plugin(
     );
 
     if let Some(out) = out {
+        crate::ts_client::check_unique_method_names(&ops)?;
         std::fs::create_dir_all(out)
             .map_err(|e| format!("failed to create output dir '{}': {e}", out.display()))?;
         let (types_ts, codec_ts) = crate::ts_codec::generate(&tables, &enums);
         std::fs::write(out.join("types.ts"), types_ts)?;
         std::fs::write(out.join("codec.ts"), codec_ts)?;
+        std::fs::write(out.join("client.ts"), crate::ts_client::generate(&ops))?;
         println!(
-            "gen-fb-plugin: wrote types.ts + codec.ts to {}",
+            "gen-fb-plugin: wrote types.ts + codec.ts + client.ts to {}",
             out.display()
         );
     }
@@ -142,6 +147,10 @@ fn fb_operations(spec: &Value) -> Vec<FbOperation> {
             ops.push(FbOperation {
                 path: path.clone(),
                 method: method.to_uppercase(),
+                operation_id: op
+                    .get("operationId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 request_type: json_ref(req_content),
                 response_type: json_ref(resp_content),
             });
@@ -286,8 +295,25 @@ mod tests {
         let op = &ops[0];
         assert_eq!(op.path, "/users");
         assert_eq!(op.method, "POST");
+        assert_eq!(op.operation_id, None);
         assert_eq!(op.request_type.as_deref(), Some("UserRequest"));
         assert_eq!(op.response_type.as_deref(), Some("UserResponse"));
+    }
+
+    #[test]
+    fn fb_operations_parses_operation_id() {
+        let spec = serde_json::json!({
+            "paths": { "/users": { "post": {
+                "operationId": "createUser",
+                "requestBody": { "content": {
+                    "application/json": { "schema": { "$ref": "#/components/schemas/UserRequest" } },
+                    "application/x-flatbuffers": { "schema": { "type": "string" } }
+                }}
+            }}}
+        });
+        let ops = fb_operations(&spec);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].operation_id.as_deref(), Some("createUser"));
     }
 
     #[test]
