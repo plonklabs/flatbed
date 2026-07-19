@@ -175,6 +175,17 @@ pub mod test {
         pub history: Option<Vec<Severity>>,
     }
 
+    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct Defaulted {
+        pub count: i32,
+        pub flag: bool,
+        pub ratio: f64,
+        #[schema(value_type = String)]
+        #[serde(with = "_severity_serde", default)]
+        pub level: Severity,
+    }
+
     impl TestRequest {
         /// Convert this struct to FlatBuffer binary format
         pub fn to_flatbuffer(&self) -> Vec<u8> {
@@ -793,6 +804,110 @@ pub mod test {
             ::flatbed::TypeFieldInfo { name: "message", fbs_type: "string", field_id: 0, required: false },
             ::flatbed::TypeFieldInfo { name: "severity", fbs_type: "Severity", field_id: 1, required: true },
             ::flatbed::TypeFieldInfo { name: "history", fbs_type: "[Severity]", field_id: 2, required: false },
+        ] }
+    }
+
+    impl Defaulted {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::Defaulted>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::Defaulted<'a>> {
+            super::__fb::test::Defaulted::create(
+                builder,
+                &super::__fb::test::DefaultedArgs {
+                    count: self.count,
+                    flag: self.flag,
+                    ratio: self.ratio,
+                    level: self.level,
+                },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::Defaulted) -> Self {
+            Self {
+                count: fb.count(),
+                flag: fb.flag(),
+                ratio: fb.ratio(),
+                level: fb.level(),
+            }
+        }
+    }
+
+    impl Default for Defaulted {
+        fn default() -> Self {
+            Self {
+                count: 25,
+                flag: true,
+                ratio: 1.5_f64,
+                level: Severity::Warning,
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for Defaulted {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
+            ::flatbed::FieldInfo {
+                name: "count",
+                fbs_type: "int32",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "flag",
+                fbs_type: "bool",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "ratio",
+                fbs_type: "float64",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "level",
+                fbs_type: "Severity",
+                required: true,
+            },
+        ];
+
+        const SCHEMA_NAME: &'static str = "Defaulted";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::Defaulted<'_> {
+        type Json = Defaulted;
+    }
+
+    impl ::flatbed::HasPlainStruct for Defaulted {
+        type Plain = Defaulted;
+        type FlatBuffer<'a> = super::__fb::test::Defaulted<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "Defaulted", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "count", fbs_type: "int32", field_id: 0, required: true },
+            ::flatbed::TypeFieldInfo { name: "flag", fbs_type: "bool", field_id: 1, required: true },
+            ::flatbed::TypeFieldInfo { name: "ratio", fbs_type: "float64", field_id: 2, required: true },
+            ::flatbed::TypeFieldInfo { name: "level", fbs_type: "Severity", field_id: 3, required: true },
         ] }
     }
 }

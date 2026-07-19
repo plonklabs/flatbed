@@ -19,7 +19,7 @@ if ! command -v npx >/dev/null 2>&1; then
   exit 0
 fi
 
-TYPES="TestResponse UserRequest AddressBook LogEvent"
+TYPES="TestResponse UserRequest AddressBook LogEvent Defaulted"
 WORK="$(mktemp -d)"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
@@ -40,7 +40,8 @@ cat >"$WORK/tsconfig.json" <<'JSON'
   "include": ["src/**/*.ts"] }
 JSON
 
-# The Node mirror of the Rust samples in examples/fb_roundtrip.rs.
+# TS script that mirrors the Rust encode/decode samples: same fixed values,
+# same assertion logic, run through the generated codec.
 cat >"$WORK/src/roundtrip.ts" <<'TS'
 import * as codec from "./codec.js";
 import { Severity } from "./types.js";
@@ -53,6 +54,7 @@ function sample(ty: string): any {
     case "UserRequest": return { name: "Ada", age: 36, address: address() };
     case "AddressBook": return { owner: "Ada", addresses: [address(), address()], contact_names: ["Bob", "Carol"] };
     case "LogEvent": return { message: "disk full", severity: Severity.Error, history: [Severity.Info, Severity.Warning, Severity.Error] };
+    case "Defaulted": return { count: 25, flag: true, ratio: 1.5, level: Severity.Warning };
     default: throw new Error("unknown type " + ty);
   }
 }

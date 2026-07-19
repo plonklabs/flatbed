@@ -1,8 +1,8 @@
-//! Cross-language FlatBuffer codec check helper (see
-//! `scripts/verify-fb-codec.sh`).
+//! Encodes and decodes canonical fixtures for cross-language FlatBuffer codec
+//! verification.
 //!
 //! `encode <Type>` prints the hex of a fixed sample value; `decode <Type> <hex>`
-//! decodes the hex and exits non-zero unless it equals that same sample. The
+//! decodes the hex and exits non-zero unless it equals that same sample. A
 //! companion Node script does the mirror image with the generated TS codec, so
 //! together they prove the two implementations agree byte-for-byte.
 
@@ -10,7 +10,9 @@
 #[allow(warnings, clippy::all)]
 mod generated;
 
-use generated::test::{Address, AddressBook, LogEvent, Severity, TestResponse, UserRequest};
+use generated::test::{
+    Address, AddressBook, Defaulted, LogEvent, Severity, TestResponse, UserRequest,
+};
 
 fn address() -> Address {
     Address {
@@ -22,32 +24,37 @@ fn address() -> Address {
 
 fn encode(ty: &str) -> Vec<u8> {
     match ty {
-        // string + uint64 (past 2^53) + bool
         "TestResponse" => TestResponse {
             message: Some("pong".to_string()),
-            value: 9_000_000_000_000_000_000,
+            value: 9_000_000_000_000_000_000, // past 2^53 — exercises JS BigInt
             success: true,
         }
         .to_flatbuffer(),
-        // string + int32 + nested table
         "UserRequest" => UserRequest {
             name: Some("Ada".to_string()),
             age: 36,
             address: Some(address()),
         }
         .to_flatbuffer(),
-        // [table] + [string]
         "AddressBook" => AddressBook {
             owner: Some("Ada".to_string()),
             addresses: Some(vec![address(), address()]),
             contact_names: Some(vec!["Bob".to_string(), "Carol".to_string()]),
         }
         .to_flatbuffer(),
-        // enum + [enum]
         "LogEvent" => LogEvent {
             message: Some("disk full".to_string()),
             severity: Severity::Error,
             history: Some(vec![Severity::Info, Severity::Warning, Severity::Error]),
+        }
+        .to_flatbuffer(),
+        // Every value equals its schema default, so all fields are omitted on
+        // the wire and the decoder must restore them.
+        "Defaulted" => Defaulted {
+            count: 25,
+            flag: true,
+            ratio: 1.5,
+            level: Severity::Warning,
         }
         .to_flatbuffer(),
         other => panic!("unknown type {other}"),
@@ -72,6 +79,10 @@ fn decode_and_check(ty: &str, bytes: &[u8]) {
         "LogEvent" => assert_eq!(
             LogEvent::from_flatbuffer(bytes).unwrap(),
             LogEvent::from_flatbuffer(&encode(ty)).unwrap()
+        ),
+        "Defaulted" => assert_eq!(
+            Defaulted::from_flatbuffer(bytes).unwrap(),
+            Defaulted::from_flatbuffer(&encode(ty)).unwrap()
         ),
         other => panic!("unknown type {other}"),
     }

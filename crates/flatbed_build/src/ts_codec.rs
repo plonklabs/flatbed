@@ -49,6 +49,58 @@ impl<'a> Schema<'a> {
     fn scalar_fbs(&self, fbs: &'a str) -> &'a str {
         self.enum_underlying.get(fbs).copied().unwrap_or(fbs)
     }
+
+    /// The integer value of `variant` in enum `name` (0 if not found).
+    fn enum_value(&self, name: &str, variant: &str) -> i64 {
+        self.enums
+            .iter()
+            .find(|e| e.name == name)
+            .and_then(|e| {
+                e.variants
+                    .iter()
+                    .position(|v| v == variant)
+                    .map(|i| e.values[i])
+            })
+            .unwrap_or(0)
+    }
+}
+
+/// The FlatBuffer wire default a field is compared against (for encode's
+/// omit-if-equal) and the value it decodes to when absent, both as TS literals.
+///
+/// A declared default (`age: int = 25`) is honoured; otherwise the type's zero
+/// value is used. `Field.default` is a Rust literal, converted here to TS:
+/// `_f32`/`_f64` suffixes are stripped, a `bool` becomes `0`/`1` on the wire,
+/// and an `Enum::Variant` path becomes the variant's integer value.
+fn field_defaults(f: &Field, schema: &Schema) -> (String, String) {
+    let fbs = f.fbs_type.as_str();
+    let is64 = matches!(schema.scalar_fbs(fbs), "int64" | "uint64");
+    // `scalar().zero` is already `"0n"` for 64-bit ints, `"0"` otherwise.
+    let zero = scalar(schema.scalar_fbs(fbs)).zero;
+
+    match &f.default {
+        None if fbs == "bool" => ("0".into(), "false".into()),
+        None if schema.is_enum(fbs) => ("0".into(), "0".into()),
+        None => (zero.into(), zero.into()),
+        Some(lit) if schema.is_enum(fbs) => {
+            let variant = lit.rsplit("::").next().unwrap_or(lit);
+            let v = schema.enum_value(fbs, variant).to_string();
+            (v.clone(), v)
+        }
+        Some(lit) if fbs == "bool" => {
+            let b = lit == "true";
+            (if b { "1" } else { "0" }.into(), b.to_string())
+        }
+        Some(lit) => {
+            let num = lit.trim_end_matches("_f32").trim_end_matches("_f64");
+            let n = if is64 {
+                format!("{num}n")
+            } else {
+                num.to_string()
+            };
+            (n.clone(), n)
+        }
+    }
 }
 
 /// Generate the `(types.ts, codec.ts)` pair for a reflected schema.
@@ -160,7 +212,9 @@ export function encode{name}Root(value: {name}): Uint8Array {{\n\
   builder.finish(encode{name}(builder, value));\n\
   return builder.asUint8Array();\n\
 }}\n\n",
-        n = table.fields.len(),
+        // The vtable needs one slot per field id (not per field): a table with
+        // gapped explicit ids allocates up to `max id + 1` slots.
+        n = table.fields.iter().map(|f| f.id as usize + 1).max().unwrap_or(0),
     )
 }
 
@@ -192,12 +246,16 @@ fn encode_field(f: &Field, schema: &Schema) -> (String, String) {
     }
     // scalar / bool / enum
     let s = scalar(schema.scalar_fbs(fbs));
+    let (encode_default, _) = field_defaults(f, schema);
     let arg = if fbs == "bool" {
         format!("{val} ? 1 : 0")
     } else {
         val
     };
-    let add = format!("  builder.{}({id}, {arg}, {});\n", s.add_field, s.zero);
+    let add = format!(
+        "  builder.{}({id}, {arg}, {encode_default});\n",
+        s.add_field
+    );
     (String::new(), add)
 }
 
@@ -277,15 +335,19 @@ fn decode_field(f: &Field, schema: &Schema) -> String {
     if fbs == "string" {
         return format!("{o} ? (bb.__string(pos + {o}) as string) : undefined");
     }
+    let (_, absent_default) = field_defaults(f, schema);
     if fbs == "bool" {
-        return format!("{o} ? bb.readInt8(pos + {o}) !== 0 : false");
+        return format!("{o} ? bb.readInt8(pos + {o}) !== 0 : {absent_default}");
     }
     let s = scalar(schema.scalar_fbs(fbs));
     if schema.is_enum(fbs) {
         // Numeric enum: the wire integer is the enum value.
-        return format!("({o} ? bb.{}(pos + {o}) : 0) as {fbs}", s.read);
+        return format!(
+            "({o} ? bb.{}(pos + {o}) : {absent_default}) as {fbs}",
+            s.read
+        );
     }
-    format!("{o} ? bb.{}(pos + {o}) : {}", s.read, s.zero)
+    format!("{o} ? bb.{}(pos + {o}) : {absent_default}", s.read)
 }
 
 /// The TS expression reading the `i`-th element of a vector whose data starts
@@ -431,6 +493,76 @@ mod tests {
         assert!(codec
             .contains("const tagOffset = value.tag != null ? encodeTag(builder, value.tag) : 0;"));
         assert!(codec.contains("builder.finish(encodeItem(builder, value));"));
+    }
+
+    #[test]
+    fn codec_honours_declared_defaults() {
+        let mut tables = HashMap::new();
+        tables.insert(
+            "v".to_string(),
+            vec![Table {
+                name: "D".to_string(),
+                fields: vec![
+                    Field {
+                        name: "count".to_string(),
+                        fbs_type: "int32".to_string(),
+                        id: 0,
+                        default: Some("25".to_string()),
+                    },
+                    Field {
+                        name: "flag".to_string(),
+                        fbs_type: "bool".to_string(),
+                        id: 1,
+                        default: Some("true".to_string()),
+                    },
+                    Field {
+                        name: "level".to_string(),
+                        fbs_type: "Sev".to_string(),
+                        id: 2,
+                        default: Some("Sev::Warn".to_string()),
+                    },
+                ],
+            }],
+        );
+        let mut enums = HashMap::new();
+        enums.insert(
+            "v".to_string(),
+            vec![Enum {
+                name: "Sev".to_string(),
+                variants: vec!["Info".to_string(), "Warn".to_string()],
+                values: vec![0, 1],
+                underlying: "int8".to_string(),
+            }],
+        );
+        let (_, codec) = generate(&tables, &enums);
+        // Encode compares against the declared default (omit-if-equal).
+        assert!(codec.contains("builder.addFieldInt32(0, value.count, 25);"));
+        assert!(codec.contains("builder.addFieldInt8(1, value.flag ? 1 : 0, 1);")); // true -> 1
+        assert!(codec.contains("builder.addFieldInt8(2, value.level, 1);")); // Warn -> 1
+                                                                             // Decode restores the declared default when the field is absent.
+        assert!(codec.contains("count: count_o ? bb.readInt32(pos + count_o) : 25,"));
+        assert!(codec.contains("flag: flag_o ? bb.readInt8(pos + flag_o) !== 0 : true,"));
+        assert!(codec.contains("level: (level_o ? bb.readInt8(pos + level_o) : 1) as Sev,"));
+    }
+
+    #[test]
+    fn startobject_sizes_to_max_field_id() {
+        let mut tables = HashMap::new();
+        tables.insert(
+            "v".to_string(),
+            vec![Table {
+                name: "Gapped".to_string(),
+                fields: vec![Field {
+                    name: "x".to_string(),
+                    fbs_type: "int32".to_string(),
+                    id: 2,
+                    default: None,
+                }],
+            }],
+        );
+        let enums: EnumsByNamespace = HashMap::new();
+        let (_, codec) = generate(&tables, &enums);
+        assert!(codec.contains("builder.startObject(3);")); // slot for id 2 -> 3
     }
 
     #[test]
