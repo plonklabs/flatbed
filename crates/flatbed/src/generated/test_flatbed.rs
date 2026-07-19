@@ -111,6 +111,10 @@ pub mod test {
         }
     }
 
+    ::flatbed::inventory::submit! {
+        ::flatbed::EnumSchema { name: "Severity", namespace: "test", variants: &["Info", "Warning", "Error"] }
+    }
+
     #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
     #[serde(crate = "::flatbed::serde")]
     pub struct TestRequest {
@@ -244,6 +248,13 @@ pub mod test {
         type FlatBuffer<'a> = super::__fb::test::TestRequest<'a>;
     }
 
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "TestRequest", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "message", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "value", fbs_type: "uint64", field_id: 1, required: true },
+        ] }
+    }
+
     impl TestResponse {
         /// Convert this struct to FlatBuffer binary format
         pub fn to_flatbuffer(&self) -> Vec<u8> {
@@ -323,6 +334,14 @@ pub mod test {
     impl ::flatbed::HasPlainStruct for TestResponse {
         type Plain = TestResponse;
         type FlatBuffer<'a> = super::__fb::test::TestResponse<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "TestResponse", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "message", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "value", fbs_type: "uint64", field_id: 1, required: true },
+            ::flatbed::TypeFieldInfo { name: "success", fbs_type: "bool", field_id: 2, required: true },
+        ] }
     }
 
     impl Address {
@@ -407,6 +426,14 @@ pub mod test {
         type FlatBuffer<'a> = super::__fb::test::Address<'a>;
     }
 
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "Address", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "street", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "city", fbs_type: "string", field_id: 1, required: false },
+            ::flatbed::TypeFieldInfo { name: "zip_code", fbs_type: "int32", field_id: 2, required: true },
+        ] }
+    }
+
     impl UserRequest {
         /// Convert this struct to FlatBuffer binary format
         pub fn to_flatbuffer(&self) -> Vec<u8> {
@@ -487,6 +514,14 @@ pub mod test {
     impl ::flatbed::HasPlainStruct for UserRequest {
         type Plain = UserRequest;
         type FlatBuffer<'a> = super::__fb::test::UserRequest<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "UserRequest", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "name", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "age", fbs_type: "int32", field_id: 1, required: true },
+            ::flatbed::TypeFieldInfo { name: "address", fbs_type: "Address", field_id: 2, required: false },
+        ] }
     }
 
     impl UserResponse {
@@ -577,6 +612,15 @@ pub mod test {
     impl ::flatbed::HasPlainStruct for UserResponse {
         type Plain = UserResponse;
         type FlatBuffer<'a> = super::__fb::test::UserResponse<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "UserResponse", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "user_id", fbs_type: "uint64", field_id: 0, required: true },
+            ::flatbed::TypeFieldInfo { name: "name", fbs_type: "string", field_id: 1, required: false },
+            ::flatbed::TypeFieldInfo { name: "address", fbs_type: "Address", field_id: 2, required: false },
+            ::flatbed::TypeFieldInfo { name: "success", fbs_type: "bool", field_id: 3, required: true },
+        ] }
     }
 
     impl AddressBook {
@@ -675,6 +719,14 @@ pub mod test {
         type FlatBuffer<'a> = super::__fb::test::AddressBook<'a>;
     }
 
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "AddressBook", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "owner", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "addresses", fbs_type: "[Address]", field_id: 1, required: false },
+            ::flatbed::TypeFieldInfo { name: "contact_names", fbs_type: "[string]", field_id: 2, required: false },
+        ] }
+    }
+
     impl LogEvent {
         /// Convert this struct to FlatBuffer binary format
         pub fn to_flatbuffer(&self) -> Vec<u8> {
@@ -755,5 +807,13 @@ pub mod test {
     impl ::flatbed::HasPlainStruct for LogEvent {
         type Plain = LogEvent;
         type FlatBuffer<'a> = super::__fb::test::LogEvent<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "LogEvent", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "message", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "severity", fbs_type: "Severity", field_id: 1, required: true },
+            ::flatbed::TypeFieldInfo { name: "history", fbs_type: "[Severity]", field_id: 2, required: false },
+        ] }
     }
 }

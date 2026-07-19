@@ -238,6 +238,10 @@ fn generate_plain_struct_module(
         output.push('\n');
     }
 
+    for enum_def in enums {
+        generate_enum_schema_registration(output, enum_def, namespace);
+    }
+
     // Generate all plain structs first (forward declarations for nested references)
     for table in tables {
         generate_plain_struct(output, table, &table_names, &enum_names);
@@ -248,9 +252,52 @@ fn generate_plain_struct_module(
         generate_plain_struct_impl(output, table, namespace, &table_names);
         generate_default_impl(output, table);
         generate_flatbed_trait_impls(output, table, namespace, &table_names);
+        generate_type_schema_registration(output, table, namespace, &table_names);
     }
 
     output.push_str("}\n"); // close namespace module
+}
+
+/// Emit an `inventory::submit!` registering this table in the runtime type
+/// registry.
+fn generate_type_schema_registration(
+    output: &mut String,
+    table: &Table,
+    namespace: &str,
+    table_names: &[String],
+) {
+    output.push_str("    ::flatbed::inventory::submit! {\n");
+    output.push_str(&format!(
+        "        ::flatbed::TypeSchema {{ name: \"{}\", namespace: \"{}\", fields: &[\n",
+        table.name, namespace
+    ));
+    for field in &table.fields {
+        let required =
+            !is_optional_type(&field.fbs_type) && !is_table_type(&field.fbs_type, table_names);
+        output.push_str(&format!(
+            "            ::flatbed::TypeFieldInfo {{ name: \"{}\", fbs_type: \"{}\", field_id: {}, required: {} }},\n",
+            field.name, field.fbs_type, field.id, required
+        ));
+    }
+    output.push_str("        ] }\n");
+    output.push_str("    }\n\n");
+}
+
+/// Emit an `inventory::submit!` registering this enum in the runtime type
+/// registry. Variants are listed in FlatBuffer value order.
+fn generate_enum_schema_registration(output: &mut String, enum_def: &Enum, namespace: &str) {
+    let variants_csv = enum_def
+        .variants
+        .iter()
+        .map(|v| format!("\"{v}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    output.push_str("    ::flatbed::inventory::submit! {\n");
+    output.push_str(&format!(
+        "        ::flatbed::EnumSchema {{ name: \"{}\", namespace: \"{}\", variants: &[{}] }}\n",
+        enum_def.name, namespace, variants_csv
+    ));
+    output.push_str("    }\n\n");
 }
 
 /// Generate plain struct definition (4 spaces indent, inside namespace module).
@@ -587,6 +634,61 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
+    fn test_generate_flatbed_module_emits_type_and_enum_registry() {
+        // Every table and enum is registered into the runtime type registry
+        // via `inventory::submit!`, carrying the rich fbs_type and field id.
+        // A nested-only table (never a route body) must be registered too.
+        let mut schemas = HashMap::new();
+        schemas.insert(
+            "v_1".to_string(),
+            vec![
+                Table {
+                    name: "Address".to_string(),
+                    fields: vec![Field {
+                        name: "zip".to_string(),
+                        fbs_type: "int32".to_string(),
+                        default: None,
+                        id: 0,
+                    }],
+                },
+                Table {
+                    name: "User".to_string(),
+                    fields: vec![Field {
+                        name: "home".to_string(),
+                        fbs_type: "Address".to_string(),
+                        default: None,
+                        id: 3,
+                    }],
+                },
+            ],
+        );
+        let mut enums = HashMap::new();
+        enums.insert(
+            "v_1".to_string(),
+            vec![Enum {
+                name: "Severity".to_string(),
+                variants: vec!["Info".to_string(), "Error".to_string()],
+            }],
+        );
+        let module = generate_flatbed_module(&schemas, &enums, "test");
+
+        // Enum registration.
+        assert!(module.contains(
+            "::flatbed::EnumSchema { name: \"Severity\", namespace: \"v_1\", variants: &[\"Info\", \"Error\"] }"
+        ));
+        // Nested-only table registered, with the real field id preserved.
+        assert!(module.contains("::flatbed::TypeSchema { name: \"Address\", namespace: \"v_1\""));
+        assert!(module.contains(
+            "::flatbed::TypeFieldInfo { name: \"zip\", fbs_type: \"int32\", field_id: 0, required: true }"
+        ));
+        // A table reference is not required (optional at the wire level) and
+        // carries its explicit field id.
+        assert!(module.contains(
+            "::flatbed::TypeFieldInfo { name: \"home\", fbs_type: \"Address\", field_id: 3, required: false }"
+        ));
+    }
+
+    #[test]
     fn test_generate_flatbed_module_versioned() {
         let mut schemas: HashMap<String, Vec<Table>> = HashMap::new();
         schemas.insert(
@@ -597,6 +699,7 @@ mod tests {
                     name: "value".to_string(),
                     fbs_type: "string".to_string(),
                     default: None,
+                    ..Default::default()
                 }],
             }],
         );
@@ -634,6 +737,7 @@ mod tests {
                         name: "city".to_string(),
                         fbs_type: "string".to_string(),
                         default: None,
+                        ..Default::default()
                     }],
                 },
                 Table {
@@ -642,6 +746,7 @@ mod tests {
                         name: "entries".to_string(),
                         fbs_type: "[Address]".to_string(),
                         default: None,
+                        ..Default::default()
                     }],
                 },
             ],
@@ -668,6 +773,7 @@ mod tests {
                     name: "values".to_string(),
                     fbs_type: "[int32]".to_string(),
                     default: None,
+                    ..Default::default()
                 }],
             }],
         );
@@ -689,6 +795,7 @@ mod tests {
                     name: "endpoints".to_string(),
                     fbs_type: "[string]".to_string(),
                     default: None,
+                    ..Default::default()
                 }],
             }],
         );
@@ -732,16 +839,19 @@ mod tests {
                         name: "name".to_string(),
                         fbs_type: "string".to_string(),
                         default: None,
+                        ..Default::default()
                     },
                     Field {
                         name: "port".to_string(),
                         fbs_type: "uint16".to_string(),
                         default: None,
+                        ..Default::default()
                     },
                     Field {
                         name: "protocol".to_string(),
                         fbs_type: "BoxProtocol".to_string(),
                         default: None,
+                        ..Default::default()
                     },
                 ],
             }],
@@ -817,11 +927,13 @@ mod tests {
                             name: "port".to_string(),
                             fbs_type: "uint16".to_string(),
                             default: Some("8080".to_string()),
+                            ..Default::default()
                         },
                         Field {
                             name: "retries".to_string(),
                             fbs_type: "int32".to_string(),
                             default: None,
+                            ..Default::default()
                         },
                     ],
                 },
@@ -831,6 +943,7 @@ mod tests {
                         name: "value".to_string(),
                         fbs_type: "uint16".to_string(),
                         default: None,
+                        ..Default::default()
                     }],
                 },
             ],
@@ -866,6 +979,7 @@ mod tests {
                     name: "history".to_string(),
                     fbs_type: "[Severity]".to_string(),
                     default: None,
+                    ..Default::default()
                 }],
             }],
         );

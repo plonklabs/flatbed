@@ -368,6 +368,8 @@ impl Flatbed {
 
         // Validate routes (fails fast on conflicts)
         crate::validate_routes().map_err(|e| Error::Custom(format!("Route conflict: {}", e)))?;
+        crate::validate_type_registry()
+            .map_err(|e| Error::Custom(format!("Type registry conflict: {}", e)))?;
 
         // Build router from inventory-registered routes
         let router = Arc::new(hyper::build_router());
@@ -442,6 +444,47 @@ pub struct SchemaInfo {
     pub name: &'static str,
     pub fields: &'static [FieldInfo],
 }
+
+/// A generated FlatBuffer table, registered at compile time so the full set
+/// of types is discoverable at runtime.
+///
+/// One is submitted for *every* generated table — including tables that only
+/// ever appear nested inside another and never as a route body — so the
+/// registry is a complete inventory of the generated types. `name` is the bare
+/// type name (the key routes use to reference their request/response types);
+/// `namespace` is the FlatBuffer namespace (`"v_1"`, `"test"`).
+#[derive(Clone, Copy, Debug)]
+pub struct TypeSchema {
+    pub name: &'static str,
+    pub namespace: &'static str,
+    pub fields: &'static [TypeFieldInfo],
+}
+
+/// A single field of a registered [`TypeSchema`].
+///
+/// `fbs_type` is the rich adapter-language string (`"uint64"`, `"[Address]"`,
+/// `"Severity"`) — enough to recover the exact wire shape. `field_id` is the
+/// FlatBuffer vtable slot; `required` is false for wire-optional fields
+/// (strings, tables, vectors) and true for scalars and enums.
+#[derive(Clone, Copy, Debug)]
+pub struct TypeFieldInfo {
+    pub name: &'static str,
+    pub fbs_type: &'static str,
+    pub field_id: u16,
+    pub required: bool,
+}
+
+/// A generated FlatBuffer enum, registered at compile time alongside
+/// [`TypeSchema`]. `variants` are listed in FlatBuffer value order.
+#[derive(Clone, Copy, Debug)]
+pub struct EnumSchema {
+    pub name: &'static str,
+    pub namespace: &'static str,
+    pub variants: &'static [&'static str],
+}
+
+inventory::collect!(TypeSchema);
+inventory::collect!(EnumSchema);
 
 // ============================================================================
 // Trait Definitions for JSON Companion Types
@@ -1823,6 +1866,102 @@ pub fn get_routes() -> &'static RouteMap {
     &ROUTES
 }
 
+/// Look up a registered [`TypeSchema`] by its bare type name.
+///
+/// Names are keyed bare (without the namespace), matching how routes reference
+/// their request/response types. A bare name is therefore assumed unique across
+/// namespaces; [`validate_type_registry`] enforces that at startup.
+pub fn get_type_schema(name: &str) -> Option<&'static TypeSchema> {
+    static MAP: LazyLock<HashMap<&'static str, &'static TypeSchema>> = LazyLock::new(|| {
+        let mut map = HashMap::new();
+        for ty in inventory::iter::<TypeSchema> {
+            map.insert(ty.name, ty);
+        }
+        map
+    });
+    MAP.get(name).copied()
+}
+
+/// Look up a registered [`EnumSchema`] by its bare name.
+///
+/// Names are keyed bare (without the namespace); a bare name is assumed unique
+/// across namespaces, which [`validate_type_registry`] enforces at startup.
+pub fn get_enum_schema(name: &str) -> Option<&'static EnumSchema> {
+    static MAP: LazyLock<HashMap<&'static str, &'static EnumSchema>> = LazyLock::new(|| {
+        let mut map = HashMap::new();
+        for en in inventory::iter::<EnumSchema> {
+            map.insert(en.name, en);
+        }
+        map
+    });
+    MAP.get(name).copied()
+}
+
+/// A bare name registered under two different namespaces in the type registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeConflict {
+    pub name: String,
+    pub first_namespace: String,
+    pub second_namespace: String,
+    /// `"type"` or `"enum"` — which registry the collision is in.
+    pub kind: &'static str,
+}
+
+impl std::fmt::Display for TypeConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} name conflict: '{}' is registered in both namespace '{}' and '{}'",
+            self.kind, self.name, self.first_namespace, self.second_namespace
+        )
+    }
+}
+
+impl std::error::Error for TypeConflict {}
+
+/// Validate that every registered type and enum has a unique bare name.
+///
+/// [`get_type_schema`] and [`get_enum_schema`] key on the bare name, so two
+/// same-named types in different namespaces shadow each other in the lookup —
+/// and anything built from the registry would silently use whichever won the
+/// insert race. This surfaces the collision as an error instead, at startup
+/// before the server binds.
+pub fn validate_type_registry() -> Result<(), TypeConflict> {
+    let types = inventory::iter::<TypeSchema>
+        .into_iter()
+        .map(|t| (t.name, t.namespace));
+    find_name_collision("type", types)?;
+    let enums = inventory::iter::<EnumSchema>
+        .into_iter()
+        .map(|e| (e.name, e.namespace));
+    find_name_collision("enum", enums)?;
+    Ok(())
+}
+
+/// Return a [`TypeConflict`] if the same bare name appears under two different
+/// namespaces in `entries` (`(name, namespace)` pairs). Repeats of an
+/// identical `(name, namespace)` are not a conflict — only a name shared
+/// across namespaces is, since that's what makes a bare-name lookup ambiguous.
+fn find_name_collision<'a>(
+    kind: &'static str,
+    entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Result<(), TypeConflict> {
+    let mut seen: HashMap<&str, &str> = HashMap::new();
+    for (name, namespace) in entries {
+        if let Some(prev) = seen.insert(name, namespace) {
+            if prev != namespace {
+                return Err(TypeConflict {
+                    name: name.to_string(),
+                    first_namespace: prev.to_string(),
+                    second_namespace: namespace.to_string(),
+                    kind,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Validate that all routes are unique (no duplicate paths)
 ///
 /// Returns Ok(()) if all routes are valid, or Err with the first conflict found.
@@ -2456,6 +2595,31 @@ mod tests {
     // ========================================================================
     // FlatbedConfig tests
     // ========================================================================
+
+    #[test]
+    fn find_name_collision_flags_same_name_across_namespaces() {
+        let entries = [("Foo", "v_1"), ("Bar", "v_1"), ("Foo", "v_2")];
+        let err = find_name_collision("type", entries)
+            .expect_err("a name shared across namespaces must be a conflict");
+        assert_eq!(err.name, "Foo");
+        assert_eq!(err.kind, "type");
+        assert_eq!(err.first_namespace, "v_1");
+        assert_eq!(err.second_namespace, "v_2");
+    }
+
+    #[test]
+    fn find_name_collision_accepts_unique_names() {
+        let entries = [("Foo", "v_1"), ("Bar", "v_1"), ("Baz", "v_2")];
+        assert!(find_name_collision("type", entries).is_ok());
+    }
+
+    #[test]
+    fn find_name_collision_ignores_identical_reregistration() {
+        // The same (name, namespace) appearing twice is a harmless duplicate,
+        // not an ambiguous lookup — only a name split across namespaces is.
+        let entries = [("Foo", "v_1"), ("Foo", "v_1")];
+        assert!(find_name_collision("enum", entries).is_ok());
+    }
 
     #[test]
     fn test_flatbed_config_new() {
