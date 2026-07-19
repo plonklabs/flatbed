@@ -116,9 +116,18 @@ pub(crate) fn check_unique_method_names(ops: &[FbOperation]) -> Result<(), Strin
     for op in ops {
         let name = method_name(op);
         let sig = format!("{} {}", op.method, op.path);
+        // A method that encodes a request takes a trailing `body` argument, so a
+        // path param sanitizing to `body` would be a duplicate argument.
+        let has_body = effective_request_type(op).is_some();
         let mut seen_params: BTreeSet<String> = BTreeSet::new();
         for param in path_params(&op.path) {
             let ident = param_ident(&param);
+            if has_body && ident == "body" {
+                return Err(format!(
+                    "operation `{sig}` has a path parameter `{param}` that maps to the argument \
+                     name `body`, which is the request-body argument — rename it in the spec"
+                ));
+            }
             if !seen_params.insert(ident.clone()) {
                 return Err(format!(
                     "operation `{sig}` has two path parameters that map to the argument name \
@@ -509,6 +518,17 @@ mod tests {
         let ops = [op("GET", "/users/{id}/posts/{id}", None, Some("Post"))];
         let err = check_unique_method_names(&ops).expect_err("duplicate param must fail");
         assert!(err.contains("`id`"), "message: {err}");
+    }
+
+    #[test]
+    fn body_path_param_collides_with_request_body_only_with_a_body() {
+        // With a request type the method takes a `body` argument, so a `{body}`
+        // path param is a collision; without one (GET), it's fine.
+        let with_body = [op("POST", "/x/{body}", Some("Req"), Some("Res"))];
+        let err = check_unique_method_names(&with_body).expect_err("body collision must fail");
+        assert!(err.contains("request-body argument"), "message: {err}");
+        let no_body = [op("GET", "/x/{body}", None, Some("Res"))];
+        assert!(check_unique_method_names(&no_body).is_ok());
     }
 
     #[test]
