@@ -18,6 +18,64 @@ const CONTENT_TYPE: &str = "application/x-flatbuffers";
 /// duplicate-identifier error.
 const RESERVED_METHOD_NAMES: &[&str] = &["constructor", "options", "request"];
 
+/// Reserved words TypeScript rejects as a binding name inside a generated
+/// `async` method — an argument named one of these fails to parse. Verified
+/// against `tsc --strict`; contextual keywords (`type`, `interface`, `get`,
+/// `let`, `catch`, …) are legal argument names and deliberately absent.
+const TS_KEYWORDS: &[&str] = &[
+    "await",
+    "break",
+    "case",
+    "class",
+    "const",
+    "continue",
+    "debugger",
+    "default",
+    "delete",
+    "do",
+    "else",
+    "enum",
+    "export",
+    "extends",
+    "false",
+    "finally",
+    "for",
+    "function",
+    "if",
+    "import",
+    "in",
+    "instanceof",
+    "new",
+    "null",
+    "return",
+    "super",
+    "switch",
+    "throw",
+    "true",
+    "try",
+    "typeof",
+    "var",
+    "void",
+    "while",
+    "with",
+];
+
+/// A path parameter rendered as a valid TypeScript identifier for the generated
+/// method. The name is a pure local — the method argument and the URL-template
+/// interpolation, never part of the wire contract — so it can be adjusted
+/// freely: a reserved word gets a trailing `_`, and a name that isn't a valid
+/// identifier (empty or digit-leading like `2fa`) gets a leading `_`.
+fn param_ident(param: &str) -> String {
+    let base = camel_case(param);
+    if TS_KEYWORDS.contains(&base.as_str()) {
+        format!("{base}_")
+    } else if is_valid_ts_identifier(&base) {
+        base
+    } else {
+        format!("_{base}")
+    }
+}
+
 /// Whether `name` is a valid TypeScript identifier: non-empty, starting with a
 /// letter, `_`, or `$`, and otherwise made of letters, digits, `_`, or `$`. A
 /// derived name that isn't (empty, or digit-leading like `1start`) would emit a
@@ -117,11 +175,11 @@ fn method(op: &FbOperation) -> String {
     let name = method_name(op);
     let params = path_params(&op.path);
 
-    // Path-param names can contain characters (e.g. `-`) that aren't valid JS
-    // identifiers, so the argument uses a camelCased form.
+    // Path-param names can be non-identifiers (`item-id`) or reserved words
+    // (`type`), so the argument uses a sanitized identifier form.
     let mut args: Vec<String> = params
         .iter()
-        .map(|p| format!("{}: string", camel_case(p)))
+        .map(|p| format!("{}: string", param_ident(p)))
         .collect();
     let ret_type = response_type(op);
     let body_expr = match effective_request_type(op) {
@@ -141,7 +199,7 @@ fn method(op: &FbOperation) -> String {
     } else {
         let mut tmpl = op.path.clone();
         for p in &params {
-            tmpl = tmpl.replace(&format!("{{{p}}}"), &format!("${{{}}}", camel_case(p)));
+            tmpl = tmpl.replace(&format!("{{{p}}}"), &format!("${{{}}}", param_ident(p)));
         }
         format!("`{tmpl}`")
     };
@@ -320,6 +378,30 @@ mod tests {
         let client = generate(&[op("GET", "/items/{item-id}", None, Some("Item"))]);
         assert!(client.contains("async getItemsByItemId(itemId: string): Promise<Item> {"));
         assert!(client.contains("`/items/${itemId}`"));
+    }
+
+    #[test]
+    fn reserved_word_path_param_is_sanitized() {
+        // `class` is a reserved argument name; the local gets a trailing `_`, but
+        // the derived method name keeps its `By{Segment}` form.
+        let client = generate(&[op("GET", "/items/{class}", None, Some("Item"))]);
+        assert!(client.contains("async getItemsByClass(class_: string): Promise<Item> {"));
+        assert!(client.contains("`/items/${class_}`"));
+    }
+
+    #[test]
+    fn digit_leading_path_param_is_sanitized() {
+        let client = generate(&[op("GET", "/mfa/{2fa}", None, Some("Mfa"))]);
+        assert!(client.contains("async getMfaBy2fa(_2fa: string): Promise<Mfa> {"));
+        assert!(client.contains("`/mfa/${_2fa}`"));
+    }
+
+    #[test]
+    fn non_get_with_response_only_emits_codec_and_no_body() {
+        let client = generate(&[op("DELETE", "/users/{id}", None, Some("User"))]);
+        assert!(client.contains("import * as codec"));
+        assert!(client.contains("async deleteUsersById(id: string): Promise<User> {"));
+        assert!(client.contains("new Uint8Array(), codec.decodeUserRoot"));
     }
 
     #[test]
