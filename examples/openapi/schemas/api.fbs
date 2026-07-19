@@ -1,5 +1,15 @@
 namespace api;
 
+enum Priority : byte {
+  Low,
+  Medium,
+  High,
+}
+
+table Tag {
+  label: string;
+}
+
 table GreetRequest {
   name: string;
 }
@@ -11,6 +21,8 @@ table GreetResponse {
 table EchoRequest {
   message: string;
   times: uint32;
+  priority: Priority;
+  tags: [Tag];
 }
 
 table EchoResponse {
