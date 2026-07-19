@@ -68,9 +68,8 @@ table LogEvent {
   history: [Severity];
 }
 
-// Every field carries a non-zero default. A value equal to its default is
-// omitted on the wire, so a decoder must restore the declared default rather
-// than the type's zero.
+// A value equal to its declared default is omitted on the wire, so a decoder
+// must restore the declared default rather than the type's zero.
 table Defaulted {
   count: int = 25;
   flag: bool = true;

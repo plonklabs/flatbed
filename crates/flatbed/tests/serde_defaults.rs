@@ -1,7 +1,8 @@
 //! A generated table with declared field defaults must deserialise a missing
 //! field to its *declared* default — including an enum field whose default is a
-//! non-zero variant, which container-level `#[serde(default)]` handles and
-//! field-level `default` would get wrong (it would use the enum's zero variant).
+//! non-zero variant. The codegen emits a named `default = "…"` fn per such
+//! field; a bare field-level `default` would instead give the enum's zero
+//! variant, and a container-level default trips utoipa's `ToSchema`.
 
 #[path = "../src/generated/test_flatbed.rs"]
 #[allow(warnings, clippy::all)]

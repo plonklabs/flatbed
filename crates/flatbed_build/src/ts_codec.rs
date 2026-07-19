@@ -7,9 +7,16 @@
 //! offsets, then the table), and vectors are appended in reverse because the
 //! FlatBuffer builder writes back-to-front.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::reflection::{Enum, EnumsByNamespace, Field, Table, TablesByNamespace};
+
+/// A `HashMap`'s values in ascending key order, so emission is deterministic.
+fn sorted_by_key<V>(map: &HashMap<String, V>) -> Vec<&V> {
+    let mut entries: Vec<_> = map.iter().collect();
+    entries.sort_by(|a, b| a.0.cmp(b.0));
+    entries.into_iter().map(|(_, v)| v).collect()
+}
 
 /// Everything the emitters need to classify an `fbs_type` string, gathered once
 /// from the reflected schema.
@@ -23,8 +30,11 @@ struct Schema<'a> {
 
 impl<'a> Schema<'a> {
     fn new(tables: &'a TablesByNamespace, enums: &'a EnumsByNamespace) -> Self {
-        let tables: Vec<&Table> = tables.values().flatten().collect();
-        let enums: Vec<&Enum> = enums.values().flatten().collect();
+        // Iterate namespaces in a stable order — the maps are `HashMap`s, so
+        // otherwise the emitted type order would vary run to run. Within a
+        // namespace the reflected order is already source order.
+        let tables: Vec<&Table> = sorted_by_key(tables).into_iter().flatten().collect();
+        let enums: Vec<&Enum> = sorted_by_key(enums).into_iter().flatten().collect();
         let table_names = tables.iter().map(|t| t.name.as_str()).collect();
         let enum_underlying = enums
             .iter()

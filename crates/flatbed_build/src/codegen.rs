@@ -324,9 +324,10 @@ fn generate_plain_struct(
     // to that default, not the type's zero. Container-level `#[serde(default)]`
     // can't be used here — utoipa's `ToSchema` would try to serialise the whole
     // default struct, and the flatc enum isn't `Serialize` — so each defaulted
-    // field points at its own named `default = "…"` function instead.
-    let default_fn =
-        |field: &Field| format!("default_{}_{}", table.name.to_lowercase(), field.name);
+    // field points at its own named `default = "…"` function instead. The table
+    // name keeps its original case so its boundary with the snake_case field
+    // name can't collapse into a different table's fn name.
+    let default_fn = |field: &Field| format!("default_{}_{}", table.name, field.name);
     for field in &table.fields {
         if let Some(lit) = &field.default {
             let rust_type = fbs_type_to_rust_type(&field.fbs_type, table_names, enum_names);
@@ -1024,9 +1025,9 @@ mod tests {
 
         // A named default fn returns the declared variant, and the field points
         // at it (not the bare `default`, which resolves to the zero variant).
-        assert!(module.contains("fn default_cfg_mode() -> Level { Level::Warn }"));
+        assert!(module.contains("fn default_Cfg_mode() -> Level { Level::Warn }"));
         assert!(
-            module.contains("#[serde(with = \"_level_serde\", default = \"default_cfg_mode\")]")
+            module.contains("#[serde(with = \"_level_serde\", default = \"default_Cfg_mode\")]")
         );
         assert!(!module.contains("#[serde(with = \"_level_serde\", default)]"));
         // The container is not forced to `default` (utoipa's ToSchema can't
