@@ -134,7 +134,6 @@ fn nested_table_field_is_allof_ref_with_extensions() {
 #[test]
 fn scalar_field_carries_format_and_extensions() {
     let s = spec();
-    // UserResponse.user_id is uint64 → integer / int64.
     let uid = &s["components"]["schemas"]["UserResponse"]["properties"]["user_id"];
     assert_eq!(uid["type"].as_str(), Some("integer"));
     assert_eq!(uid["format"].as_str(), Some("int64"));
@@ -179,7 +178,6 @@ fn operation_body_references_component_and_keeps_both_content_types() {
         post["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].as_str(),
         Some("#/components/schemas/UserResponse")
     );
-    // The FlatBuffer content entry is retained alongside JSON.
     assert!(post["requestBody"]["content"]["application/x-flatbuffers"].is_object());
     assert!(post["responses"]["200"]["content"]["application/x-flatbuffers"].is_object());
 }
@@ -187,10 +185,7 @@ fn operation_body_references_component_and_keeps_both_content_types() {
 #[test]
 fn unregistered_response_type_is_inlined_not_a_dangling_ref() {
     let s = spec();
-    // HandWritten is not generated, so it is not a component...
     assert!(s["components"]["schemas"].get("HandWritten").is_none());
-    // ...and its route inlines the schema rather than emitting a $ref that
-    // nothing would resolve.
     let schema =
         &s["paths"]["/notify"]["post"]["responses"]["200"]["content"]["application/json"]["schema"];
     assert_eq!(schema["type"].as_str(), Some("object"));

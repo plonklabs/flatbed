@@ -432,16 +432,21 @@ impl Flatbed {
 /// Schema field info for OpenAPI generation
 #[derive(Clone, Copy, Debug)]
 pub struct FieldInfo {
+    /// Field name as declared in the `.fbs` schema.
     pub name: &'static str,
     /// Adapter-language FlatBuffer type (`"uint64"`, `"[Address]"`, `"Severity"`).
     pub fbs_type: &'static str,
+    /// True for scalars and enums; false for strings, tables and vectors,
+    /// which are optional on the wire.
     pub required: bool,
 }
 
 /// Schema information
 #[derive(Clone, Copy, Debug)]
 pub struct SchemaInfo {
+    /// Bare type name, used as the OpenAPI component key.
     pub name: &'static str,
+    /// The type's fields, in declaration order.
     pub fields: &'static [FieldInfo],
 }
 
@@ -2058,8 +2063,7 @@ mod openapi_generation {
         fbs
     }
 
-    /// The bare names of every registered table and enum, used to classify an
-    /// `fbs_type` string as a scalar, a table reference, or an enum reference.
+    /// Bare names of every registered table and enum (types, then enums).
     fn registered_names() -> (BTreeSet<&'static str>, BTreeSet<&'static str>) {
         let types = crate::inventory::iter::<TypeSchema>
             .into_iter()
@@ -2099,10 +2103,9 @@ mod openapi_generation {
         Schema::Object(builder.extensions(extensions).build())
     }
 
-    /// Schema for a bare `fbs_type` string, without field-level extensions: an
-    /// array for `[T]`, a `$ref` for a registered table or enum, a scalar
-    /// object otherwise. Used for array elements and for inlined bodies of
-    /// types that have no registered component.
+    /// Schema for a bare `fbs_type`, carrying no field-level extensions (unlike
+    /// a field's own schema): an array for `[T]`, a `$ref` for a registered
+    /// table or enum, a scalar object otherwise.
     fn schema_for_fbs_type(
         fbs_type: &str,
         type_names: &BTreeSet<&str>,
@@ -2205,8 +2208,8 @@ mod openapi_generation {
         }
     }
 
-    /// The `application/x-flatbuffers` content entry: opaque binary, with the
-    /// table's `.fbs` text embedded in the description for human readers.
+    /// The `application/x-flatbuffers` content entry. The `.fbs` text rides in
+    /// the description because the binary body is otherwise opaque to readers.
     fn flatbuffers_content(schema: Option<&SchemaInfo>) -> Content {
         ContentBuilder::new()
             .schema(Some(Schema::Object(
@@ -2222,11 +2225,9 @@ mod openapi_generation {
             .build()
     }
 
-    /// JSON content for a route body: a `$ref` to the shared component when the
-    /// body is a generated (registered) type, an inlined object built from the
-    /// route's field info otherwise (a bodyless `()` or a hand-written
-    /// `ToFlatBuffer` that never registered a component), and empty content when
-    /// there is no typed body.
+    /// JSON content for a route body. Generated types reference their shared
+    /// component by `$ref`; a hand-written `ToFlatBuffer` that never registered
+    /// a component is inlined instead, so the `$ref` never dangles.
     fn json_ref_content(
         schema: Option<&SchemaInfo>,
         type_names: &BTreeSet<&str>,
@@ -2244,9 +2245,8 @@ mod openapi_generation {
         content.build()
     }
 
-    /// Flat object schema built directly from a route's [`SchemaInfo`], for
-    /// body types absent from the component registry. Nested tables and enums
-    /// still resolve by `$ref` where those are registered.
+    /// Inline object schema for a body type with no registered component;
+    /// nested tables and enums still resolve by `$ref` where registered.
     fn inline_schema(
         schema: &SchemaInfo,
         type_names: &BTreeSet<&str>,
