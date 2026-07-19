@@ -25,8 +25,7 @@ pub enum SpecSource {
 }
 
 /// An operation that advertises the `application/x-flatbuffers` content type.
-/// `operation_id` is the spec's `operationId` when present (used to name the
-/// generated client method, else it's derived from the method and path).
+/// `operation_id` is the spec's `operationId`, `None` when the spec omits it.
 /// `request_type`/`response_type` are the bare component names of the JSON
 /// request/response schemas, `None` when that body is absent or inlined rather
 /// than referenced by `$ref`.
@@ -313,6 +312,7 @@ mod tests {
             }}}
         });
         let ops = fb_operations(&spec);
+        assert_eq!(ops.len(), 1);
         assert_eq!(ops[0].operation_id.as_deref(), Some("createUser"));
     }
 

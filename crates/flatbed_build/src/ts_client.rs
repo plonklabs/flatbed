@@ -356,8 +356,10 @@ const REQUEST_METHOD: &str = "  private async request<T>(
   ): Promise<T> {
     const fetchImpl = this.options.fetch ?? globalThis.fetch;
     const init: RequestInit = { method, headers: { accept: CONTENT_TYPE } };
-    // Browser `fetch` rejects a body on GET/HEAD, so never attach one there.
-    if (method !== \"GET\" && method !== \"HEAD\" && body.length > 0) {
+    // GET/HEAD carry no body (browser `fetch` rejects it). Every other method
+    // sends a Content-Type even when the body is empty — the server rejects a
+    // POST/PUT/PATCH without one (415), regardless of body length.
+    if (method !== \"GET\" && method !== \"HEAD\") {
       (init.headers as Record<string, string>)[\"content-type\"] = CONTENT_TYPE;
       init.body = body as BodyInit;
     }
@@ -472,12 +474,21 @@ mod tests {
     }
 
     #[test]
-    fn get_never_attaches_a_body() {
+    fn request_helper_attaches_content_type_by_method_not_body_length() {
+        // GET/HEAD never attach a body; every other method attaches a
+        // Content-Type even with an empty body, so a POST with only a response
+        // type isn't rejected by the server's 415 gate.
         let client = generate(&[op("GET", "/health", None, Some("Health"))]);
         assert!(client.contains("async getHealth(): Promise<Health> {"));
-        assert!(
-            client.contains("if (method !== \"GET\" && method !== \"HEAD\" && body.length > 0) {")
-        );
+        assert!(client.contains("if (method !== \"GET\" && method !== \"HEAD\") {"));
+        assert!(!client.contains("body.length"));
+    }
+
+    #[test]
+    fn post_with_response_type_only_sends_empty_body() {
+        let client = generate(&[op("POST", "/refresh", None, Some("State"))]);
+        assert!(client.contains("async postRefresh(): Promise<State> {"));
+        assert!(client.contains("new Uint8Array(), codec.decodeStateRoot"));
     }
 
     #[test]
