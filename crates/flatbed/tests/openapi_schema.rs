@@ -33,7 +33,6 @@ struct HandWritten {
 impl flatbed::ToFlatBuffer for HandWritten {
     const SCHEMA_FIELDS: &'static [flatbed::FieldInfo] = &[flatbed::FieldInfo {
         name: "note",
-        field_type: "string",
         fbs_type: "string",
         required: false,
     }];
@@ -154,6 +153,8 @@ fn vector_field_is_array_of_ref_with_extensions() {
         Some("#/components/schemas/Address")
     );
     assert_eq!(addresses["x-fbs-type"].as_str(), Some("[Address]"));
+    // `addresses` is the second field of AddressBook (owner=0, addresses=1).
+    assert_eq!(addresses["x-fbs-id"].as_u64(), Some(1));
 }
 
 #[test]

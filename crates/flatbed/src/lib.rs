@@ -433,8 +433,8 @@ impl Flatbed {
 #[derive(Clone, Copy, Debug)]
 pub struct FieldInfo {
     pub name: &'static str,
-    pub field_type: &'static str, // "string", "integer", "boolean", "number"
-    pub fbs_type: &'static str,   // Original FBS type for description
+    /// Adapter-language FlatBuffer type (`"uint64"`, `"[Address]"`, `"Severity"`).
+    pub fbs_type: &'static str,
     pub required: bool,
 }
 
@@ -2099,8 +2099,8 @@ mod openapi_generation {
 
     /// Schema for a bare `fbs_type` string, without field-level extensions: an
     /// array for `[T]`, a `$ref` for a registered table or enum, a scalar
-    /// object otherwise. Used for array elements and for inlined fallback
-    /// bodies (see [`json_ref_content`]).
+    /// object otherwise. Used for array elements and for inlined bodies of
+    /// types that have no registered component.
     fn schema_for_fbs_type(
         fbs_type: &str,
         type_names: &BTreeSet<&str>,
@@ -2264,8 +2264,8 @@ mod openapi_generation {
     }
 
     /// Build an OpenAPI operation from a route. Generated bodies reference the
-    /// shared component schemas by `$ref`; components are registered once by
-    /// [`add_type_components`].
+    /// shared component schemas by `$ref`; those components are registered once,
+    /// up front, when the spec is assembled.
     fn build_operation(
         route: &RouteInfo,
         type_names: &BTreeSet<&str>,
