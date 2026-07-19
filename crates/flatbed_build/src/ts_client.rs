@@ -56,7 +56,6 @@ fn method(op: &FbOperation) -> String {
     };
     let decode = match &op.response_type {
         Some(res) => format!("codec.decode{res}Root"),
-        // No generated response type — hand back the raw bytes.
         None => "(bytes: Uint8Array) => bytes".to_string(),
     };
 
@@ -87,12 +86,9 @@ fn method_name(op: &FbOperation) -> String {
     }
     let mut name = op.method.to_lowercase();
     for seg in op.path.split('/').filter(|s| !s.is_empty()) {
-        let seg = seg.trim_start_matches('{').trim_end_matches('}');
-        let param = op.path.contains(&format!("{{{seg}}}"));
-        let word = if param {
-            format!("By{}", pascal(seg))
-        } else {
-            pascal(seg)
+        let word = match seg.strip_prefix('{').and_then(|s| s.strip_suffix('}')) {
+            Some(param) => format!("By{}", pascal(param)),
+            None => pascal(seg),
         };
         name.push_str(&word);
     }
@@ -239,8 +235,6 @@ mod tests {
     fn bodyless_get_sends_no_body() {
         let client = generate(&[op("GET", "/health", None, Some("Health"))]);
         assert!(client.contains("async getHealth(): Promise<Health> {"));
-        // the request helper only attaches a body/content-type when non-empty,
-        // so a GET (empty body) doesn't trip browser fetch's no-body rule
         assert!(client.contains("if (body.length > 0) {"));
     }
 

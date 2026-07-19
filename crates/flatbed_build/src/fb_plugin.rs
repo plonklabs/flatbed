@@ -297,6 +297,21 @@ mod tests {
     }
 
     #[test]
+    fn fb_operations_parses_operation_id() {
+        let spec = serde_json::json!({
+            "paths": { "/users": { "post": {
+                "operationId": "createUser",
+                "requestBody": { "content": {
+                    "application/json": { "schema": { "$ref": "#/components/schemas/UserRequest" } },
+                    "application/x-flatbuffers": { "schema": { "type": "string" } }
+                }}
+            }}}
+        });
+        let ops = fb_operations(&spec);
+        assert_eq!(ops[0].operation_id.as_deref(), Some("createUser"));
+    }
+
+    #[test]
     fn validate_passes_when_all_types_present() {
         let ops = fb_operations(&spec_json());
         let names: BTreeSet<String> = ["UserRequest", "UserResponse"]
