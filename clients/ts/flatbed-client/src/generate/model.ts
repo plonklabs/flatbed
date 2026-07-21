@@ -1,8 +1,7 @@
 /**
  * The wire-schema model the generators consume — a small, closed vocabulary
- * read from a served `.bfbs`. Each concern (types, codec, client) is a pure
- * function of this model, so adding a wire kind is one variant here plus one
- * case in each generator.
+ * read from a served `.bfbs`. Each generator (types, codec, client) is a pure
+ * function of this model.
  */
 
 /** A FlatBuffer scalar, named by its wire width. */
@@ -19,7 +18,7 @@ export type ScalarType =
   | "float32"
   | "float64";
 
-/** A field's wire type. A discriminated union: extend by adding a variant. */
+/** A field's wire type, as a discriminated union. */
 export type FbsType =
   | { readonly kind: "scalar"; readonly scalar: ScalarType }
   | { readonly kind: "string" }

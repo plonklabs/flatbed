@@ -34,6 +34,13 @@ export const generateFiles = ({ spec, bfbs }: GenerateInput): GeneratedFiles => 
   };
 };
 
+const ensureOk =
+  (what: string) =>
+  (r: Response): Response => {
+    if (!r.ok) throw new Error(`fetching ${what} failed: ${r.status} ${r.statusText}`);
+    return r;
+  };
+
 /** Fetch `/openapi.json` + `/schema.bfbs` from a running flatbed server. */
 export const fetchInput = (
   server: string,
@@ -41,8 +48,11 @@ export const fetchInput = (
 ): Promise<GenerateInput> => {
   const base = server.replace(/\/+$/, "");
   return Promise.all([
-    fetchImpl(`${base}/openapi.json`).then((r) => r.json() as Promise<unknown>),
+    fetchImpl(`${base}/openapi.json`)
+      .then(ensureOk("/openapi.json"))
+      .then((r) => r.json() as Promise<unknown>),
     fetchImpl(`${base}/schema.bfbs`)
+      .then(ensureOk("/schema.bfbs"))
       .then((r) => r.arrayBuffer())
       .then((b) => new Uint8Array(b)),
   ]).then(([spec, bfbs]) => ({ spec, bfbs }));

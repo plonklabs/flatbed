@@ -42,8 +42,6 @@ const defaults = (ctx: Ctx, f: FbsField): { readonly encode: string; readonly de
   return { encode: lit, decode: lit };
 };
 
-// -- encode -----------------------------------------------------------------
-
 /** A single-line IIFE building a vector of `element` from `expr`, back-to-front. */
 const buildVector = (ctx: Ctx, expr: string, element: FbsType): string => {
   if (element.kind === "table") {
@@ -99,8 +97,6 @@ const encodeTable = (ctx: Ctx, t: FbsTable): string => {
   );
 };
 
-// -- decode -----------------------------------------------------------------
-
 /** The TS expression reading the i-th vector element from `base`. */
 const decodeElement = (ctx: Ctx, element: FbsType): string => {
   if (element.kind === "table") return `decode${element.name}(bb, bb.__indirect(base + i * 4))`;
@@ -138,7 +134,6 @@ const decodeElementType = (t: FbsType): string => {
 
 const decodeTable = (ctx: Ctx, t: FbsTable): string => {
   const offsets = t.fields
-    // Widen before doubling: `id * 2` could overflow a 16-bit id at the top of the range.
     .map((f) => `  const ${f.name}_o = bb.__offset(pos, ${4 + f.id * 2});\n`)
     .join("");
   const fields = t.fields.map((f) => `    ${f.name}: ${decodeField(ctx, f)},\n`).join("");
