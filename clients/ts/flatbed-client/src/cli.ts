@@ -9,7 +9,6 @@ const flag = (name: string): string | undefined => {
   return i >= 0 ? process.argv[i + 1] : undefined;
 };
 
-/** Resolve the generator input from either a live server or local files. */
 const inputFrom = (): Promise<GenerateInput> => {
   const server = flag("server");
   const openapi = flag("openapi");

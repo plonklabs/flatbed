@@ -52,6 +52,12 @@ test("GET attaches neither a body nor a Content-Type", () =>
     assert.equal(sent.body, undefined);
   }));
 
+test("HEAD attaches neither a body nor a Content-Type", () =>
+  call(ok(), "HEAD", "/health", new Uint8Array([9])).then(({ sent }) => {
+    assert.equal(sent.headers["content-type"], undefined);
+    assert.equal(sent.body, undefined);
+  }));
+
 test("the Accept header is always application/x-flatbuffers", () =>
   call(ok(), "GET", "/health", new Uint8Array()).then(({ sent }) => {
     assert.equal(sent.headers.accept, "application/x-flatbuffers");

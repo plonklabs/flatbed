@@ -103,7 +103,8 @@ ABS_BFBS="$(pwd)/$BFBS"
 # The CLI runs from the package dir so its `tsx` loader resolves; inputs and
 # output are absolute since the cwd changes.
 ( cd "$PKG" && node --import tsx src/cli.ts generate \
-    --openapi "$WORK/empty.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >/dev/null )
+    --openapi "$WORK/empty.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >"$WORK/npm-gen.log" 2>&1 ) \
+  || { echo "npm codec generation failed:" >&2; cat "$WORK/npm-gen.log" >&2; exit 1; }
 # Only the codec + types drive the round-trip; client.ts/index.ts import the
 # published package and aren't needed here.
 cp "$WORK/npm/gen/codec.ts" "$WORK/npm/gen/types.ts" "$WORK/npm/src/"
