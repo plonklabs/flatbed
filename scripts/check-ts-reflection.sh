@@ -3,9 +3,11 @@
 #
 # The TS client reads a served `.bfbs` through FlatBuffer reflection bindings
 # vendored under clients/ts/flatbed-client/src/generate/fbs-reflection/. They're
-# `flatc --ts` output over the flatbuffers `reflection.fbs`, so they must be
+# `flatc --ts` output over the vendored `scripts/reflection.fbs`, so they must be
 # regenerable byte-for-byte from the pinned compiler; a drifted checkout would
-# silently parse `.bfbs` buffers against stale bindings.
+# silently parse `.bfbs` buffers against stale bindings. The `.fbs` source is
+# vendored (not fetched) so the check is hermetic — it re-drifts only when
+# `.flatc-version` is deliberately bumped, at which point both are regenerated.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -18,10 +20,7 @@ COMMITTED="clients/ts/flatbed-client/src/generate/fbs-reflection"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-curl -fsSL \
-  "https://raw.githubusercontent.com/google/flatbuffers/v${VER}/reflection/reflection.fbs" \
-  -o "$tmp/reflection.fbs"
-flatc --ts --gen-all -o "$tmp/gen" "$tmp/reflection.fbs"
+flatc --ts --gen-all -o "$tmp/gen" scripts/reflection.fbs
 
 if ! diff -r "$tmp/gen" "$COMMITTED" >/dev/null; then
   echo "error: committed reflection bindings in $COMMITTED are out of date for flatc v$VER." >&2
