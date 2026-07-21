@@ -124,10 +124,18 @@ export const readBfbs = (bytes: Uint8Array): FbsSchema => {
     throw new Error("not a FlatBuffer reflection schema: missing 'BFBS' magic identifier");
   }
   const schema = Schema.getRootAsSchema(bb);
-  return {
-    tables: times(schema.objectsLength(), (i) => schema.objects(i)!)
-      .filter((obj) => !obj.isStruct())
-      .map(readTable(schema)),
-    enums: times(schema.enumsLength(), (i) => schema.enums(i)!).map(readEnum),
-  };
+  const tables = times(schema.objectsLength(), (i) => schema.objects(i)!)
+    .filter((obj) => !obj.isStruct())
+    .map(readTable(schema));
+  const enums = times(schema.enumsLength(), (i) => schema.enums(i)!).map(readEnum);
+  // Tables and enums share one TS namespace; stripping the FlatBuffer namespace
+  // prefix can make two distinct types collide on their bare name.
+  const seen = new Set<string>();
+  for (const name of [...tables.map((t) => t.name), ...enums.map((e) => e.name)]) {
+    if (seen.has(name)) {
+      throw new Error(`type name '${name}' is declared more than once after stripping namespaces`);
+    }
+    seen.add(name);
+  }
+  return { tables, enums };
 };

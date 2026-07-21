@@ -79,6 +79,11 @@ test("rejects a 64-bit enum, which can't be a number-backed TS enum", () => {
   assert.throws(() => readBfbs(bytes), /64-bit underlying type/);
 });
 
+test("rejects two types that collide on their bare name across namespaces", () => {
+  const bytes = readFileSync(fileURLToPath(new URL("./__fixtures__/dup-namespace.bfbs", import.meta.url)));
+  assert.throws(() => readBfbs(bytes), /type name 'User' is declared more than once/);
+});
+
 test("rejects a struct-typed field, which has no emitted interface", () => {
   const bytes = readFileSync(fileURLToPath(new URL("./__fixtures__/struct-field.bfbs", import.meta.url)));
   assert.throws(() => readBfbs(bytes), /struct field type 'Point' is not supported/);

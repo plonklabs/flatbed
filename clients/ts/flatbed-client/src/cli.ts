@@ -6,7 +6,10 @@ const USAGE =
 
 const flag = (name: string): string | undefined => {
   const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 ? process.argv[i + 1] : undefined;
+  if (i < 0) return undefined;
+  // A trailing flag or an adjacent `--other` is a missing value, not a value.
+  const value = process.argv[i + 1];
+  return value !== undefined && !value.startsWith("--") ? value : undefined;
 };
 
 const inputFrom = (): Promise<GenerateInput> => {
