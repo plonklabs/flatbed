@@ -5,6 +5,10 @@ pub mod __fb {
     include!("test_generated.rs");
 }
 
+::flatbed::inventory::submit! {
+    ::flatbed::FlatbedSchema { bfbs: include_bytes!("test.bfbs") }
+}
+
 pub mod test {
     use ::flatbed::flatbuffers::FlatBufferBuilder;
     use ::flatbed::serde::{Deserialize, Serialize};

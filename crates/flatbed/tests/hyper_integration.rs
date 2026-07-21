@@ -644,6 +644,23 @@ async fn test_boot_lifecycle_probes() {
         "/readyz should be 503 during boot"
     );
 
+    let resp = client
+        .get(format!("{}/schema.bfbs", base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status().as_u16(),
+        200,
+        "/schema.bfbs should be 200 during boot"
+    );
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/octet-stream"
+    );
+    let bfbs = resp.bytes().await.unwrap();
+    assert!(!bfbs.is_empty(), "/schema.bfbs must return the reflection");
+
     // User route should return 503 (not ready yet)
     let resp = client
         .post(format!("{}/api/ping", base))

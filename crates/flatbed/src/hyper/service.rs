@@ -123,6 +123,10 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
         return response;
     }
 
+    if let Some(response) = handle_schema_endpoint(&method, &path) {
+        return response;
+    }
+
     // Return 503 for user routes until server is ready
     if !ctx.is_ready() {
         return build_error_response(
@@ -436,4 +440,20 @@ fn build_json_response(json: String) -> Response<Full<Bytes>> {
         .header("content-type", "application/json")
         .body(Full::new(Bytes::from(json)))
         .unwrap()
+}
+
+fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<Full<Bytes>>> {
+    if !is_get_or_head(method) || path != "/schema.bfbs" {
+        return None;
+    }
+    let Some(bfbs) = crate::get_schema_bfbs() else {
+        return Some(build_not_found());
+    };
+    Some(
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/octet-stream")
+            .body(Full::new(Bytes::from_static(bfbs)))
+            .unwrap(),
+    )
 }

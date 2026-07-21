@@ -44,6 +44,13 @@ pub(crate) fn generate_flatbed_module(
     output.push_str(&format!("    include!(\"{}_generated.rs\");\n", stem));
     output.push_str("}\n\n");
 
+    output.push_str("::flatbed::inventory::submit! {\n");
+    output.push_str(&format!(
+        "    ::flatbed::FlatbedSchema {{ bfbs: include_bytes!(\"{}.bfbs\") }}\n",
+        stem
+    ));
+    output.push_str("}\n\n");
+
     // Union the namespace key set so a namespace containing only enums (no
     // tables) still gets a `pub mod` with its enum re-exports.
     let mut namespaces: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
@@ -704,6 +711,7 @@ mod tests {
         assert!(module.contains(
             "::flatbed::TypeFieldInfo { name: \"home\", fbs_type: \"Address\", field_id: 3, required: false }"
         ));
+        assert!(module.contains("::flatbed::FlatbedSchema { bfbs: include_bytes!(\"test.bfbs\") }"));
     }
 
     #[test]

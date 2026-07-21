@@ -488,8 +488,32 @@ pub struct EnumSchema {
     pub variants: &'static [&'static str],
 }
 
+/// The FlatBuffer binary reflection (`.bfbs`) for a service's schemas, baked in
+/// by generated code so the runtime can serve it at `/schema.bfbs`. The bytes
+/// are the exact `flatc -b --schema` output — complete for the wire codec
+/// (field ids, enum underlying types + values, defaults). One is submitted per
+/// compiled root schema.
+#[derive(Clone, Copy, Debug)]
+pub struct FlatbedSchema {
+    pub bfbs: &'static [u8],
+}
+
 inventory::collect!(TypeSchema);
 inventory::collect!(EnumSchema);
+inventory::collect!(FlatbedSchema);
+
+/// The baked-in FlatBuffer reflection when a schema was compiled into this
+/// service. Defined for the single-root case: flatc's `.bfbs` covers a root's
+/// full include graph, so one submission describes everything.
+/// With multiple root schemas the result is unspecified — `inventory` collection
+/// order gives no defined choice among them.
+#[must_use]
+pub fn get_schema_bfbs() -> Option<&'static [u8]> {
+    inventory::iter::<FlatbedSchema>
+        .into_iter()
+        .next()
+        .map(|s| s.bfbs)
+}
 
 // ============================================================================
 // Trait Definitions for JSON Companion Types
@@ -1402,6 +1426,7 @@ pub struct StaticRouteInfo {
 inventory::collect!(StaticRouteInfo);
 
 /// Returns the static-file mounts registered via `static_route!`.
+#[must_use]
 pub fn get_static_routes() -> Vec<StaticRouteInfo> {
     inventory::iter::<StaticRouteInfo>
         .into_iter()
@@ -1475,6 +1500,7 @@ pub struct WorkerDrainInfo {
 inventory::collect!(WorkerDrainInfo);
 
 /// Get all registered drain functions.
+#[must_use]
 pub fn get_worker_drains() -> Vec<&'static WorkerDrainInfo> {
     inventory::iter::<WorkerDrainInfo>.into_iter().collect()
 }
@@ -1492,6 +1518,7 @@ inventory::collect!(WorkerInfo);
 ///     println!("Worker: {} - {:?}", worker.name, worker.description);
 /// }
 /// ```
+#[must_use]
 pub fn get_workers() -> Vec<&'static WorkerInfo> {
     inventory::iter::<WorkerInfo>.into_iter().collect()
 }
@@ -1860,6 +1887,7 @@ impl std::error::Error for RouteConflict {}
 /// // Use route_info.handler to call the function
 /// // Use route_info.request_type / response_type for metadata
 /// ```
+#[must_use]
 pub fn get_routes() -> &'static RouteMap {
     static ROUTES: LazyLock<RouteMap> = LazyLock::new(|| {
         let mut map = HashMap::new();
@@ -1876,6 +1904,7 @@ pub fn get_routes() -> &'static RouteMap {
 /// Names are keyed bare (without the namespace), matching how routes reference
 /// their request/response types. A bare name is therefore assumed unique across
 /// namespaces; [`validate_type_registry`] enforces that at startup.
+#[must_use]
 pub fn get_type_schema(name: &str) -> Option<&'static TypeSchema> {
     static MAP: LazyLock<HashMap<&'static str, &'static TypeSchema>> = LazyLock::new(|| {
         let mut map = HashMap::new();
@@ -1891,6 +1920,7 @@ pub fn get_type_schema(name: &str) -> Option<&'static TypeSchema> {
 ///
 /// Names are keyed bare (without the namespace); a bare name is assumed unique
 /// across namespaces, which [`validate_type_registry`] enforces at startup.
+#[must_use]
 pub fn get_enum_schema(name: &str) -> Option<&'static EnumSchema> {
     static MAP: LazyLock<HashMap<&'static str, &'static EnumSchema>> = LazyLock::new(|| {
         let mut map = HashMap::new();
