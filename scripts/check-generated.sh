@@ -14,9 +14,8 @@ SCHEMAS="crates/flatbed/schemas"
 COMMITTED="crates/flatbed/src/generated"
 
 # Regenerate into a scratch dir, then copy the `.rs` and the `.bfbs`
-# reflection over the committed tree. The `.bfbs` is committed because the
-# runtime bakes it in (`include_bytes!`) to serve at `/schema.bfbs`; it's
-# byte-deterministic under the pinned flatc, same as the `.rs`.
+# reflection over the committed tree. Both are committed byte-deterministic
+# artifacts under the pinned flatc.
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 

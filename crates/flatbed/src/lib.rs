@@ -491,8 +491,8 @@ pub struct EnumSchema {
 /// The FlatBuffer binary reflection (`.bfbs`) for a service's schemas, baked in
 /// by generated code so the runtime can serve it at `/schema.bfbs`. The bytes
 /// are the exact `flatc -b --schema` output — complete for the wire codec
-/// (field ids, enum underlying types + values, defaults), which the OpenAPI
-/// spec is not. One is submitted per compiled root schema.
+/// (field ids, enum underlying types + values, defaults). One is submitted per
+/// compiled root schema.
 #[derive(Clone, Copy, Debug)]
 pub struct FlatbedSchema {
     pub bfbs: &'static [u8],
@@ -503,8 +503,8 @@ inventory::collect!(EnumSchema);
 inventory::collect!(FlatbedSchema);
 
 /// The baked-in FlatBuffer reflection when a schema was compiled into this
-/// service. Defined for the single-root case (the common one): flatc's `.bfbs`
-/// covers a root's full include graph, so one submission describes everything.
+/// service. Defined for the single-root case: flatc's `.bfbs` covers a root's
+/// full include graph, so one submission describes everything.
 /// With multiple root schemas the result is unspecified — `inventory` collection
 /// order gives no defined choice among them.
 #[must_use]
