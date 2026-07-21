@@ -97,10 +97,30 @@ jobs:
             echo "::endgroup::"
           done
 
+  # The TypeScript client package is outside the cargo workspace; typecheck,
+  # build, and test it on its own.
+  flatbed-client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: clients/ts/flatbed-client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: clients/ts/flatbed-client/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+
   # Alert Discord only on main-branch breakage. PR failures are visible to the
   # author already, and fork PRs don't get the DISCORD_WEBHOOK secret.
   notify-failure:
-    needs: [fmt, clippy, test, check-generated, examples]
+    needs: [fmt, clippy, test, check-generated, examples, flatbed-client]
     if: failure() && github.event_name == 'push'
     uses: plonklabs/.github/.github/workflows/discord-notify-failure.yml@main
     with:
