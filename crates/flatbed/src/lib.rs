@@ -505,8 +505,8 @@ inventory::collect!(FlatbedSchema);
 /// The baked-in FlatBuffer reflection when a schema was compiled into this
 /// service. Defined for the single-root case (the common one): flatc's `.bfbs`
 /// covers a root's full include graph, so one submission describes everything.
-/// Multi-root services are not yet supported here — `inventory` collection order
-/// is unspecified, so which root's reflection is returned would be arbitrary.
+/// With multiple root schemas the result is unspecified — `inventory` collection
+/// order gives no defined choice among them.
 pub fn get_schema_bfbs() -> Option<&'static [u8]> {
     inventory::iter::<FlatbedSchema>
         .into_iter()
