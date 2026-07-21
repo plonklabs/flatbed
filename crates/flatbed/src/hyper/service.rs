@@ -442,11 +442,6 @@ fn build_json_response(json: String) -> Response<Full<Bytes>> {
         .unwrap()
 }
 
-/// Handle the `/schema.bfbs` endpoint — serves the baked-in FlatBuffer binary
-/// reflection (`flatc -b --schema`) covering every generated type, so a client
-/// generator can recover the exact wire layout (field ids, enum underlying
-/// types + values, defaults) without the `.fbs` or `flatc`. Answers before the
-/// readiness gate, like `/openapi.json`, since it's a compile-time artifact.
 fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<Full<Bytes>>> {
     if !is_get_or_head(method) || path != "/schema.bfbs" {
         return None;
@@ -458,7 +453,7 @@ fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<Full<Byte
         Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
-            .body(Full::new(Bytes::copy_from_slice(bfbs)))
+            .body(Full::new(Bytes::from_static(bfbs)))
             .unwrap(),
     )
 }
