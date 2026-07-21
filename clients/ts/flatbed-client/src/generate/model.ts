@@ -40,16 +40,19 @@ export interface FbsField {
   readonly default: FbsDefault;
 }
 
+/** A FlatBuffer table, its fields ordered by wire id. */
 export interface FbsTable {
   readonly name: string;
   readonly fields: readonly FbsField[];
 }
 
+/** One enum variant and its wire value. */
 export interface FbsEnumMember {
   readonly name: string;
   readonly value: bigint;
 }
 
+/** A FlatBuffer enum: its backing integer scalar and its variants. */
 export interface FbsEnum {
   readonly name: string;
   readonly underlying: ScalarType;

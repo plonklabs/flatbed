@@ -86,8 +86,8 @@ const method = (op: Operation): string => {
 
 /**
  * Emit `client.ts`: a `createFlatbedClient(config)` factory whose object has one
- * method per operation. Assumes {@link checkNames} has passed — names are
- * emitted verbatim.
+ * method per operation. Method names are emitted verbatim, so the caller must
+ * have already validated them (unique, valid identifiers).
  */
 export const emitClient = (ops: readonly Operation[]): string => {
   const importTypes = [

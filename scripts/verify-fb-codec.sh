@@ -97,7 +97,7 @@ driver "$WORK/rust/src"
 
 # --- npm-generated codec ----------------------------------------------------
 echo "verify-fb-codec: generating the npm codec (@plonklabs/flatbed-client)…"
-( cd "$PKG" && npm install --silent --no-audit --no-fund >/dev/null 2>&1 )
+( cd "$PKG" && npm ci --silent --no-audit --no-fund >/dev/null 2>&1 )
 mkdir -p "$WORK/npm/src"
 ABS_BFBS="$(pwd)/$BFBS"
 # The CLI runs from the package dir so its `tsx` loader resolves; inputs and

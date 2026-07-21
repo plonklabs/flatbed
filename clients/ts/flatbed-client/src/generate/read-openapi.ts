@@ -13,7 +13,8 @@ const refName = (schema: unknown): string | undefined => {
   return typeof ref === "string" && ref.startsWith(REF_PREFIX) ? ref.slice(REF_PREFIX.length) : undefined;
 };
 
-/** The `$ref` type name of a content block's `application/json` schema. */
+// The type name comes from the JSON content's `$ref`; the x-flatbuffers entry
+// carries an inline binary schema, so it has no ref to read.
 const jsonRef = (content: unknown): string | undefined =>
   refName(asObject(asObject(content)?.["application/json"])?.["schema"]);
 
