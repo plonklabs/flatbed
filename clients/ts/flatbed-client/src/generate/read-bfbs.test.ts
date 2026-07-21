@@ -74,6 +74,11 @@ test("reads declared defaults for scalars, bools, and enums", () => {
   assert.deepEqual(field(d, "level").default, { kind: "int", value: 1n });
 });
 
+test("rejects a 64-bit enum, which can't be a number-backed TS enum", () => {
+  const bytes = readFileSync(fileURLToPath(new URL("./__fixtures__/big-enum.bfbs", import.meta.url)));
+  assert.throws(() => readBfbs(bytes), /64-bit underlying type/);
+});
+
 test("fields are ordered by wire id", () => {
   const d = table(fixture(), "Defaulted");
   assert.deepEqual(

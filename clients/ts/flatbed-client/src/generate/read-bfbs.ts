@@ -96,6 +96,11 @@ const readEnum = (en: Enum): FbsEnum => {
   if (underlying === undefined) {
     throw new Error(`enum ${en.name()} has a non-integer underlying type`);
   }
+  // A 64-bit enum's wire value is a bigint, but a TS numeric enum is backed by
+  // number — the two can't reconcile, so reject rather than emit broken code.
+  if (underlying === "int64" || underlying === "uint64") {
+    throw new Error(`enum ${en.name()} uses a 64-bit underlying type, which is not supported`);
+  }
   return {
     name: bareName(en.name() ?? ""),
     underlying,
