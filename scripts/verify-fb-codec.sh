@@ -109,7 +109,6 @@ driver "$WORK/npm/src"
 
 echo "verify-fb-codec: installing flatbuffers + typescript…"
 for dir in rust npm; do
-  cp "$WORK/empty.json" "$WORK/$dir/spec.json"
   cat >"$WORK/$dir/package.json" <<'JSON'
 { "name": "fb-codec-verify", "private": true, "type": "module" }
 JSON

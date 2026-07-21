@@ -23,8 +23,11 @@ const run = (): Promise<void> => {
   if (process.argv[2] !== "generate" || out === undefined) return Promise.reject(new Error(USAGE));
   return inputFrom()
     .then(generateFiles)
-    .then((files) => writeFiles(out, files))
-    .then(() => console.log(`flatbed-client: wrote types.ts, codec.ts, client.ts, index.ts to ${out}`));
+    .then((files) =>
+      writeFiles(out, files).then(() =>
+        console.log(`flatbed-client: wrote ${Object.keys(files).join(", ")} to ${out}`),
+      ),
+    );
 };
 
 run().catch((error: unknown) => {
