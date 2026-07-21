@@ -1,0 +1,6 @@
+/** Materialize a flatbuffers `(length, accessor)` vector into an array. */
+export const times = <T>(n: number, f: (i: number) => T): readonly T[] =>
+  Array.from({ length: n }, (_, i) => f(i));
+
+/** The bare type name without its namespace prefix (`api.Priority` → `Priority`). */
+export const bareName = (name: string): string => name.slice(name.lastIndexOf(".") + 1);

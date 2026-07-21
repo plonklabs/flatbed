@@ -62,3 +62,16 @@ export interface FbsSchema {
   readonly tables: readonly FbsTable[];
   readonly enums: readonly FbsEnum[];
 }
+
+/**
+ * An operation that speaks `application/x-flatbuffers`, read from the OpenAPI
+ * spec. `requestType`/`responseType` are the bare `$ref` component names, absent
+ * when that body is missing or inlined rather than referenced.
+ */
+export interface Operation {
+  readonly method: string;
+  readonly path: string;
+  readonly operationId?: string;
+  readonly requestType?: string;
+  readonly responseType?: string;
+}

@@ -15,13 +15,16 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "flatbed-client": "dist/cli.js"
+  },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/*.test.ts"
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "devDependencies": {
     "@types/node": "^22",

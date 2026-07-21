@@ -117,10 +117,30 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  # Prove both generated FlatBuffer codecs (Rust and npm) are byte-compatible
+  # with the Rust `flatbuffers` runtime. Needs Rust, node, and flatc.
+  codec-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install flatc
+        run: |
+          FLATC_VERSION="$(cat .flatc-version)"
+          curl -fL "https://github.com/google/flatbuffers/releases/download/v${FLATC_VERSION}/Linux.flatc.binary.g++-13.zip" -o flatc.zip
+          unzip flatc.zip
+          sudo install -m 0755 flatc /usr/local/bin/flatc
+      - run: bash scripts/verify-fb-codec.sh
+
   # Alert Discord only on main-branch breakage. PR failures are visible to the
   # author already, and fork PRs don't get the DISCORD_WEBHOOK secret.
   notify-failure:
-    needs: [fmt, clippy, test, check-generated, examples, flatbed-client]
+    needs: [fmt, clippy, test, check-generated, examples, flatbed-client, codec-compat]
     if: failure() && github.event_name == 'push'
     uses: plonklabs/.github/.github/workflows/discord-notify-failure.yml@main
     with:
