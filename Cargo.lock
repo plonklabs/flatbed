@@ -594,7 +594,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "flatbed"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "async-nats",
  "bytes",
@@ -622,7 +622,7 @@ dependencies = [
 
 [[package]]
 name = "flatbed_build"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "clap",
  "flatbuffers-reflection",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "flatbed_macros"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "proc-macro2",
  "quote",
