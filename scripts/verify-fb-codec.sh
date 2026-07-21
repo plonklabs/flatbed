@@ -32,8 +32,8 @@ trap cleanup EXIT
 
 printf '{"paths":{}}' > "$WORK/empty.json"
 
-# The TS driver mirroring the Rust encode/decode samples: same fixed values,
-# same assertion logic, run through whichever generated codec sits beside it.
+# Write a roundtrip.ts beside the generated codec: it encodes/decodes fixed
+# sample values through codec.ts and asserts they survive unchanged.
 driver() {
   cat >"$1/roundtrip.ts" <<'TS'
 import * as codec from "./codec.js";
@@ -97,7 +97,8 @@ driver "$WORK/rust/src"
 
 # --- npm-generated codec ----------------------------------------------------
 echo "verify-fb-codec: generating the npm codec (@plonklabs/flatbed-client)…"
-( cd "$PKG" && npm ci --silent --no-audit --no-fund >/dev/null 2>&1 )
+( cd "$PKG" && npm ci --silent --no-audit --no-fund >"$WORK/npm-ci.log" 2>&1 ) \
+  || { echo "npm ci failed ($PKG):" >&2; cat "$WORK/npm-ci.log" >&2; exit 1; }
 mkdir -p "$WORK/npm/src"
 ABS_BFBS="$(pwd)/$BFBS"
 # The CLI runs from the package dir so its `tsx` loader resolves; inputs and
@@ -128,10 +129,8 @@ ts_npm() { node "$WORK/npm/dist/roundtrip.js" "$@"; }
 
 for ty in $TYPES; do
   rust_hex="$(rust encode "$ty")"
-  # Both TS codecs decode Rust's bytes back to the sample.
   [ "$(ts_rust decode "$ty" "$rust_hex")" = "ok" ] || { echo "FAIL: Rust codec TS could not decode Rust $ty" >&2; exit 1; }
   [ "$(ts_npm decode "$ty" "$rust_hex")" = "ok" ]  || { echo "FAIL: npm codec TS could not decode Rust $ty" >&2; exit 1; }
-  # Both TS codecs encode identical bytes, and Rust decodes them.
   rust_ts_hex="$(ts_rust encode "$ty")"
   npm_ts_hex="$(ts_npm encode "$ty")"
   [ "$npm_ts_hex" = "$rust_ts_hex" ] || { echo "FAIL: npm codec bytes differ from the Rust codec for $ty" >&2; exit 1; }

@@ -117,8 +117,7 @@ jobs:
       - run: npm run build
       - run: npm test
 
-  # Prove both generated FlatBuffer codecs (Rust and npm) are byte-compatible
-  # with the Rust `flatbuffers` runtime. Needs Rust, node, and flatc.
+  # Needs Rust, node, and flatc on the runner.
   codec-compat:
     runs-on: ubuntu-latest
     timeout-minutes: 30

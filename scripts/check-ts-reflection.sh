@@ -3,9 +3,9 @@
 #
 # The TS client reads a served `.bfbs` through FlatBuffer reflection bindings
 # vendored under clients/ts/flatbed-client/src/generate/fbs-reflection/. They're
-# `flatc --ts` output over the flatbuffers `reflection.fbs`, so — like the Rust
-# codegen — they must be regenerable byte-for-byte from the pinned compiler; a
-# drifted checkout would silently parse `.bfbs` buffers against stale bindings.
+# `flatc --ts` output over the flatbuffers `reflection.fbs`, so they must be
+# regenerable byte-for-byte from the pinned compiler; a drifted checkout would
+# silently parse `.bfbs` buffers against stale bindings.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
