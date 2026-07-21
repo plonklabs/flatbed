@@ -644,7 +644,6 @@ async fn test_boot_lifecycle_probes() {
         "/readyz should be 503 during boot"
     );
 
-    // /schema.bfbs is a compile-time artifact, so it answers before readiness.
     let resp = client
         .get(format!("{}/schema.bfbs", base))
         .send()
