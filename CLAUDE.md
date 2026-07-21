@@ -95,6 +95,11 @@ lockstep.
 
 ## Coding Style Guidelines
 
+These cover the Rust crates. The TypeScript packages under `clients/ts/`
+follow [`clients/ts/STYLEGUIDE.md`](clients/ts/STYLEGUIDE.md) (functional /
+declarative, Promises over `async`/`await`, ESM); the Minimalism, Comments,
+and runner rules in this file apply to both.
+
 - **Favor let-else over nesting**: Use `let-else` patterns with early
   returns instead of deeply nested `if-let` blocks.
 - **Keep functions flat**: maximum 1-2 levels of indentation.
