@@ -4,8 +4,9 @@ name: Build flatbed binary
 # GitHub Release. Two trigger paths:
 #
 #   - push a `flatbed-vX.Y.Z` tag → cuts a versioned release with the
-#     linux + darwin (amd64 + arm64 each) binaries and their sha256
-#     checksums attached.
+#     linux (amd64 + arm64) and darwin (arm64) binaries and their sha256
+#     checksums attached. Intel macOS (darwin-amd64) is not built — install
+#     there with `cargo install`.
 #   - run via `workflow_dispatch` → publishes a pre-release tagged
 #     `flatbed-dev-<short-sha>` so a feature branch can hand someone
 #     a binary without minting a real version. Pre-release flag is
@@ -38,9 +39,6 @@ jobs:
           - runner: ubuntu-24.04-arm
             os: linux
             arch: arm64
-          - runner: macos-13
-            os: darwin
-            arch: amd64
           - runner: macos-14
             os: darwin
             arch: arm64
@@ -126,10 +124,12 @@ jobs:
           Binaries (each with a matching `.sha256` checksum):
           - `flatbed-linux-amd64`
           - `flatbed-linux-arm64`
-          - `flatbed-darwin-amd64`
-          - `flatbed-darwin-arm64`
+          - `flatbed-darwin-arm64` (Apple Silicon)
 
-          Verify and install (Linux or macOS):
+          Intel-Mac (`darwin-amd64`) prebuilt binaries are no longer published —
+          install on Intel macOS with `cargo install flatbed_build --bin flatbed`.
+
+          Verify and install (Linux or Apple-Silicon macOS):
 
           ```bash
           OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -163,8 +163,6 @@ jobs:
             dist/flatbed-linux-amd64.sha256 \
             dist/flatbed-linux-arm64 \
             dist/flatbed-linux-arm64.sha256 \
-            dist/flatbed-darwin-amd64 \
-            dist/flatbed-darwin-amd64.sha256 \
             dist/flatbed-darwin-arm64 \
             dist/flatbed-darwin-arm64.sha256
 
