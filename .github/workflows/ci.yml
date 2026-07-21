@@ -135,6 +135,7 @@ jobs:
           curl -fL "https://github.com/google/flatbuffers/releases/download/v${FLATC_VERSION}/Linux.flatc.binary.g++-13.zip" -o flatc.zip
           unzip flatc.zip
           sudo install -m 0755 flatc /usr/local/bin/flatc
+      - run: bash scripts/check-ts-reflection.sh
       - run: bash scripts/verify-fb-codec.sh
 
   # Alert Discord only on main-branch breakage. PR failures are visible to the
