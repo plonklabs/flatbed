@@ -160,7 +160,7 @@ const referencedEnums = (schema: FbsSchema): ReadonlySet<string> => {
   return names;
 };
 
-/** Emit `codec.ts`: per-table encode/decode over the `flatbuffers` runtime. */
+/** Emit per-table encode/decode functions over the `flatbuffers` runtime. */
 export const emitCodec = (schema: FbsSchema): string => {
   const ctx = ctxOf(schema);
   const used = referencedEnums(schema);

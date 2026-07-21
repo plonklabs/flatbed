@@ -33,6 +33,6 @@ const emitInterface = (t: FbsTable): string =>
   t.fields.map((f) => `  ${f.name}${isWireOptional(f.type) ? "?" : ""}: ${tsType(f.type)};\n`).join("") +
   "}\n\n";
 
-/** Emit `types.ts`: numeric enums (true wire values) + table interfaces. */
+/** Emit numeric enums (true wire values) + table interfaces. */
 export const emitTypes = (schema: FbsSchema): string =>
   HEADER + schema.enums.map(emitEnum).join("") + schema.tables.map(emitInterface).join("");

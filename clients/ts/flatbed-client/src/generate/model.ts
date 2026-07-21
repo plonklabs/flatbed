@@ -1,7 +1,6 @@
 /**
  * The wire-schema model the generators consume — a small, closed vocabulary
- * read from a served `.bfbs`. Each generator (types, codec, client) is a pure
- * function of this model.
+ * read from a served `.bfbs`. Each generator is a pure function of this model.
  */
 
 /** A FlatBuffer scalar, named by its wire width. */

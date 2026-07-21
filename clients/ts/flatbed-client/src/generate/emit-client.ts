@@ -85,9 +85,9 @@ const method = (op: Operation): string => {
 };
 
 /**
- * Emit `client.ts`: a `createFlatbedClient(config)` factory whose object has one
- * method per operation. Method names are emitted verbatim, so the caller must
- * have already validated them (unique, valid identifiers).
+ * Emit a `createFlatbedClient(config)` factory whose object has one method per
+ * operation. Method names are emitted verbatim, so the caller must have already
+ * validated them (unique, valid identifiers).
  */
 export const emitClient = (ops: readonly Operation[]): string => {
   const importTypes = [
@@ -107,7 +107,7 @@ export const emitClient = (ops: readonly Operation[]): string => {
   );
 };
 
-/** Emit the `index.ts` barrel re-exporting the generated folder. */
+/** Emit the barrel module re-exporting the generated folder. */
 export const emitIndex = (): string =>
   HEADER +
   'export * from "./types.js";\n' +
