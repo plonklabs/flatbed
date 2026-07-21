@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { camelCase, isValidTsIdentifier, pascalCase } from "./identifiers.js";
+import { camelCase, isValidTsIdentifier, paramIdent, pascalCase, pathParams } from "./identifiers.js";
 
 test("camelCase normalizes every casing convention to the same result", () => {
   assert.equal(camelCase("GetUser"), "getUser");
@@ -25,4 +25,16 @@ test("isValidTsIdentifier accepts leading letter/_/$ and rejects a leading digit
   assert.ok(isValidTsIdentifier("_x"));
   assert.ok(!isValidTsIdentifier("3d"));
   assert.ok(!isValidTsIdentifier(""));
+});
+
+test("paramIdent prefixes `_` only when camelCase yields an invalid identifier", () => {
+  assert.equal(paramIdent("user_id"), "userId");
+  assert.equal(paramIdent("class"), "class"); // reserved words are valid property names
+  assert.equal(paramIdent("2fa"), "_2fa"); // digit-leading
+  assert.equal(paramIdent(""), "_"); // empty param name
+});
+
+test("pathParams extracts `{param}` names in order, none when there are none", () => {
+  assert.deepEqual(pathParams("/users/{id}/posts/{postId}"), ["id", "postId"]);
+  assert.deepEqual(pathParams("/health"), []);
 });

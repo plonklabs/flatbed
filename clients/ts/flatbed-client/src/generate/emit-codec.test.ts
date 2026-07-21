@@ -33,8 +33,9 @@ test("an enum a field references is imported", () => {
 
 /**
  * Compile-and-load the generated codec once. It's written under `node_modules`
- * so its bare `flatbuffers` import resolves; `tsx` compiles it on import, and
- * its `import type … from "./types.js"` is erased at runtime.
+ * so its bare `flatbuffers` import resolves — the package's own deps must be
+ * installed (`npm ci` runs before `npm test` in CI). `tsx` compiles it on
+ * import, and its `import type … from "./types.js"` is erased at runtime.
  */
 type Codec = Record<string, (arg: never) => never>;
 const codec: Promise<Codec> = (() => {

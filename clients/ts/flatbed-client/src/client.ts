@@ -11,7 +11,10 @@ export interface ClientConfig {
   readonly transport?: Transport;
   /** A custom `fetch` for the default transport; ignored when `transport` is set. */
   readonly fetch?: typeof globalThis.fetch;
-  /** Extra headers added to every request (auth tokens, tracing, …). */
+  /**
+   * Extra headers merged into every request (auth tokens, tracing, …). `accept`
+   * and `content-type` are always set by the framework and can't be overridden.
+   */
   readonly headers?: Readonly<Record<string, string>>;
 }
 
