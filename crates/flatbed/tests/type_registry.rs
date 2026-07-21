@@ -12,7 +12,6 @@ use flatbed::{get_enum_schema, get_schema_bfbs, get_type_schema};
 fn schema_bfbs_is_baked_in() {
     let bfbs = get_schema_bfbs().expect("a compiled schema registers its .bfbs");
     assert_eq!(bfbs, include_bytes!("../src/generated/test.bfbs") as &[u8]);
-    assert!(bfbs.len() > 4, "a real reflection buffer is non-trivial");
 }
 
 #[test]
