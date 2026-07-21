@@ -113,7 +113,11 @@ const readEnum = (en: Enum): FbsEnum => {
 
 /** Read a served `.bfbs` reflection buffer into the wire-schema model. */
 export const readBfbs = (bytes: Uint8Array): FbsSchema => {
-  const schema = Schema.getRootAsSchema(new flatbuffers.ByteBuffer(bytes));
+  const bb = new flatbuffers.ByteBuffer(bytes);
+  if (!Schema.bufferHasIdentifier(bb)) {
+    throw new Error("not a FlatBuffer reflection schema: missing 'BFBS' magic identifier");
+  }
+  const schema = Schema.getRootAsSchema(bb);
   return {
     tables: times(schema.objectsLength(), (i) => schema.objects(i)!)
       .filter((obj) => !obj.isStruct())
