@@ -1426,6 +1426,7 @@ pub struct StaticRouteInfo {
 inventory::collect!(StaticRouteInfo);
 
 /// Returns the static-file mounts registered via `static_route!`.
+#[must_use]
 pub fn get_static_routes() -> Vec<StaticRouteInfo> {
     inventory::iter::<StaticRouteInfo>
         .into_iter()
@@ -1499,6 +1500,7 @@ pub struct WorkerDrainInfo {
 inventory::collect!(WorkerDrainInfo);
 
 /// Get all registered drain functions.
+#[must_use]
 pub fn get_worker_drains() -> Vec<&'static WorkerDrainInfo> {
     inventory::iter::<WorkerDrainInfo>.into_iter().collect()
 }
@@ -1516,6 +1518,7 @@ inventory::collect!(WorkerInfo);
 ///     println!("Worker: {} - {:?}", worker.name, worker.description);
 /// }
 /// ```
+#[must_use]
 pub fn get_workers() -> Vec<&'static WorkerInfo> {
     inventory::iter::<WorkerInfo>.into_iter().collect()
 }
@@ -1884,6 +1887,7 @@ impl std::error::Error for RouteConflict {}
 /// // Use route_info.handler to call the function
 /// // Use route_info.request_type / response_type for metadata
 /// ```
+#[must_use]
 pub fn get_routes() -> &'static RouteMap {
     static ROUTES: LazyLock<RouteMap> = LazyLock::new(|| {
         let mut map = HashMap::new();
