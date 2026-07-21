@@ -13,9 +13,11 @@ const ctxOf = (schema: FbsSchema): Ctx => ({
 
 /** The scalar ops backing a scalar/enum wire type (an enum → its underlying). */
 const opsFor = (ctx: Ctx, t: FbsType): ScalarOps => {
-  if (t.kind === "enum") return SCALAR_OPS[ctx.enums.get(t.name)!.underlying];
   if (t.kind === "scalar") return SCALAR_OPS[t.scalar];
-  throw new Error(`no scalar ops for wire kind ${t.kind}`);
+  if (t.kind !== "enum") throw new Error(`no scalar ops for wire kind ${t.kind}`);
+  const en = ctx.enums.get(t.name);
+  if (en === undefined) throw new Error(`unknown enum ${t.name}`);
+  return SCALAR_OPS[en.underlying];
 };
 
 /** The `n` suffix a scalar/enum literal needs when it is 64-bit backed. */

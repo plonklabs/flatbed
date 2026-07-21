@@ -27,10 +27,10 @@ const call = (
   extra?: Partial<ClientConfig>,
 ): Promise<{ out: Uint8Array; sent: FlatbedRequest }> => {
   const transport = new Recorder(reply);
-  return request({ baseUrl: "http://svc", transport, ...extra }, method, path, body, identity).then((out) => ({
-    out,
-    sent: transport.requests[0]!,
-  }));
+  return request({ baseUrl: "http://svc", transport, ...extra }, method, path, body, identity).then((out) => {
+    assert.equal(transport.requests.length, 1, "transport called exactly once");
+    return { out, sent: transport.requests[0]! };
+  });
 };
 
 test("POST sends the Content-Type and the body", () =>
