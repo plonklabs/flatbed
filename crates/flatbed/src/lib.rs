@@ -488,8 +488,29 @@ pub struct EnumSchema {
     pub variants: &'static [&'static str],
 }
 
+/// The FlatBuffer binary reflection (`.bfbs`) for a service's schemas, baked in
+/// by generated code so the runtime can serve it at `/schema.bfbs`. The bytes
+/// are the exact `flatc -b --schema` output — complete for the wire codec
+/// (field ids, enum underlying types + values, defaults), which the OpenAPI
+/// spec is not. One is submitted per compiled root schema.
+#[derive(Clone, Copy, Debug)]
+pub struct FlatbedSchema {
+    pub bfbs: &'static [u8],
+}
+
 inventory::collect!(TypeSchema);
 inventory::collect!(EnumSchema);
+inventory::collect!(FlatbedSchema);
+
+/// The baked-in FlatBuffer reflection, when a schema was compiled into this
+/// service. Returns the first registered `.bfbs`; a service with a single root
+/// schema (the common case) has exactly one, covering its full include graph.
+pub fn get_schema_bfbs() -> Option<&'static [u8]> {
+    inventory::iter::<FlatbedSchema>
+        .into_iter()
+        .next()
+        .map(|s| s.bfbs)
+}
 
 // ============================================================================
 // Trait Definitions for JSON Companion Types

@@ -13,16 +13,16 @@ bash scripts/check-flatc-version.sh
 SCHEMAS="crates/flatbed/schemas"
 COMMITTED="crates/flatbed/src/generated"
 
-# Regenerate into a scratch dir, then copy only the `.rs` over the
-# committed tree. The CLI also writes a `.bfbs` reflection byproduct
-# into its output dir, which is not committed — generating into scratch
-# keeps it out of the source tree.
+# Regenerate into a scratch dir, then copy the `.rs` and the `.bfbs`
+# reflection over the committed tree. The `.bfbs` is committed because the
+# runtime bakes it in (`include_bytes!`) to serve at `/schema.bfbs`; it's
+# byte-deterministic under the pinned flatc, same as the `.rs`.
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 cargo run -q -p flatbed_build --bin flatbed -- \
   generate --schemas-dir "$SCHEMAS" --out "$tmp"
-cp "$tmp"/*.rs "$COMMITTED"/
+cp "$tmp"/*.rs "$tmp"/*.bfbs "$COMMITTED"/
 
 # The committed output is rustfmt-formatted; match that before diffing
 # so formatting alone never reads as drift.

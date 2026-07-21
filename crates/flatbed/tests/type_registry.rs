@@ -6,7 +6,15 @@
 #[allow(warnings, clippy::all)]
 mod generated;
 
-use flatbed::{get_enum_schema, get_type_schema};
+use flatbed::{get_enum_schema, get_schema_bfbs, get_type_schema};
+
+#[test]
+fn schema_bfbs_is_baked_in() {
+    let bfbs = get_schema_bfbs().expect("a compiled schema registers its .bfbs");
+    // The runtime serves exactly the committed reflection byproduct.
+    assert_eq!(bfbs, include_bytes!("../src/generated/test.bfbs") as &[u8]);
+    assert!(bfbs.len() > 4, "a real reflection buffer is non-trivial");
+}
 
 #[test]
 fn every_table_is_registered_including_nested_only() {

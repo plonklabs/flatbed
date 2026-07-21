@@ -44,6 +44,16 @@ pub(crate) fn generate_flatbed_module(
     output.push_str(&format!("    include!(\"{}_generated.rs\");\n", stem));
     output.push_str("}\n\n");
 
+    // Bake the `.bfbs` reflection (written alongside this file) into the runtime
+    // so it can be served at `/schema.bfbs`. `include_bytes!` resolves relative
+    // to this generated file, where the `.bfbs` sits next to `_flatbed.rs`.
+    output.push_str("::flatbed::inventory::submit! {\n");
+    output.push_str(&format!(
+        "    ::flatbed::FlatbedSchema {{ bfbs: include_bytes!(\"{}.bfbs\") }}\n",
+        stem
+    ));
+    output.push_str("}\n\n");
+
     // Union the namespace key set so a namespace containing only enums (no
     // tables) still gets a `pub mod` with its enum re-exports.
     let mut namespaces: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
