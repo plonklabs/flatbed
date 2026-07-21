@@ -50,6 +50,23 @@ test("reads a success response under a non-200 code, request-less", () => {
   assert.equal(users?.requestType, undefined);
 });
 
+test("picks the lowest 2xx code when a route has multiple", () => {
+  const got = readOperations({
+    paths: {
+      "/upload": {
+        post: {
+          requestBody: { content: { "application/x-flatbuffers": fb } },
+          responses: {
+            "201": { content: { "application/x-flatbuffers": fb, "application/json": json("Upload201") } },
+            "200": { content: { "application/x-flatbuffers": fb, "application/json": json("Upload200") } },
+          },
+        },
+      },
+    },
+  });
+  assert.equal(got[0]?.responseType, "Upload200");
+});
+
 test("returns nothing for a spec with no paths", () => {
   assert.deepEqual(readOperations({}), []);
   assert.deepEqual(readOperations(null), []);

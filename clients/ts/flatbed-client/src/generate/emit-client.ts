@@ -1,4 +1,4 @@
-import type { Operation } from "./model.js";
+import type { FbsSchema, Operation } from "./model.js";
 import { camelCase, isValidTsIdentifier, paramIdent, pascalCase, pathParams } from "./identifiers.js";
 import { HEADER } from "./util.js";
 
@@ -43,6 +43,20 @@ export const checkNames = (ops: readonly Operation[]): void => {
         );
       }
       keys.add(key);
+    });
+  });
+};
+
+/** Throw if an operation references a request/response type absent from the schema. */
+export const checkTypes = (schema: FbsSchema, ops: readonly Operation[]): void => {
+  const tables = new Set(schema.tables.map((t) => t.name));
+  ops.forEach((op) => {
+    [effectiveRequestType(op), op.responseType].forEach((name) => {
+      if (name !== undefined && !tables.has(name)) {
+        throw new Error(
+          `operation ${op.method} ${op.path} references type '${name}', which is not a table in the FlatBuffer schema`,
+        );
+      }
     });
   });
 };

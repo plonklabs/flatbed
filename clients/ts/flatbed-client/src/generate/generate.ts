@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { checkNames, emitClient, emitIndex } from "./emit-client.js";
+import { checkNames, checkTypes, emitClient, emitIndex } from "./emit-client.js";
 import { emitCodec } from "./emit-codec.js";
 import { emitTypes } from "./emit-types.js";
 import { readBfbs } from "./read-bfbs.js";
@@ -26,6 +26,7 @@ export const generateFiles = ({ spec, bfbs }: GenerateInput): GeneratedFiles => 
   const schema = readBfbs(bfbs);
   const ops = readOperations(spec);
   checkNames(ops);
+  checkTypes(schema, ops);
   return {
     "types.ts": emitTypes(schema),
     "codec.ts": emitCodec(schema),

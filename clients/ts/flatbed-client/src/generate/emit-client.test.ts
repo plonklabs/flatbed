@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { checkNames, emitClient, emitIndex, methodName } from "./emit-client.js";
+import { checkNames, checkTypes, emitClient, emitIndex, methodName } from "./emit-client.js";
+import type { FbsSchema } from "./model.js";
 
 test("methodName camelCases an operationId", () => {
   assert.equal(methodName({ method: "POST", path: "/x", operationId: "CreateUser" }), "createUser");
@@ -69,6 +70,32 @@ test("checkNames rejects duplicate path-param keys in a path", () => {
   assert.throws(
     () => checkNames([{ method: "GET", path: "/users/{id}/posts/{id}" }]),
     /two path parameters that map to the key `id`/,
+  );
+});
+
+const schema = (names: readonly string[]): FbsSchema => ({
+  tables: names.map((name) => ({ name, fields: [] })),
+  enums: [],
+});
+
+test("checkTypes rejects an operation referencing an unknown table", () => {
+  assert.throws(
+    () => checkTypes(schema(["Echo"]), [{ method: "POST", path: "/echo", responseType: "EchoResponse" }]),
+    /references type `?'?EchoResponse'?`?, which is not a table/,
+  );
+});
+
+test("checkTypes accepts operations whose types are all in the schema", () => {
+  assert.doesNotThrow(() =>
+    checkTypes(schema(["Echo", "EchoOut"]), [
+      { method: "POST", path: "/echo", requestType: "Echo", responseType: "EchoOut" },
+    ]),
+  );
+});
+
+test("checkTypes ignores a request type on a GET, which the client never emits", () => {
+  assert.doesNotThrow(() =>
+    checkTypes(schema(["Health"]), [{ method: "GET", path: "/health", requestType: "Ghost", responseType: "Health" }]),
   );
 });
 
