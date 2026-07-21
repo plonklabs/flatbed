@@ -27,5 +27,8 @@
     "@types/node": "^22",
     "tsx": "^4",
     "typescript": "^5"
+  },
+  "dependencies": {
+    "flatbuffers": "^25.9.23"
   }
 }
