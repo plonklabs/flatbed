@@ -4,9 +4,32 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { emitCodec } from "./emit-codec.js";
+import type { FbsSchema } from "./model.js";
 import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
+
+test("an enum no field references is not imported (would trip noUnusedLocals)", () => {
+  const s: FbsSchema = {
+    tables: [
+      { name: "T", fields: [{ name: "x", id: 0, type: { kind: "scalar", scalar: "int32" }, default: { kind: "int", value: 0n } }] },
+    ],
+    enums: [{ name: "Unused", underlying: "int8", members: [{ name: "A", value: 0n }] }],
+  };
+  const out = emitCodec(s);
+  assert.doesNotMatch(out, /Unused/);
+  assert.match(out, /import type \{ T \} from ".\/types.js";/);
+});
+
+test("an enum a field references is imported", () => {
+  const s: FbsSchema = {
+    tables: [
+      { name: "T", fields: [{ name: "e", id: 0, type: { kind: "enum", name: "E" }, default: { kind: "int", value: 0n } }] },
+    ],
+    enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
+  };
+  assert.match(emitCodec(s), /import type \{ T, E \} from ".\/types.js";/);
+});
 
 /**
  * Compile-and-load the generated codec once. It's written under `node_modules`

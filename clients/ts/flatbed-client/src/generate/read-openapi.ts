@@ -20,10 +20,13 @@ const jsonRef = (content: unknown): string | undefined =>
 const advertisesFlatbuffers = (content: unknown): boolean =>
   asObject(content)?.["application/x-flatbuffers"] !== undefined;
 
-/** The `content` of the operation's first success (2xx) response. */
+/** The `content` of the operation's lowest success (2xx) response code. */
 const successContent = (op: Record<string, unknown>): unknown => {
   const responses = asObject(op["responses"]) ?? {};
-  const code = Object.keys(responses).find((c) => c.startsWith("2"));
+  // Lowest 2xx, so the choice doesn't depend on the spec author's key order.
+  const [code] = Object.keys(responses)
+    .filter((c) => c.startsWith("2"))
+    .sort();
   return code !== undefined ? asObject(responses[code])?.["content"] : undefined;
 };
 

@@ -148,14 +148,31 @@ const decodeTable = (ctx: Ctx, t: FbsTable): string => {
   );
 };
 
+// An enum only appears in the codec as an `as Name` cast, so import only those a
+// field actually uses; an unreferenced enum would be a dead import.
+const referencedEnums = (schema: FbsSchema): ReadonlySet<string> => {
+  const names = new Set<string>();
+  const visit = (t: FbsType): void => {
+    if (t.kind === "enum") names.add(t.name);
+    if (t.kind === "vector") visit(t.element);
+  };
+  schema.tables.forEach((table) => table.fields.forEach((f) => visit(f.type)));
+  return names;
+};
+
 /** Emit `codec.ts`: per-table encode/decode over the `flatbuffers` runtime. */
 export const emitCodec = (schema: FbsSchema): string => {
   const ctx = ctxOf(schema);
-  const typeList = [...schema.tables.map((t) => t.name), ...schema.enums.map((e) => e.name)].join(", ");
+  const used = referencedEnums(schema);
+  const typeList = [
+    ...schema.tables.map((t) => t.name),
+    ...schema.enums.filter((e) => used.has(e.name)).map((e) => e.name),
+  ].join(", ");
   return (
     HEADER +
     'import * as flatbuffers from "flatbuffers";\n' +
-    `import type { ${typeList} } from "./types.js";\n\n` +
+    (typeList.length > 0 ? `import type { ${typeList} } from "./types.js";\n` : "") +
+    "\n" +
     schema.tables.map((t) => encodeTable(ctx, t) + decodeTable(ctx, t)).join("")
   );
 };

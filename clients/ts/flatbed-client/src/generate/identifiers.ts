@@ -1,14 +1,3 @@
-// Words that can't be a method argument name in a generated `async` method
-// (ECMAScript reserved, strict-mode reserved, `eval`/`arguments`, `this`).
-const TS_KEYWORDS = new Set([
-  "arguments", "await", "break", "case", "catch", "class", "const", "continue",
-  "debugger", "default", "delete", "do", "else", "enum", "eval", "export",
-  "extends", "false", "finally", "for", "function", "if", "implements", "import",
-  "in", "instanceof", "interface", "let", "new", "null", "package", "private",
-  "protected", "public", "return", "static", "super", "switch", "this", "throw",
-  "true", "try", "typeof", "var", "void", "while", "with", "yield",
-]);
-
 /**
  * camelCase an identifier fragment: `GetUser`, `get_user`, `get-user`, and
  * `GET_USER` all become `getUser`. Non-alphanumeric runs delimit words; a
@@ -37,15 +26,14 @@ export const isValidTsIdentifier = (name: string): boolean =>
   /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(name);
 
 /**
- * A path parameter as a valid TS identifier for the generated method — a pure
- * local (argument + URL interpolation), so it can be adjusted: a reserved word
- * gets a trailing `_`, a non-identifier (empty or digit-leading) a leading `_`.
+ * A path parameter as a `pathParams` object key. camelCased, with a leading `_`
+ * when the result isn't a valid identifier (empty or digit-leading like `2fa`)
+ * so it stays dot-accessible. Reserved words are fine — they're valid property
+ * names.
  */
 export const paramIdent = (param: string): string => {
   const base = camelCase(param);
-  if (TS_KEYWORDS.has(base)) return `${base}_`;
-  if (isValidTsIdentifier(base)) return base;
-  return `_${base}`;
+  return isValidTsIdentifier(base) ? base : `_${base}`;
 };
 
 /** The `{param}` names in a path, in order. */
