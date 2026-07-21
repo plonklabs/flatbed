@@ -53,7 +53,13 @@ const scalarOrObj = (schema: Schema, base: BaseType, index: number): FbsType => 
     return { kind: "string" };
   }
   if (base === BaseType.Obj) {
-    return { kind: "table", name: bareName(schema.objects(index)?.name() ?? "") };
+    const obj = schema.objects(index);
+    // `Obj` covers tables and structs; structs are filtered from the emitted
+    // model, so a struct field would reference a type that never gets defined.
+    if (obj?.isStruct()) {
+      throw new Error(`struct field type '${bareName(obj.name() ?? "")}' is not supported; use a table`);
+    }
+    return { kind: "table", name: bareName(obj?.name() ?? "") };
   }
   throw new Error(
     `unsupported FlatBuffer base type ${BaseType[base] ?? base}; unions, structs, and arrays are not supported`,

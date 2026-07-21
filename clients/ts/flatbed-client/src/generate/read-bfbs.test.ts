@@ -79,6 +79,11 @@ test("rejects a 64-bit enum, which can't be a number-backed TS enum", () => {
   assert.throws(() => readBfbs(bytes), /64-bit underlying type/);
 });
 
+test("rejects a struct-typed field, which has no emitted interface", () => {
+  const bytes = readFileSync(fileURLToPath(new URL("./__fixtures__/struct-field.bfbs", import.meta.url)));
+  assert.throws(() => readBfbs(bytes), /struct field type 'Point' is not supported/);
+});
+
 test("rejects input that isn't a BFBS reflection buffer", () => {
   assert.throws(() => readBfbs(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])), /missing 'BFBS' magic identifier/);
 });
