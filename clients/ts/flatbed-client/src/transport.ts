@@ -10,6 +10,7 @@ export interface FlatbedRequest {
 /** A transport's reply: status plus the raw response bytes. */
 export interface FlatbedResponse {
   status: number;
+  /** `true` iff the server returned a 2xx status; the client throws {@link FlatbedError} when this is `false`. */
   ok: boolean;
   body: Uint8Array;
 }

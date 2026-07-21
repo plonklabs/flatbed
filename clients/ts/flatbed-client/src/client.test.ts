@@ -87,7 +87,6 @@ test("decode receives the response bytes", async () => {
 });
 
 test("a custom transport replaces fetch without touching client code", async () => {
-  // The Open/Closed seam: an axios/auth/retry adapter drops in here.
   const [c, t] = client(ok(new Uint8Array([1])));
   const out = await c.call("POST", "/x", new Uint8Array([2]));
   assert.equal(t.requests.length, 1);

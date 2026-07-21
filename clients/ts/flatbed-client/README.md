@@ -1,6 +1,6 @@
 # @plonklabs/flatbed-client
 
-Runtime and (soon) code generator for TypeScript FlatBuffer clients of
+The runtime for TypeScript FlatBuffer clients of
 [flatbed](https://github.com/plonklabs/flatbed) services.
 
 This package provides the stable runtime a generated client extends: the base
@@ -23,13 +23,9 @@ const axiosTransport: Transport = {
       method, url, headers, data: body,
       responseType: "arraybuffer", validateStatus: () => true,
     });
-    return { status: r.status, ok: r.status < 400, body: new Uint8Array(r.data) };
+    return { status: r.status, ok: r.status >= 200 && r.status < 300, body: new Uint8Array(r.data) };
   },
 };
 
 const api = new FlatbedClient({ baseUrl: "http://svc:8080", transport: axiosTransport });
 ```
-
-The code generator (which emits `types.ts` / `codec.ts` / `client.ts` /
-`index.ts` from a live server's `/openapi.json` + `/schema.bfbs`) lands in a
-later change.

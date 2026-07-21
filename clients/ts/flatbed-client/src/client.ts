@@ -3,7 +3,9 @@ import { fetchTransport, type Transport } from "./transport.js";
 
 const CONTENT_TYPE = "application/x-flatbuffers";
 
+/** Options for constructing a {@link FlatbedClient}. */
 export interface ClientOptions {
+  /** Base URL of the flatbed service; a request path is appended to it. */
   baseUrl: string;
   /** Override the HTTP layer (axios, auth, retries, …). Defaults to `fetch`. */
   transport?: Transport;
@@ -15,7 +17,7 @@ export interface ClientOptions {
  * The base a generated `client.ts` extends. It owns the flatbed wire rules — the
  * `application/x-flatbuffers` content type, the GET/HEAD no-body constraint,
  * baseUrl joining, and error mapping — so a generated client is only per-route
- * method bindings, and fixes to the wire layer ship via `npm update`.
+ * method bindings.
  */
 export class FlatbedClient {
   private readonly baseUrl: string;
