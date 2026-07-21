@@ -713,6 +713,8 @@ mod tests {
         assert!(module.contains(
             "::flatbed::TypeFieldInfo { name: \"home\", fbs_type: \"Address\", field_id: 3, required: false }"
         ));
+        // The `.bfbs` reflection is baked in for serving at `/schema.bfbs`.
+        assert!(module.contains("::flatbed::FlatbedSchema { bfbs: include_bytes!(\"test.bfbs\") }"));
     }
 
     #[test]
