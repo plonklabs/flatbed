@@ -9,9 +9,6 @@ const TS_KEYWORDS = new Set([
   "true", "try", "typeof", "var", "void", "while", "with", "yield",
 ]);
 
-// Names the generated client can't take: the base class already declares each.
-const RESERVED_METHOD_NAMES = new Set(["constructor", "request", "baseUrl", "transport"]);
-
 /**
  * camelCase an identifier fragment: `GetUser`, `get_user`, `get-user`, and
  * `GET_USER` all become `getUser`. Non-alphanumeric runs delimit words; a
@@ -38,8 +35,6 @@ export const pascalCase = (s: string): string => {
 /** A valid TS identifier: starts with a letter/`_`/`$`, then letters/digits/`_`/`$`. */
 export const isValidTsIdentifier = (name: string): boolean =>
   /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(name);
-
-export const isReservedMethodName = (name: string): boolean => RESERVED_METHOD_NAMES.has(name);
 
 /**
  * A path parameter as a valid TS identifier for the generated method — a pure

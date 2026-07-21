@@ -11,34 +11,39 @@ test("methodName derives <method><PascalPath> without an operationId", () => {
   assert.equal(methodName({ method: "GET", path: "/users/{id}" }), "getUsersById");
 });
 
-test("emitClient extends the package base and binds the codec", () => {
+test("emitClient generates a createFlatbedClient factory", () => {
   const out = emitClient([
     { method: "POST", path: "/echo", operationId: "echo", requestType: "EchoRequest", responseType: "EchoResponse" },
   ]);
-  assert.match(out, /import \{ FlatbedClient as FlatbedClientBase \} from "@plonklabs\/flatbed-client";/);
-  assert.match(out, /export class FlatbedClient extends FlatbedClientBase \{/);
-  assert.match(out, /echo\(body: EchoRequest\): Promise<EchoResponse> \{/);
-  assert.match(out, /codec\.encodeEchoRequestRoot\(body\)/);
-  assert.match(out, /codec\.decodeEchoResponseRoot/);
+  assert.match(out, /import \{ request, type ClientConfig \} from "@plonklabs\/flatbed-client";/);
+  assert.match(out, /export const createFlatbedClient = \(config: ClientConfig\) => \(\{/);
+  assert.match(out, /echo: \(args: \{ body: EchoRequest \}\): Promise<EchoResponse> =>/);
+  assert.match(out, /request\(config, "POST", "\/echo", codec\.encodeEchoRequestRoot\(args\.body\), codec\.decodeEchoResponseRoot\)/);
 });
 
-test("a GET drops the body argument and encodes an empty payload", () => {
-  const out = emitClient([{ method: "GET", path: "/health", responseType: "Health" }]);
-  assert.match(out, /getHealth\(\): Promise<Health> \{/);
+test("a GET with a path param takes { pathParams } and no body", () => {
+  const out = emitClient([{ method: "GET", path: "/users/{id}", responseType: "User" }]);
+  assert.match(out, /getUsersById: \(args: \{ pathParams: \{ id: string \} \}\): Promise<User> =>/);
+  assert.match(out, /encodeURIComponent\(args\.pathParams\.id\)/);
   assert.match(out, /new Uint8Array\(\)/);
 });
 
-test("path params become encoded leading string args", () => {
-  const out = emitClient([{ method: "GET", path: "/users/{id}", responseType: "User" }]);
-  assert.match(out, /getUsersById\(id: string\): Promise<User> \{/);
-  assert.match(out, /encodeURIComponent\(id\)/);
+test("a PUT with a body and a path param takes both keys", () => {
+  const out = emitClient([{ method: "PUT", path: "/users/{id}", requestType: "UserPatch", responseType: "User" }]);
+  assert.match(out, /putUsersById: \(args: \{ body: UserPatch; pathParams: \{ id: string \} \}\): Promise<User> =>/);
+  assert.match(out, /codec\.encodeUserPatchRoot\(args\.body\)/);
+});
+
+test("an operation with neither body nor path params takes no argument", () => {
+  const out = emitClient([{ method: "GET", path: "/health", responseType: "Health" }]);
+  assert.match(out, /getHealth: \(\): Promise<Health> =>/);
 });
 
 test("no codec/type imports when no operation is typed", () => {
   const out = emitClient([{ method: "GET", path: "/ping" }]);
   assert.doesNotMatch(out, /import \* as codec/);
   assert.doesNotMatch(out, /import type/);
-  assert.match(out, /getPing\(\): Promise<Uint8Array> \{/);
+  assert.match(out, /getPing: \(\): Promise<Uint8Array> =>/);
 });
 
 test("checkNames rejects duplicate derived method names", () => {
@@ -52,17 +57,10 @@ test("checkNames rejects duplicate derived method names", () => {
   );
 });
 
-test("checkNames rejects a name reserved by the base client", () => {
+test("checkNames rejects duplicate path-param keys in a path", () => {
   assert.throws(
-    () => checkNames([{ method: "POST", path: "/x", operationId: "request", requestType: "R" }]),
-    /collides/,
-  );
-});
-
-test("checkNames rejects a path param colliding with the body argument", () => {
-  assert.throws(
-    () => checkNames([{ method: "POST", path: "/x/{body}", requestType: "R" }]),
-    /request-body argument/,
+    () => checkNames([{ method: "GET", path: "/users/{id}/posts/{id}" }]),
+    /two path parameters that map to the key `id`/,
   );
 });
 
