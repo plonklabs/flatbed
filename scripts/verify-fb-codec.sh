@@ -32,8 +32,6 @@ trap cleanup EXIT
 
 printf '{"paths":{}}' > "$WORK/empty.json"
 
-# Write a roundtrip.ts beside the generated codec: it encodes/decodes fixed
-# sample values through codec.ts and asserts they survive unchanged.
 driver() {
   cat >"$1/roundtrip.ts" <<'TS'
 import * as codec from "./codec.js";
@@ -87,7 +85,6 @@ cat >"$WORK/tsconfig-base.json" <<'JSON'
   "include": ["src/**/*.ts"] }
 JSON
 
-# --- Rust-generated codec ---------------------------------------------------
 echo "verify-fb-codec: generating the Rust codec (gen-fb-plugin)…"
 cargo build --quiet -p flatbed_build --bin flatbed
 mkdir -p "$WORK/rust/src"
@@ -95,7 +92,6 @@ mkdir -p "$WORK/rust/src"
   --schemas-dir "$SCHEMAS" --out "$WORK/rust/src" >/dev/null
 driver "$WORK/rust/src"
 
-# --- npm-generated codec ----------------------------------------------------
 echo "verify-fb-codec: generating the npm codec (@plonklabs/flatbed-client)…"
 ( cd "$PKG" && npm ci --silent --no-audit --no-fund >"$WORK/npm-ci.log" 2>&1 ) \
   || { echo "npm ci failed ($PKG):" >&2; cat "$WORK/npm-ci.log" >&2; exit 1; }

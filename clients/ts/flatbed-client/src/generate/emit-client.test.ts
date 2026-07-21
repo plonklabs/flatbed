@@ -57,6 +57,14 @@ test("checkNames rejects duplicate derived method names", () => {
   );
 });
 
+test("checkNames rejects an operationId that derives an invalid identifier", () => {
+  // "3D" camelCases to "3d" — a leading digit is not a valid TS identifier.
+  assert.throws(
+    () => checkNames([{ method: "GET", path: "/x", operationId: "3D" }]),
+    /derives the client method name `3d`, which is not a valid TypeScript identifier/,
+  );
+});
+
 test("checkNames rejects duplicate path-param keys in a path", () => {
   assert.throws(
     () => checkNames([{ method: "GET", path: "/users/{id}/posts/{id}" }]),

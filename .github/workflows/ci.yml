@@ -117,7 +117,6 @@ jobs:
       - run: npm run build
       - run: npm test
 
-  # Needs Rust, node, and flatc on the runner.
   codec-compat:
     runs-on: ubuntu-latest
     timeout-minutes: 30
