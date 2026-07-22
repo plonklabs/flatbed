@@ -102,8 +102,8 @@ ABS_BFBS="$(pwd)/$BFBS"
 ( cd "$PKG" && node --import tsx src/cli.ts generate \
     --openapi "$WORK/empty.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >"$WORK/npm-gen.log" 2>&1 ) \
   || { echo "npm codec generation failed:" >&2; cat "$WORK/npm-gen.log" >&2; exit 1; }
-# Only the codec + types drive the round-trip; client.ts/index.ts import the
-# published package and aren't needed here.
+# Only the codec and type modules drive the round-trip; the client and barrel
+# modules import the published package and aren't needed here.
 cp "$WORK/npm/gen/codec.ts" "$WORK/npm/gen/types.ts" "$WORK/npm/src/"
 driver "$WORK/npm/src"
 

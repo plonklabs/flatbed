@@ -24,7 +24,7 @@ export interface ClientConfig {
  * response bytes back into the typed value. Owns the flatbed wire rules — the
  * `application/x-flatbuffers` content type, the GET/HEAD no-body constraint,
  * baseUrl joining, and `FlatbedError` mapping — so a generated method is just a
- * one-line call. Generated code calls this; it isn't usually called by hand.
+ * one-line call.
  */
 export const request = <T>(
   config: ClientConfig,

@@ -77,9 +77,9 @@ const argType = (op: Operation, params: readonly string[]): string | undefined =
 // JSON.stringify'd (so a stray quote/backslash/backtick in an untrusted spec
 // path can't break the emitted literal) and each param is URL-encoded — a `/`,
 // `?`, `#`, `&`, or space in a value would otherwise misroute the URL. Only a
-// whole `/`-delimited `{param}` segment is a param (matching `pathParams`); a
-// brace inside a larger segment stays literal, so `pathExpr` and the arg type
-// never disagree on what `args.pathParams` holds.
+// whole `/`-delimited `{param}` segment is a parameter; a brace inside a larger
+// segment stays literal, so the emitted path and the argument object always
+// agree on which segments are parameters.
 const pathExpr = (op: Operation): string => {
   const params = new Set(pathParams(op.path));
   const expr = op.path

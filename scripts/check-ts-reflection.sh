@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Verify the committed flatc `--ts` reflection bindings match the pinned flatc.
 #
-# The TS client reads a served `.bfbs` through FlatBuffer reflection bindings
-# vendored under clients/ts/flatbed-client/src/generate/fbs-reflection/. They're
-# `flatc --ts` output over the vendored `scripts/reflection.fbs`, so they must be
-# regenerable byte-for-byte from the pinned compiler; a drifted checkout would
-# silently parse `.bfbs` buffers against stale bindings. The `.fbs` source is
-# vendored (not fetched) so the check is hermetic — the `.fbs` and the committed
-# bindings must both come from the pinned `flatc` version.
+# The TS client reads a served `.bfbs` through committed FlatBuffer reflection
+# bindings that are `flatc --ts` output over a vendored `.fbs` source. Both must
+# be regenerable byte-for-byte from the pinned compiler; a drifted checkout would
+# silently parse `.bfbs` buffers against stale bindings. The `.fbs` is vendored
+# (not fetched) so the check is hermetic — the `.fbs` and the committed bindings
+# must both come from the pinned `flatc` version.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
