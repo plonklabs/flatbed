@@ -72,11 +72,11 @@ test("absent optional fields (string, table, vector) decode to undefined", () =>
     const testResp = c.decodeTestResponseJson as unknown as (b: Uint8Array) => { message?: string };
     const user = c.decodeUserRequestJson as unknown as (b: Uint8Array) => { address?: unknown };
     const book = c.decodeAddressBookJson as unknown as (b: Uint8Array) => { addresses?: unknown; contact_names?: unknown };
-    assert.equal(testResp(enc({ value: 1, success: true })).message, undefined); // string
-    assert.equal(user(enc({ name: "Ada", age: 36 })).address, undefined); // nested table
+    assert.equal(testResp(enc({ value: 1, success: true })).message, undefined);
+    assert.equal(user(enc({ name: "Ada", age: 36 })).address, undefined);
     const b = book(enc({ owner: "Ada" }));
-    assert.equal(b.addresses, undefined); // vector of tables
-    assert.equal(b.contact_names, undefined); // vector of strings
+    assert.equal(b.addresses, undefined);
+    assert.equal(b.contact_names, undefined);
   }));
 
 test("an absent 64-bit field decodes to its default instead of throwing", () =>
@@ -92,6 +92,6 @@ test("64-bit values above 2^53 lose precision on the JSON path", () =>
   codec.then((c) => {
     const encode = c.encodeTestResponseJson as unknown as (v: unknown) => Uint8Array;
     const decode = c.decodeTestResponseJson as unknown as (b: Uint8Array) => { value: bigint };
-    const big = 9007199254740993n; // 2^53 + 1
+    const big = 9007199254740993n;
     assert.notEqual(decode(encode({ message: "x", value: big, success: true })).value, big);
   }));
