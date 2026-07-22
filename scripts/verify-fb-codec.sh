@@ -108,12 +108,15 @@ cp "$WORK/npm/gen/codec.ts" "$WORK/npm/gen/types.ts" "$WORK/npm/src/"
 driver "$WORK/npm/src"
 
 echo "verify-fb-codec: installing flatbuffers + typescript…"
+# Match the range the published client depends on, so a major bump can't leave
+# this harness silently proving compatibility against the old wire runtime.
+FB_VER="$(node -p "require('./$PKG/package.json').dependencies.flatbuffers")"
 for dir in rust npm; do
   cat >"$WORK/$dir/package.json" <<'JSON'
 { "name": "fb-codec-verify", "private": true, "type": "module" }
 JSON
   cp "$WORK/tsconfig-base.json" "$WORK/$dir/tsconfig.json"
-  ( cd "$WORK/$dir" && npm install --silent --no-audit --no-fund flatbuffers@25 typescript@5 @types/node@20 >npm.log 2>&1 ) \
+  ( cd "$WORK/$dir" && npm install --silent --no-audit --no-fund "flatbuffers@${FB_VER}" typescript@5 @types/node@20 >npm.log 2>&1 ) \
     || { echo "npm install failed ($dir):" >&2; cat "$WORK/$dir/npm.log" >&2; exit 1; }
   ( cd "$WORK/$dir" && npx --yes tsc )
 done
