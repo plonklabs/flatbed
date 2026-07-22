@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Prove the generated TypeScript FlatBuffer codec is byte-compatible with the
-# Rust `flatbuffers` implementation, in both directions.
+# Prove the generated TypeScript FlatBuffer codecs are byte-compatible with the
+# Rust `flatbuffers` implementation, in both directions — for both generators:
 #
-# For each representative type (covering strings, 64-bit ints, bools, nested
-# tables, vectors of tables/strings, enums and vectors of enums):
-#   Rust encodes  → TS decodes and asserts   (Rust → TS wire compatibility)
-#   TS encodes    → Rust decodes and asserts  (TS → Rust wire compatibility)
+#   Rust codegen (`flatbed gen-fb-plugin`, flatc reflection in Rust)
+#   npm codegen  (`@plonklabs/flatbed-client`, reflection read from the `.bfbs`)
 #
-# A value only survives if the two independent implementations agree on the
-# exact bytes. Requires `node`/`npx` and the pinned `flatc`; skips cleanly when
-# node tooling is absent.
+# For each representative type (strings, 64-bit ints, bools, nested tables,
+# vectors of tables/strings, enums and vectors of enums):
+#   Rust encodes  → each TS codec decodes and asserts   (Rust → TS)
+#   each TS codec encodes → Rust decodes and asserts     (TS → Rust)
+#   the two TS codecs produce byte-identical output      (npm ≡ Rust codegen)
+#
+# A value only survives if every independent implementation agrees on the exact
+# bytes. Requires `node`/`npx` and the pinned `flatc`; skips when node is absent.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -20,29 +23,17 @@ if ! command -v npx >/dev/null 2>&1; then
 fi
 
 TYPES="TestResponse UserRequest AddressBook LogEvent Defaulted"
+SCHEMAS="crates/flatbed/schemas"
+BFBS="crates/flatbed/src/generated/test.bfbs"
+PKG="clients/ts/flatbed-client"
 WORK="$(mktemp -d)"
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 
-echo "verify-fb-codec: generating the TS codec from test.fbs…"
-cargo build --quiet -p flatbed_build --bin flatbed
-./target/debug/flatbed gen-fb-plugin \
-  --openapi <(printf '{"paths":{}}') \
-  --schemas-dir crates/flatbed/schemas \
-  --out "$WORK/src" >/dev/null
+printf '{"paths":{}}' > "$WORK/empty.json"
 
-cat >"$WORK/package.json" <<'JSON'
-{ "name": "fb-codec-verify", "private": true, "type": "module" }
-JSON
-cat >"$WORK/tsconfig.json" <<'JSON'
-{ "compilerOptions": { "target": "es2020", "module": "es2020",
-  "moduleResolution": "node", "outDir": "dist", "strict": true, "skipLibCheck": true },
-  "include": ["src/**/*.ts"] }
-JSON
-
-# TS script that mirrors the Rust encode/decode samples: same fixed values,
-# same assertion logic, run through the generated codec.
-cat >"$WORK/src/roundtrip.ts" <<'TS'
+driver() {
+  cat >"$1/roundtrip.ts" <<'TS'
 import * as codec from "./codec.js";
 import { Severity } from "./types.js";
 
@@ -86,23 +77,63 @@ if (mode === "encode") {
   throw new Error("usage: roundtrip encode|decode <Type> [hex]");
 }
 TS
+}
+
+cat >"$WORK/tsconfig-base.json" <<'JSON'
+{ "compilerOptions": { "target": "es2020", "module": "es2020",
+  "moduleResolution": "node", "outDir": "dist", "strict": true, "skipLibCheck": true },
+  "include": ["src/**/*.ts"] }
+JSON
+
+echo "verify-fb-codec: generating the Rust codec (gen-fb-plugin)…"
+cargo build --quiet -p flatbed_build --bin flatbed
+mkdir -p "$WORK/rust/src"
+./target/debug/flatbed gen-fb-plugin --openapi "$WORK/empty.json" \
+  --schemas-dir "$SCHEMAS" --out "$WORK/rust/src" >/dev/null
+driver "$WORK/rust/src"
+
+echo "verify-fb-codec: generating the npm codec (@plonklabs/flatbed-client)…"
+( cd "$PKG" && npm ci --silent --no-audit --no-fund >"$WORK/npm-ci.log" 2>&1 ) \
+  || { echo "npm ci failed ($PKG):" >&2; cat "$WORK/npm-ci.log" >&2; exit 1; }
+mkdir -p "$WORK/npm/src"
+ABS_BFBS="$(pwd)/$BFBS"
+# The CLI runs from the package dir so its `tsx` loader resolves; inputs and
+# output are absolute since the cwd changes.
+( cd "$PKG" && node --import tsx src/cli.ts generate \
+    --openapi "$WORK/empty.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >"$WORK/npm-gen.log" 2>&1 ) \
+  || { echo "npm codec generation failed:" >&2; cat "$WORK/npm-gen.log" >&2; exit 1; }
+# Only the codec and type modules drive the round-trip; the client and barrel
+# modules import the published package and aren't needed here.
+cp "$WORK/npm/gen/codec.ts" "$WORK/npm/gen/types.ts" "$WORK/npm/src/"
+driver "$WORK/npm/src"
 
 echo "verify-fb-codec: installing flatbuffers + typescript…"
-( cd "$WORK" && npm install --silent --no-audit --no-fund flatbuffers@25 typescript@5 @types/node@20 >npm.log 2>&1 ) \
-  || { echo "npm install failed:" >&2; cat "$WORK/npm.log" >&2; exit 1; }
-
-echo "verify-fb-codec: type-checking + compiling the codec…"
-( cd "$WORK" && npx --yes tsc )
+# Match the range the published client depends on, so a major bump can't leave
+# this harness silently proving compatibility against the old wire runtime.
+FB_VER="$(node -p "require('./$PKG/package.json').dependencies.flatbuffers")"
+for dir in rust npm; do
+  cat >"$WORK/$dir/package.json" <<'JSON'
+{ "name": "fb-codec-verify", "private": true, "type": "module" }
+JSON
+  cp "$WORK/tsconfig-base.json" "$WORK/$dir/tsconfig.json"
+  ( cd "$WORK/$dir" && npm install --silent --no-audit --no-fund "flatbuffers@${FB_VER}" typescript@5 @types/node@20 >npm.log 2>&1 ) \
+    || { echo "npm install failed ($dir):" >&2; cat "$WORK/$dir/npm.log" >&2; exit 1; }
+  ( cd "$WORK/$dir" && npx --yes tsc )
+done
 
 rust() { cargo run --quiet -p flatbed --example fb_roundtrip --features openapi -- "$@"; }
-node_rt() { node "$WORK/dist/roundtrip.js" "$@"; }
+ts_rust() { node "$WORK/rust/dist/roundtrip.js" "$@"; }
+ts_npm() { node "$WORK/npm/dist/roundtrip.js" "$@"; }
 
 for ty in $TYPES; do
   rust_hex="$(rust encode "$ty")"
-  [ "$(node_rt decode "$ty" "$rust_hex")" = "ok" ] || { echo "FAIL: TS could not decode Rust $ty" >&2; exit 1; }
-  ts_hex="$(node_rt encode "$ty")"
-  [ "$(rust decode "$ty" "$ts_hex")" = "ok" ] || { echo "FAIL: Rust could not decode TS $ty" >&2; exit 1; }
-  echo "  ✓ $ty — Rust↔TS byte-compatible"
+  [ "$(ts_rust decode "$ty" "$rust_hex")" = "ok" ] || { echo "FAIL: Rust codec TS could not decode Rust $ty" >&2; exit 1; }
+  [ "$(ts_npm decode "$ty" "$rust_hex")" = "ok" ]  || { echo "FAIL: npm codec TS could not decode Rust $ty" >&2; exit 1; }
+  rust_ts_hex="$(ts_rust encode "$ty")"
+  npm_ts_hex="$(ts_npm encode "$ty")"
+  [ "$npm_ts_hex" = "$rust_ts_hex" ] || { echo "FAIL: npm codec bytes differ from the Rust codec for $ty" >&2; exit 1; }
+  [ "$(rust decode "$ty" "$npm_ts_hex")" = "ok" ] || { echo "FAIL: Rust could not decode npm TS $ty" >&2; exit 1; }
+  echo "  ✓ $ty — Rust ↔ Rust-codec ↔ npm-codec all byte-compatible"
 done
 
-echo "verify-fb-codec: OK — the generated codec round-trips against Rust for every type."
+echo "verify-fb-codec: OK — both generated codecs round-trip against Rust byte-for-byte."

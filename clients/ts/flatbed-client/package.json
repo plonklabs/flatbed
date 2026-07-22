@@ -15,17 +15,26 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "flatbed-client": "dist/cli.js"
+  },
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/*.test.ts"
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "devDependencies": {
     "@types/node": "^22",
     "tsx": "^4",
     "typescript": "^5"
+  },
+  "dependencies": {
+    "flatbuffers": "^25.9.23"
   }
 }
