@@ -84,6 +84,22 @@ test("binds a codec type only for the direction that speaks flatbuffers", () => 
   assert.equal(ops[0]?.responseType, undefined);
 });
 
+test("produces an untyped operation when x-flatbuffers has no paired JSON $ref", () => {
+  const ops = readOperations({
+    paths: {
+      "/fire": {
+        post: {
+          requestBody: { content: { "application/x-flatbuffers": fb } }, // no JSON $ref to name the type
+          responses: { "204": {} },
+        },
+      },
+    },
+  });
+  assert.equal(ops.length, 1);
+  assert.equal(ops[0]?.requestType, undefined);
+  assert.equal(ops[0]?.responseType, undefined);
+});
+
 test("returns nothing for a spec with no paths", () => {
   assert.deepEqual(readOperations({}), []);
   assert.deepEqual(readOperations(null), []);

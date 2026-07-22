@@ -6,8 +6,8 @@
 # `flatc --ts` output over the vendored `scripts/reflection.fbs`, so they must be
 # regenerable byte-for-byte from the pinned compiler; a drifted checkout would
 # silently parse `.bfbs` buffers against stale bindings. The `.fbs` source is
-# vendored (not fetched) so the check is hermetic — it re-drifts only when
-# `.flatc-version` is deliberately bumped, at which point both are regenerated.
+# vendored (not fetched) so the check is hermetic — the `.fbs` and the committed
+# bindings must both come from the pinned `flatc` version.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
