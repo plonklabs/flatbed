@@ -38,9 +38,8 @@ export const request = <T>(
   contentType: string,
 ): Promise<T> => {
   const transport = config.transport ?? fetchTransport(config.fetch);
-  // The server selects the response codec from the request `Content-Type`, not
-  // `Accept`, so it's sent on every request — including a bodyless GET, whose
-  // response would otherwise fall back to the server's default format.
+  // The server selects its response codec from the request `Content-Type`, not
+  // `Accept`, so it's sent on every request, including bodyless GET/HEAD.
   const headers: Record<string, string> = {
     ...config.headers,
     accept: contentType,

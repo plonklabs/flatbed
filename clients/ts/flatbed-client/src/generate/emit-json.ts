@@ -19,7 +19,6 @@ const toWire = (t: FbsType, expr: string): string => {
 const passthroughTs = (t: FbsType): string =>
   t.kind === "string" ? "string" : t.kind === "scalar" && t.scalar === "bool" ? "boolean" : "number";
 
-// The parsed JSON is `unknown`, so `fromWire` narrows with an `as` cast at each field.
 const fromWire = (t: FbsType, expr: string): string => {
   if (t.kind === "enum") return `${t.name}[${expr} as keyof typeof ${t.name}]`;
   if (t.kind === "table") return `fromWire${t.name}(${expr} as Record<string, unknown>)`;
@@ -62,7 +61,7 @@ const rootFns = (t: FbsTable): string =>
   `export function decode${t.name}Json(bytes: Uint8Array): ${t.name} {\n` +
   `  return fromWire${t.name}(JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>);\n}\n\n`;
 
-// Enums are imported as values (used as `Name[...]` at runtime), only the referenced ones.
+// Enums need a value import: used as `Name[...]` at runtime.
 const referencedEnums = (schema: FbsSchema): ReadonlySet<string> => {
   const names = new Set<string>();
   const visit = (t: FbsType): void => {
