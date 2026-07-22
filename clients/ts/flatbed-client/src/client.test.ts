@@ -77,6 +77,13 @@ test("a JSON GET still sends Content-Type: application/json with no body", () =>
     assert.equal(sent.body, undefined);
   }));
 
+test("a JSON HEAD still sends Content-Type: application/json with no body", () =>
+  call(ok(), "HEAD", "/health", new Uint8Array(), undefined, JSON_CONTENT_TYPE).then(({ sent }) => {
+    assert.equal(sent.headers["content-type"], "application/json");
+    assert.equal(sent.headers.accept, "application/json");
+    assert.equal(sent.body, undefined);
+  }));
+
 test("config headers are added to every request", () =>
   call(ok(), "GET", "/health", new Uint8Array(), { headers: { authorization: "Bearer t" } }).then(({ sent }) => {
     assert.equal(sent.headers.authorization, "Bearer t");
