@@ -102,9 +102,10 @@ ABS_BFBS="$(pwd)/$BFBS"
 ( cd "$PKG" && node --import tsx src/cli.ts generate \
     --openapi "$WORK/empty.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >"$WORK/npm-gen.log" 2>&1 ) \
   || { echo "npm codec generation failed:" >&2; cat "$WORK/npm-gen.log" >&2; exit 1; }
-# Only the codec and type modules drive the round-trip; the client and barrel
-# modules import the published package and aren't needed here.
-cp "$WORK/npm/gen/codec.ts" "$WORK/npm/gen/types.ts" "$WORK/npm/src/"
+# The round-trip needs the FlatBuffer codec and the type module (enums are
+# runtime value imports, not type-erased); the JSON codec is copied only for the
+# tsc type-check.
+cp "$WORK/npm/gen/codec.ts" "$WORK/npm/gen/json-codec.ts" "$WORK/npm/gen/types.ts" "$WORK/npm/src/"
 driver "$WORK/npm/src"
 
 echo "verify-fb-codec: installing flatbuffers + typescript…"

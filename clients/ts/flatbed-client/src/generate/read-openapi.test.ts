@@ -50,6 +50,56 @@ test("reads a success response under a non-200 code, request-less", () => {
   assert.equal(users?.requestType, undefined);
 });
 
+test("supportsJson is true when every direction also advertises application/json", () => {
+  assert.equal(readOperations(spec).find((o) => o.path === "/echo")?.supportsJson, true);
+});
+
+test("supportsJson is true for a request-absent op whose response advertises JSON", () => {
+  assert.equal(readOperations(spec).find((o) => o.path === "/users/{id}")?.supportsJson, true);
+});
+
+test("supportsJson is true for a both-format request with an absent response (204-style)", () => {
+  const ops = readOperations({
+    paths: {
+      "/fire": {
+        post: {
+          requestBody: { content: { "application/x-flatbuffers": fb, "application/json": json("Req") } },
+          responses: { "204": {} },
+        },
+      },
+    },
+  });
+  assert.equal(ops[0]?.supportsJson, true);
+});
+
+test("supportsJson requires every direction, not just one (AND, not OR)", () => {
+  const ops = readOperations({
+    paths: {
+      "/mixed": {
+        post: {
+          requestBody: { content: { "application/x-flatbuffers": fb } }, // request: FB only
+          responses: { "200": { content: { "application/x-flatbuffers": fb, "application/json": json("R") } } },
+        },
+      },
+    },
+  });
+  assert.equal(ops[0]?.supportsJson, false);
+});
+
+test("supportsJson is false when a direction advertises only flatbuffers", () => {
+  const ops = readOperations({
+    paths: {
+      "/fb-only": {
+        post: {
+          requestBody: { content: { "application/x-flatbuffers": fb } },
+          responses: { "200": { content: { "application/x-flatbuffers": fb } } },
+        },
+      },
+    },
+  });
+  assert.equal(ops[0]?.supportsJson, false);
+});
+
 test("picks the lowest 2xx code when a route has multiple", () => {
   const got = readOperations({
     paths: {

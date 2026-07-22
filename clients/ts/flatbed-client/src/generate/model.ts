@@ -67,7 +67,9 @@ export interface FbsSchema {
 /**
  * An operation that speaks `application/x-flatbuffers`, read from the OpenAPI
  * spec. `requestType`/`responseType` are the bare `$ref` component names, absent
- * when that body is missing or inlined rather than referenced.
+ * when that body is missing or inlined rather than referenced. `supportsJson` is
+ * true when every direction the operation uses also advertises
+ * `application/json`, so the call can be made with `{ as: "json" }`.
  */
 export interface Operation {
   readonly method: string;
@@ -75,4 +77,5 @@ export interface Operation {
   readonly operationId?: string;
   readonly requestType?: string;
   readonly responseType?: string;
+  readonly supportsJson: boolean;
 }

@@ -3,7 +3,7 @@ export interface FlatbedRequest {
   method: string;
   url: string;
   headers: Record<string, string>;
-  /** Absent for GET/HEAD; a FlatBuffer payload otherwise. */
+  /** Absent for GET/HEAD; the encoded request payload otherwise. */
   body?: Uint8Array;
 }
 

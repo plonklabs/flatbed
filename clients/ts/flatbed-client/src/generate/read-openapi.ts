@@ -21,6 +21,9 @@ const jsonRef = (content: unknown): string | undefined =>
 const advertisesFlatbuffers = (content: unknown): boolean =>
   asObject(content)?.["application/x-flatbuffers"] !== undefined;
 
+const advertisesJson = (content: unknown): boolean =>
+  asObject(content)?.["application/json"] !== undefined;
+
 /** The `content` of the operation's lowest success (2xx) response code. */
 const successContent = (op: Record<string, unknown>): unknown => {
   const responses = asObject(op["responses"]) ?? {};
@@ -36,6 +39,9 @@ const operationFrom = (method: string, path: string, op: Record<string, unknown>
   const response = successContent(op);
   if (!advertisesFlatbuffers(request) && !advertisesFlatbuffers(response)) return undefined;
   const operationId = op["operationId"];
+  const supportsJson =
+    (request === undefined || advertisesJson(request)) &&
+    (response === undefined || advertisesJson(response));
   return {
     method: method.toUpperCase(),
     path,
@@ -44,6 +50,7 @@ const operationFrom = (method: string, path: string, op: Record<string, unknown>
     // JSON-only request/response never gets a flatbuffer encoder/decoder.
     requestType: advertisesFlatbuffers(request) ? jsonRef(request) : undefined,
     responseType: advertisesFlatbuffers(response) ? jsonRef(response) : undefined,
+    supportsJson,
   };
 };
 
