@@ -53,8 +53,7 @@ const toWireField = (f: FbsField): string => {
 const fromWireField = (f: FbsField): string => {
   const v = `obj.${f.name}`;
   const conv = fromWire(f.type, v);
-  // fromWire always adds a cast, so `conv` always differs from `v`; an absent
-  // optional field decodes to undefined, an absent scalar/enum to its default.
+  // fromWire always adds a cast, so `conv` always differs from `v`.
   if (optional(f.type)) return `${v} != null ? ${conv} : undefined`;
   return `${v} != null ? ${conv} : ${defaultLiteral(f)}`;
 };
@@ -91,7 +90,8 @@ const referencedEnums = (schema: FbsSchema): ReadonlySet<string> => {
 
 /** Emit per-table JSON encode/decode that matches the server's serde wire shape. */
 export const emitJson = (schema: FbsSchema): string => {
-  const enums = schema.enums.filter((e) => referencedEnums(schema).has(e.name)).map((e) => e.name);
+  const enumSet = referencedEnums(schema);
+  const enums = schema.enums.filter((e) => enumSet.has(e.name)).map((e) => e.name);
   const typeImports = schema.tables.map((t) => t.name);
   return (
     HEADER +
