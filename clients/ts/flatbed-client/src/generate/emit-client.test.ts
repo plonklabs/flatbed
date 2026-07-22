@@ -40,6 +40,14 @@ test("escapes an unsafe character in the path so the generated literal is valid"
   assert.ok(out.includes(JSON.stringify('/a"b'))); // quote is escaped, not embedded raw
 });
 
+test("a brace inside a larger segment stays literal, matching pathParams", () => {
+  // `{id}` doesn't fill a whole segment, so pathParams sees no param → no `args`.
+  const out = emitClient([{ method: "GET", path: "/files/{id}.json", responseType: "R" }]);
+  assert.match(out, /getFilesIdJson: \(\): Promise<R> =>/);
+  assert.doesNotMatch(out, /args\.pathParams/);
+  assert.ok(out.includes(JSON.stringify("{id}")));
+});
+
 test("an operation with neither body nor path params takes no argument", () => {
   const out = emitClient([{ method: "GET", path: "/health", responseType: "Health" }]);
   assert.match(out, /getHealth: \(\): Promise<Health> =>/);

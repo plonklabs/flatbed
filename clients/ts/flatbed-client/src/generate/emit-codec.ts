@@ -174,7 +174,9 @@ export const emitCodec = (schema: FbsSchema): string => {
   ].join(", ");
   return (
     HEADER +
-    'import * as flatbuffers from "flatbuffers";\n' +
+    // Only table encode/decode uses the runtime; with no tables the import would
+    // be unused and `noUnusedLocals` would reject the generated file.
+    (schema.tables.length > 0 ? 'import * as flatbuffers from "flatbuffers";\n' : "") +
     (typeList.length > 0 ? `import type { ${typeList} } from "./types.js";\n` : "") +
     "\n" +
     schema.tables.map((t) => encodeTable(ctx, t) + decodeTable(ctx, t)).join("")

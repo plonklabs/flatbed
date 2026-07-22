@@ -76,13 +76,20 @@ const argType = (op: Operation, params: readonly string[]): string | undefined =
 // Build the request path as concatenated pieces: each static chunk is
 // JSON.stringify'd (so a stray quote/backslash/backtick in an untrusted spec
 // path can't break the emitted literal) and each param is URL-encoded — a `/`,
-// `?`, `#`, `&`, or space in a value would otherwise misroute the URL.
+// `?`, `#`, `&`, or space in a value would otherwise misroute the URL. Only a
+// whole `/`-delimited `{param}` segment is a param (matching `pathParams`); a
+// brace inside a larger segment stays literal, so `pathExpr` and the arg type
+// never disagree on what `args.pathParams` holds.
 const pathExpr = (op: Operation): string => {
+  const params = new Set(pathParams(op.path));
   const expr = op.path
     .split(/\{([^}]+)\}/u)
-    .map((part, i) =>
-      i % 2 === 0 ? JSON.stringify(part) : `encodeURIComponent(args.pathParams.${paramIdent(part)})`,
-    )
+    .map((part, i) => {
+      if (i % 2 === 0) return JSON.stringify(part);
+      return params.has(part)
+        ? `encodeURIComponent(args.pathParams.${paramIdent(part)})`
+        : JSON.stringify(`{${part}}`);
+    })
     .filter((piece) => piece !== '""')
     .join(" + ");
   return expr === "" ? '""' : expr;

@@ -21,6 +21,12 @@ test("an enum no field references is not imported (would trip noUnusedLocals)", 
   assert.match(out, /import type \{ T \} from ".\/types.js";/);
 });
 
+test("omits the flatbuffers import when the schema has no tables", () => {
+  // With no tables the runtime is unused; emitting the import would trip noUnusedLocals.
+  const out = emitCodec({ tables: [], enums: [] });
+  assert.doesNotMatch(out, /import \* as flatbuffers/);
+});
+
 test("an enum a field references is imported", () => {
   const s: FbsSchema = {
     tables: [
