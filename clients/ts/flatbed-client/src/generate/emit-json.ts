@@ -53,7 +53,9 @@ const toWireField = (f: FbsField): string => {
 const fromWireField = (f: FbsField): string => {
   const v = `obj.${f.name}`;
   const conv = fromWire(f.type, v);
-  if (optional(f.type)) return conv !== v ? `${v} != null ? ${conv} : undefined` : conv;
+  // fromWire always adds a cast, so `conv` always differs from `v`; an absent
+  // optional field decodes to undefined, an absent scalar/enum to its default.
+  if (optional(f.type)) return `${v} != null ? ${conv} : undefined`;
   return `${v} != null ? ${conv} : ${defaultLiteral(f)}`;
 };
 

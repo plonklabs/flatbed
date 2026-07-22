@@ -66,6 +66,19 @@ test("64-bit ints serialize as JSON numbers on the wire", () =>
     assert.equal(w.value, 42);
   }));
 
+test("absent optional fields (string, table, vector) decode to undefined", () =>
+  codec.then((c) => {
+    const enc = (o: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(o));
+    const testResp = c.decodeTestResponseJson as unknown as (b: Uint8Array) => { message?: string };
+    const user = c.decodeUserRequestJson as unknown as (b: Uint8Array) => { address?: unknown };
+    const book = c.decodeAddressBookJson as unknown as (b: Uint8Array) => { addresses?: unknown; contact_names?: unknown };
+    assert.equal(testResp(enc({ value: 1, success: true })).message, undefined); // string
+    assert.equal(user(enc({ name: "Ada", age: 36 })).address, undefined); // nested table
+    const b = book(enc({ owner: "Ada" }));
+    assert.equal(b.addresses, undefined); // vector of tables
+    assert.equal(b.contact_names, undefined); // vector of strings
+  }));
+
 test("an absent 64-bit field decodes to its default instead of throwing", () =>
   // A server that omits a zero-valued field must not make BigInt(undefined) throw.
   codec.then((c) => {
