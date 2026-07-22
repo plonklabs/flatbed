@@ -102,8 +102,9 @@ ABS_BFBS="$(pwd)/$BFBS"
 ( cd "$PKG" && node --import tsx src/cli.ts generate \
     --openapi "$WORK/empty.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >"$WORK/npm-gen.log" 2>&1 ) \
   || { echo "npm codec generation failed:" >&2; cat "$WORK/npm-gen.log" >&2; exit 1; }
-# The round-trip needs the FlatBuffer codec and the type module (Severity is a
-# value import); the JSON codec is copied only for the tsc type-check.
+# The round-trip needs the FlatBuffer codec and the type module (enums are
+# runtime value imports, not type-erased); the JSON codec is copied only for the
+# tsc type-check.
 cp "$WORK/npm/gen/codec.ts" "$WORK/npm/gen/json-codec.ts" "$WORK/npm/gen/types.ts" "$WORK/npm/src/"
 driver "$WORK/npm/src"
 
