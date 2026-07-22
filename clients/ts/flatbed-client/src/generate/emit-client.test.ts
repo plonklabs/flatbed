@@ -57,6 +57,15 @@ test("a GET with a path param takes { pathParams } and no body", () => {
   assert.match(out, /new Uint8Array\(\)/);
 });
 
+test("a JSON-capable PUT with a body and a path param takes both keys and opts", () => {
+  const out = emitClient([
+    op({ method: "PUT", path: "/users/{id}", requestType: "UserPatch", responseType: "User", supportsJson: true }),
+  ]);
+  assert.match(out, /putUsersById: \(args: \{ body: UserPatch; pathParams: \{ id: string \} \}, opts\?: \{ as\?: "json" \| "flatbuffer" \}\): Promise<User> =>/);
+  assert.match(out, /json\.encodeUserPatchJson\(args\.body\)/);
+  assert.match(out, /encodeURIComponent\(args\.pathParams\.id\)/);
+});
+
 test("a PUT with a body and a path param takes both keys", () => {
   const out = emitClient([op({ method: "PUT", path: "/users/{id}", requestType: "UserPatch", responseType: "User" })]);
   assert.match(out, /putUsersById: \(args: \{ body: UserPatch; pathParams: \{ id: string \} \}\): Promise<User> =>/);

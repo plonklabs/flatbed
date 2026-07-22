@@ -19,8 +19,7 @@ const toWire = (t: FbsType, expr: string): string => {
 const passthroughTs = (t: FbsType): string =>
   t.kind === "string" ? "string" : t.kind === "scalar" && t.scalar === "bool" ? "boolean" : "number";
 
-// The parsed JSON is `unknown`, so `fromWire` narrows with an `as` cast at each
-// field — the styleguide's "unknown at the boundary, cast to the schema type".
+// The parsed JSON is `unknown`, so `fromWire` narrows with an `as` cast at each field.
 const fromWire = (t: FbsType, expr: string): string => {
   if (t.kind === "enum") return `${t.name}[${expr} as keyof typeof ${t.name}]`;
   if (t.kind === "table") return `fromWire${t.name}(${expr} as Record<string, unknown>)`;
