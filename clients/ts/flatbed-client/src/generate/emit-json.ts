@@ -16,12 +16,16 @@ const toWire = (t: FbsType, expr: string): string => {
   return is64(t) ? `Number(${expr})` : expr;
 };
 
-/** A JSON-wire value expression → its TS form. */
+const passthroughTs = (t: FbsType): string =>
+  t.kind === "string" ? "string" : t.kind === "scalar" && t.scalar === "bool" ? "boolean" : "number";
+
+// The parsed JSON is `unknown`, so `fromWire` narrows with an `as` cast at each
+// field — the styleguide's "unknown at the boundary, cast to the schema type".
 const fromWire = (t: FbsType, expr: string): string => {
   if (t.kind === "enum") return `${t.name}[${expr} as keyof typeof ${t.name}]`;
-  if (t.kind === "table") return `fromWire${t.name}(${expr})`;
-  if (t.kind === "vector") return `${expr}.map((x: any) => ${fromWire(t.element, "x")})`;
-  return is64(t) ? `BigInt(${expr})` : expr;
+  if (t.kind === "table") return `fromWire${t.name}(${expr} as Record<string, unknown>)`;
+  if (t.kind === "vector") return `(${expr} as unknown[]).map((x) => ${fromWire(t.element, "x")})`;
+  return is64(t) ? `BigInt(${expr} as number)` : `${expr} as ${passthroughTs(t)}`;
 };
 
 // String/table/vector fields are optional; guard so an absent one stays `undefined` (which `JSON.stringify` drops).
@@ -40,13 +44,16 @@ const fromWireField = (f: FbsField): string => {
   return optional(f.type) && conv !== v ? `${v} != null ? ${conv} : undefined` : conv;
 };
 
+// Emitted as hoisted `function` declarations, not arrows: a table's toWire/
+// fromWire may call a nested table's before it's defined, since schema order
+// isn't dependency-ordered and table references can be mutual.
 const toWireFn = (t: FbsTable): string =>
   `function toWire${t.name}(value: ${t.name}): unknown {\n  return {\n` +
   t.fields.map((f) => `    ${f.name}: ${toWireField(f)},\n`).join("") +
   "  };\n}\n\n";
 
 const fromWireFn = (t: FbsTable): string =>
-  `function fromWire${t.name}(obj: any): ${t.name} {\n  return {\n` +
+  `function fromWire${t.name}(obj: Record<string, unknown>): ${t.name} {\n  return {\n` +
   t.fields.map((f) => `    ${f.name}: ${fromWireField(f)},\n`).join("") +
   "  };\n}\n\n";
 
@@ -54,7 +61,7 @@ const rootFns = (t: FbsTable): string =>
   `export function encode${t.name}Json(value: ${t.name}): Uint8Array {\n` +
   `  return new TextEncoder().encode(JSON.stringify(toWire${t.name}(value)));\n}\n\n` +
   `export function decode${t.name}Json(bytes: Uint8Array): ${t.name} {\n` +
-  `  return fromWire${t.name}(JSON.parse(new TextDecoder().decode(bytes)));\n}\n\n`;
+  `  return fromWire${t.name}(JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>);\n}\n\n`;
 
 // Enums are imported as values (used as `Name[...]` at runtime), only the referenced ones.
 const referencedEnums = (schema: FbsSchema): ReadonlySet<string> => {

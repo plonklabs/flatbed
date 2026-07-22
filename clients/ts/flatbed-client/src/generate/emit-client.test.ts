@@ -39,6 +39,12 @@ test("a JSON-capable operation offers { as } defaulting to FlatBuffer", () => {
   assert.match(out, /JSON_CONTENT_TYPE/);
 });
 
+test("a JSON-capable but untyped operation imports JSON_CONTENT_TYPE but not the json codec", () => {
+  const out = emitClient([op({ method: "GET", path: "/ping", supportsJson: true })]);
+  assert.match(out, /JSON_CONTENT_TYPE/);
+  assert.doesNotMatch(out, /import \* as json/);
+});
+
 test("a JSON-capable operation with no args takes only opts", () => {
   const out = emitClient([op({ method: "GET", path: "/health", responseType: "Health", supportsJson: true })]);
   assert.match(out, /getHealth: \(opts\?: \{ as\?: "json" \| "flatbuffer" \}\): Promise<Health> =>/);
