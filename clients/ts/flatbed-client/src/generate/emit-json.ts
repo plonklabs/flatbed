@@ -8,7 +8,6 @@ import { HEADER } from "./util.js";
 const is64 = (t: FbsType): boolean =>
   t.kind === "scalar" && (t.scalar === "int64" || t.scalar === "uint64");
 
-/** A TS value expression → its JSON-wire form. */
 const toWire = (t: FbsType, expr: string): string => {
   if (t.kind === "enum") return `${t.name}[${expr}]`;
   if (t.kind === "table") return `toWire${t.name}(${expr})`;

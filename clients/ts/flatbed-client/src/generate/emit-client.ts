@@ -95,7 +95,6 @@ const pathExpr = (op: Operation): string => {
   return expr === "" ? '""' : expr;
 };
 
-/** The `request(...)` call for one operation in the FlatBuffer or JSON format. */
 const call = (op: Operation, fmt: "fb" | "json"): string => {
   const req = effectiveRequestType(op);
   const encode =
