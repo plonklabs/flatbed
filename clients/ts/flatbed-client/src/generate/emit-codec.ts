@@ -38,8 +38,10 @@ const defaults = (ctx: Ctx, f: FbsField): { readonly encode: string; readonly de
     const lit = `${d.kind === "int" ? d.value : 0n}${suffix(ctx, t)}`;
     return { encode: lit, decode: lit };
   }
-  const lit =
-    d.kind === "int" ? `${d.value}${suffix(ctx, t)}` : d.kind === "real" ? `${d.value}` : "0";
+  if (d.kind === "none") {
+    throw new Error(`unreachable: scalar/enum field '${f.name}' has no wire default`);
+  }
+  const lit = d.kind === "int" ? `${d.value}${suffix(ctx, t)}` : `${d.value}`;
   return { encode: lit, decode: lit };
 };
 
