@@ -48,7 +48,6 @@ test("POST with an empty body still sends a Content-Type", () =>
   }));
 
 test("GET sends the Content-Type (so the server negotiates the response) but no body", () =>
-  // The server picks the response codec from the request Content-Type, not Accept.
   call(ok(), "GET", "/health", new Uint8Array([9])).then(({ sent }) => {
     assert.equal(sent.headers["content-type"], "application/x-flatbuffers");
     assert.equal(sent.body, undefined);

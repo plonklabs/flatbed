@@ -67,8 +67,7 @@ test("64-bit ints serialize as JSON numbers on the wire", () =>
   }));
 
 test("64-bit values above 2^53 lose precision on the JSON path", () =>
-  // The server encodes 64-bit as a JSON number too, so this is a wire-format
-  // limit, not a client bug — use the FlatBuffer path for full 64-bit range.
+  // The server encodes 64-bit as a JSON number too — precision loss here is a wire-format limit, not a client bug.
   codec.then((c) => {
     const encode = c.encodeTestResponseJson as unknown as (v: unknown) => Uint8Array;
     const decode = c.decodeTestResponseJson as unknown as (b: Uint8Array) => { value: bigint };

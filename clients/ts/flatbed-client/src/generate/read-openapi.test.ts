@@ -55,6 +55,11 @@ test("supportsJson is true when every direction also advertises application/json
   assert.equal(readOperations(spec).find((o) => o.path === "/echo")?.supportsJson, true);
 });
 
+test("supportsJson is true for a request-absent op whose response advertises JSON", () => {
+  // `/users/{id}` in the fixture is a GET with a both-formats response, no body.
+  assert.equal(readOperations(spec).find((o) => o.path === "/users/{id}")?.supportsJson, true);
+});
+
 test("supportsJson is false when a direction advertises only flatbuffers", () => {
   const ops = readOperations({
     paths: {

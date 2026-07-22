@@ -121,7 +121,6 @@ const method = (op: Operation): string => {
   if (!op.supportsJson) {
     return `  ${name}: (${arg !== undefined ? `args: ${arg}` : ""}): Promise<${returns}> =>\n    ${call(op, "fb")},\n`;
   }
-  // A second optional `opts` selects JSON per call; FlatBuffer stays the default.
   const sig = [arg !== undefined ? `args: ${arg}` : "", 'opts?: { as?: "json" | "flatbuffer" }']
     .filter((s) => s !== "")
     .join(", ");

@@ -39,7 +39,6 @@ const operationFrom = (method: string, path: string, op: Record<string, unknown>
   const response = successContent(op);
   if (!advertisesFlatbuffers(request) && !advertisesFlatbuffers(response)) return undefined;
   const operationId = op["operationId"];
-  // `as: "json"` is offered only when every present direction advertises JSON.
   const supportsJson =
     (request === undefined || advertisesJson(request)) &&
     (response === undefined || advertisesJson(response));
