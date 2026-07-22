@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { checkNames, checkTypes, emitClient, emitIndex } from "./emit-client.js";
 import { emitCodec } from "./emit-codec.js";
+import { emitJson } from "./emit-json.js";
 import { emitTypes } from "./emit-types.js";
 import { readBfbs } from "./read-bfbs.js";
 import { readOperations } from "./read-openapi.js";
@@ -13,15 +14,16 @@ export interface GenerateInput {
   readonly bfbs: Uint8Array;
 }
 
-/** The four files the generator emits, keyed by filename. */
+/** The files the generator emits, keyed by filename. */
 export interface GeneratedFiles {
   readonly "types.ts": string;
   readonly "codec.ts": string;
+  readonly "json-codec.ts": string;
   readonly "client.ts": string;
   readonly "index.ts": string;
 }
 
-/** Pure generation: an OpenAPI spec + `.bfbs` reflection → the four sources. */
+/** Pure generation: an OpenAPI spec + `.bfbs` reflection → the generated sources. */
 export const generateFiles = ({ spec, bfbs }: GenerateInput): GeneratedFiles => {
   const schema = readBfbs(bfbs);
   const ops = readOperations(spec);
@@ -30,6 +32,7 @@ export const generateFiles = ({ spec, bfbs }: GenerateInput): GeneratedFiles => 
   return {
     "types.ts": emitTypes(schema),
     "codec.ts": emitCodec(schema),
+    "json-codec.ts": emitJson(schema),
     "client.ts": emitClient(ops),
     "index.ts": emitIndex(),
   };

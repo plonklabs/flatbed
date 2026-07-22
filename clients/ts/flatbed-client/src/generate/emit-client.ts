@@ -95,17 +95,40 @@ const pathExpr = (op: Operation): string => {
   return expr === "" ? '""' : expr;
 };
 
-const method = (op: Operation): string => {
-  const params = pathParams(op.path);
+/** The `request(...)` call for one operation in the FlatBuffer or JSON format. */
+const call = (op: Operation, fmt: "fb" | "json"): string => {
   const req = effectiveRequestType(op);
-  const arg = argType(op, params);
-  const returns = op.responseType ?? "Uint8Array";
-  const body = req !== undefined ? `codec.encode${req}Root(args.body)` : "new Uint8Array()";
+  const encode =
+    req !== undefined
+      ? fmt === "json"
+        ? `json.encode${req}Json(args.body)`
+        : `codec.encode${req}Root(args.body)`
+      : "new Uint8Array()";
   const decode =
-    op.responseType !== undefined ? `codec.decode${op.responseType}Root` : "(bytes: Uint8Array) => bytes";
+    op.responseType !== undefined
+      ? fmt === "json"
+        ? `json.decode${op.responseType}Json`
+        : `codec.decode${op.responseType}Root`
+      : "(bytes: Uint8Array) => bytes";
+  const contentType = fmt === "json" ? "JSON_CONTENT_TYPE" : "FLATBUFFERS_CONTENT_TYPE";
+  return `request(config, "${op.method}", ${pathExpr(op)}, ${encode}, ${decode}, ${contentType})`;
+};
+
+const method = (op: Operation): string => {
+  const arg = argType(op, pathParams(op.path));
+  const returns = op.responseType ?? "Uint8Array";
+  const name = methodName(op);
+  if (!op.supportsJson) {
+    return `  ${name}: (${arg !== undefined ? `args: ${arg}` : ""}): Promise<${returns}> =>\n    ${call(op, "fb")},\n`;
+  }
+  // Both formats: a second optional `opts` selects JSON per call; FlatBuffer is
+  // the default so the common call site stays a single typed argument.
+  const sig = [arg !== undefined ? `args: ${arg}` : "", 'opts?: { as?: "json" | "flatbuffer" }']
+    .filter((s) => s !== "")
+    .join(", ");
   return (
-    `  ${methodName(op)}: (${arg !== undefined ? `args: ${arg}` : ""}): Promise<${returns}> =>\n` +
-    `    request(config, "${op.method}", ${pathExpr(op)}, ${body}, ${decode}),\n`
+    `  ${name}: (${sig}): Promise<${returns}> =>\n` +
+    `    opts?.as === "json" ? ${call(op, "json")} : ${call(op, "fb")},\n`
   );
 };
 
@@ -120,11 +143,26 @@ export const emitClient = (ops: readonly Operation[]): string => {
       ops.flatMap((op) => [effectiveRequestType(op), op.responseType].filter((t) => t !== undefined)),
     ),
   ].sort();
-  const usesCodec = ops.some((op) => effectiveRequestType(op) !== undefined || op.responseType !== undefined);
+  const typed = (op: Operation): boolean =>
+    effectiveRequestType(op) !== undefined || op.responseType !== undefined;
+  const usesCodec = ops.some(typed);
+  const anyJson = ops.some((op) => op.supportsJson);
+  const usesJsonCodec = ops.some((op) => op.supportsJson && typed(op));
+  // `request`/content-type constants are referenced only by a method body; with
+  // no operations only `ClientConfig` (the factory param) is used, so importing
+  // the rest would trip `noUnusedLocals` in the generated file.
+  const hasOps = ops.length > 0;
+  const runtimeImports = [
+    ...(hasOps ? ["request"] : []),
+    "type ClientConfig",
+    ...(hasOps ? ["FLATBUFFERS_CONTENT_TYPE"] : []),
+    ...(anyJson ? ["JSON_CONTENT_TYPE"] : []),
+  ];
   return (
     HEADER +
-    'import { request, type ClientConfig } from "@plonklabs/flatbed-client";\n' +
+    `import { ${runtimeImports.join(", ")} } from "@plonklabs/flatbed-client";\n` +
     (usesCodec ? 'import * as codec from "./codec.js";\n' : "") +
+    (usesJsonCodec ? 'import * as json from "./json-codec.js";\n' : "") +
     (importTypes.length > 0 ? `import type { ${importTypes.join(", ")} } from "./types.js";\n` : "") +
     "\nexport const createFlatbedClient = (config: ClientConfig) => ({\n" +
     ops.map(method).join("") +
@@ -137,4 +175,5 @@ export const emitIndex = (): string =>
   HEADER +
   'export * from "./types.js";\n' +
   'export * from "./client.js";\n' +
-  'export * as codec from "./codec.js";\n';
+  'export * as codec from "./codec.js";\n' +
+  'export * as json from "./json-codec.js";\n';

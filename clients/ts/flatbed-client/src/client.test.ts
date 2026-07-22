@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { request, type ClientConfig } from "./client.js";
+import { FLATBUFFERS_CONTENT_TYPE, JSON_CONTENT_TYPE, request, type ClientConfig } from "./client.js";
 import { FlatbedError } from "./error.js";
 import type { FlatbedRequest, FlatbedResponse, Transport } from "./transport.js";
 
@@ -25,9 +25,10 @@ const call = (
   path: string,
   body: Uint8Array,
   extra?: Partial<ClientConfig>,
+  contentType: string = FLATBUFFERS_CONTENT_TYPE,
 ): Promise<{ out: Uint8Array; sent: FlatbedRequest }> => {
   const transport = new Recorder(reply);
-  return request({ baseUrl: "http://svc", transport, ...extra }, method, path, body, identity).then((out) => {
+  return request({ baseUrl: "http://svc", transport, ...extra }, method, path, body, identity, contentType).then((out) => {
     assert.equal(transport.requests.length, 1, "transport called exactly once");
     return { out, sent: transport.requests[0]! };
   });
@@ -46,21 +47,34 @@ test("POST with an empty body still sends a Content-Type", () =>
     assert.deepEqual(sent.body, new Uint8Array());
   }));
 
-test("GET attaches neither a body nor a Content-Type", () =>
+test("GET sends the Content-Type (so the server negotiates the response) but no body", () =>
+  // The server picks the response codec from the request Content-Type, not Accept.
   call(ok(), "GET", "/health", new Uint8Array([9])).then(({ sent }) => {
-    assert.equal(sent.headers["content-type"], undefined);
+    assert.equal(sent.headers["content-type"], "application/x-flatbuffers");
     assert.equal(sent.body, undefined);
   }));
 
-test("HEAD attaches neither a body nor a Content-Type", () =>
+test("HEAD sends the Content-Type but no body", () =>
   call(ok(), "HEAD", "/health", new Uint8Array([9])).then(({ sent }) => {
-    assert.equal(sent.headers["content-type"], undefined);
+    assert.equal(sent.headers["content-type"], "application/x-flatbuffers");
     assert.equal(sent.body, undefined);
   }));
 
-test("the Accept header is always application/x-flatbuffers", () =>
+test("Accept mirrors the content type", () =>
   call(ok(), "GET", "/health", new Uint8Array()).then(({ sent }) => {
     assert.equal(sent.headers.accept, "application/x-flatbuffers");
+  }));
+
+test("a JSON call sets both Accept and Content-Type to application/json", () =>
+  call(ok(), "POST", "/echo", new Uint8Array([1]), undefined, JSON_CONTENT_TYPE).then(({ sent }) => {
+    assert.equal(sent.headers.accept, "application/json");
+    assert.equal(sent.headers["content-type"], "application/json");
+  }));
+
+test("a JSON GET still sends Content-Type: application/json with no body", () =>
+  call(ok(), "GET", "/health", new Uint8Array(), undefined, JSON_CONTENT_TYPE).then(({ sent }) => {
+    assert.equal(sent.headers["content-type"], "application/json");
+    assert.equal(sent.body, undefined);
   }));
 
 test("config headers are added to every request", () =>

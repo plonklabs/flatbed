@@ -50,6 +50,25 @@ test("reads a success response under a non-200 code, request-less", () => {
   assert.equal(users?.requestType, undefined);
 });
 
+test("supportsJson is true when every direction also advertises application/json", () => {
+  // `/echo` advertises both formats in both directions in the shared fixture.
+  assert.equal(readOperations(spec).find((o) => o.path === "/echo")?.supportsJson, true);
+});
+
+test("supportsJson is false when a direction advertises only flatbuffers", () => {
+  const ops = readOperations({
+    paths: {
+      "/fb-only": {
+        post: {
+          requestBody: { content: { "application/x-flatbuffers": fb } },
+          responses: { "200": { content: { "application/x-flatbuffers": fb } } },
+        },
+      },
+    },
+  });
+  assert.equal(ops[0]?.supportsJson, false);
+});
+
 test("picks the lowest 2xx code when a route has multiple", () => {
   const got = readOperations({
     paths: {
