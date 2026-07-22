@@ -73,6 +73,7 @@ test("a JSON call sets both Accept and Content-Type to application/json", () =>
 test("a JSON GET still sends Content-Type: application/json with no body", () =>
   call(ok(), "GET", "/health", new Uint8Array(), undefined, JSON_CONTENT_TYPE).then(({ sent }) => {
     assert.equal(sent.headers["content-type"], "application/json");
+    assert.equal(sent.headers.accept, "application/json");
     assert.equal(sent.body, undefined);
   }));
 

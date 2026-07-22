@@ -60,6 +60,20 @@ test("supportsJson is true for a request-absent op whose response advertises JSO
   assert.equal(readOperations(spec).find((o) => o.path === "/users/{id}")?.supportsJson, true);
 });
 
+test("supportsJson requires every direction, not just one (AND, not OR)", () => {
+  const ops = readOperations({
+    paths: {
+      "/mixed": {
+        post: {
+          requestBody: { content: { "application/x-flatbuffers": fb } }, // request: FB only
+          responses: { "200": { content: { "application/x-flatbuffers": fb, "application/json": json("R") } } },
+        },
+      },
+    },
+  });
+  assert.equal(ops[0]?.supportsJson, false);
+});
+
 test("supportsJson is false when a direction advertises only flatbuffers", () => {
   const ops = readOperations({
     paths: {

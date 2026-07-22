@@ -3,7 +3,7 @@ import { HEADER } from "./util.js";
 
 // The JSON wire shape is the server's serde output: enums are variant-name
 // strings and 64-bit ints are JSON numbers, so values above 2^53 lose precision
-// on this path — a wire-format limit, not a client bug.
+// on this path — a limit of the JSON number type.
 
 const is64 = (t: FbsType): boolean =>
   t.kind === "scalar" && (t.scalar === "int64" || t.scalar === "uint64");

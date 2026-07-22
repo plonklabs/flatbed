@@ -9,7 +9,7 @@ import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
 
-/** Compile-and-load the generated JSON codec once; `types.ts` sits beside it because the codec imports enum values (not just types) at runtime. */
+/** Compile-and-load the generated JSON codec once; it imports enum values as runtime values, so the type module must sit alongside it. */
 type Codec = Record<string, (arg: never) => never>;
 const codec: Promise<Codec> = (() => {
   const dir = fileURLToPath(new URL("../../node_modules/.cache/flatbed-json-test", import.meta.url));
@@ -67,7 +67,7 @@ test("64-bit ints serialize as JSON numbers on the wire", () =>
   }));
 
 test("64-bit values above 2^53 lose precision on the JSON path", () =>
-  // The server encodes 64-bit as a JSON number too — precision loss here is a wire-format limit, not a client bug.
+  // The server encodes 64-bit as a JSON number too — precision loss here is a limit of the JSON number type.
   codec.then((c) => {
     const encode = c.encodeTestResponseJson as unknown as (v: unknown) => Uint8Array;
     const decode = c.decodeTestResponseJson as unknown as (b: Uint8Array) => { value: bigint };
