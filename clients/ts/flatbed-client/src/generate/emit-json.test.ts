@@ -9,12 +9,7 @@ import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
 
-/**
- * Compile-and-load the generated JSON codec once. `types.ts` is written beside
- * it because the codec imports the enum *values* (not just types) at runtime;
- * `tsx` compiles both on import. The package's deps must be installed (`npm ci`
- * runs before `npm test` in CI).
- */
+/** Compile-and-load the generated JSON codec once; `types.ts` sits beside it because the codec imports enum values (not just types) at runtime. */
 type Codec = Record<string, (arg: never) => never>;
 const codec: Promise<Codec> = (() => {
   const dir = fileURLToPath(new URL("../../node_modules/.cache/flatbed-json-test", import.meta.url));

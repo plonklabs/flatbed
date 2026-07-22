@@ -1,14 +1,9 @@
 import type { FbsField, FbsSchema, FbsTable, FbsType } from "./model.js";
 import { HEADER } from "./util.js";
 
-// The JSON wire shape mirrors the server's serde output, which differs from the
-// TS type surface in two places: an enum is a variant-name string (not its
-// number), and a 64-bit int is a JSON number (not a `bigint`). `toWire`/
-// `fromWire` translate at exactly those fields; everything else passes through.
-//
-// 64-bit values above 2^53 lose precision on the JSON path — the server encodes
-// them as JSON numbers too, so this is a property of the wire format, not the
-// client. Use the FlatBuffer path when full 64-bit range matters.
+// The JSON wire shape is the server's serde output: enums are variant-name
+// strings and 64-bit ints are JSON numbers, so values above 2^53 lose precision
+// on this path (a wire-format limit, not a client bug — use FlatBuffers there).
 
 const is64 = (t: FbsType): boolean =>
   t.kind === "scalar" && (t.scalar === "int64" || t.scalar === "uint64");
@@ -29,9 +24,7 @@ const fromWire = (t: FbsType, expr: string): string => {
   return is64(t) ? `BigInt(${expr})` : expr;
 };
 
-// A string/table/vector field is optional on the wire, so guard the transform on
-// its presence; `JSON.stringify` then drops an `undefined` result. Scalars and
-// enums are always present.
+// String/table/vector fields are optional; guard so an absent one stays `undefined` (which `JSON.stringify` drops).
 const optional = (t: FbsType): boolean =>
   t.kind === "string" || t.kind === "table" || t.kind === "vector";
 
@@ -63,8 +56,7 @@ const rootFns = (t: FbsTable): string =>
   `export function decode${t.name}Json(bytes: Uint8Array): ${t.name} {\n` +
   `  return fromWire${t.name}(JSON.parse(new TextDecoder().decode(bytes)));\n}\n\n`;
 
-// Enums appear as runtime index expressions (`Name[...]`), so they're imported
-// as values, not types — but only the ones a field actually references.
+// Enums are imported as values (used as `Name[...]` at runtime), only the referenced ones.
 const referencedEnums = (schema: FbsSchema): ReadonlySet<string> => {
   const names = new Set<string>();
   const visit = (t: FbsType): void => {

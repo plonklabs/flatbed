@@ -102,9 +102,8 @@ ABS_BFBS="$(pwd)/$BFBS"
 ( cd "$PKG" && node --import tsx src/cli.ts generate \
     --openapi "$WORK/empty.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >"$WORK/npm-gen.log" 2>&1 ) \
   || { echo "npm codec generation failed:" >&2; cat "$WORK/npm-gen.log" >&2; exit 1; }
-# The FlatBuffer codec + types drive the round-trip; json-codec rides along so
-# tsc proves it compiles too. The client and barrel modules import the published
-# package and aren't needed here.
+# codec + types drive the round-trip; json-codec rides along for its tsc compile
+# check. The client/barrel modules import the published package, not needed here.
 cp "$WORK/npm/gen/codec.ts" "$WORK/npm/gen/json-codec.ts" "$WORK/npm/gen/types.ts" "$WORK/npm/src/"
 driver "$WORK/npm/src"
 

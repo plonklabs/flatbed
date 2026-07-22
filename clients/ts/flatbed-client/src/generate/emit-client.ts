@@ -121,8 +121,7 @@ const method = (op: Operation): string => {
   if (!op.supportsJson) {
     return `  ${name}: (${arg !== undefined ? `args: ${arg}` : ""}): Promise<${returns}> =>\n    ${call(op, "fb")},\n`;
   }
-  // Both formats: a second optional `opts` selects JSON per call; FlatBuffer is
-  // the default so the common call site stays a single typed argument.
+  // A second optional `opts` selects JSON per call; FlatBuffer stays the default.
   const sig = [arg !== undefined ? `args: ${arg}` : "", 'opts?: { as?: "json" | "flatbuffer" }']
     .filter((s) => s !== "")
     .join(", ");
@@ -148,9 +147,8 @@ export const emitClient = (ops: readonly Operation[]): string => {
   const usesCodec = ops.some(typed);
   const anyJson = ops.some((op) => op.supportsJson);
   const usesJsonCodec = ops.some((op) => op.supportsJson && typed(op));
-  // `request`/content-type constants are referenced only by a method body; with
-  // no operations only `ClientConfig` (the factory param) is used, so importing
-  // the rest would trip `noUnusedLocals` in the generated file.
+  // With no operations only `ClientConfig` is used, so importing `request`/the
+  // content-type constants would trip `noUnusedLocals` in the generated file.
   const hasOps = ops.length > 0;
   const runtimeImports = [
     ...(hasOps ? ["request"] : []),
