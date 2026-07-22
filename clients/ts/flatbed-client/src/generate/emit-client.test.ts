@@ -39,6 +39,11 @@ test("a JSON-capable operation offers { as } defaulting to FlatBuffer", () => {
   assert.match(out, /JSON_CONTENT_TYPE/);
 });
 
+test("a JSON-capable operation with no args takes only opts", () => {
+  const out = emitClient([op({ method: "GET", path: "/health", responseType: "Health", supportsJson: true })]);
+  assert.match(out, /getHealth: \(opts\?: \{ as\?: "json" \| "flatbuffer" \}\): Promise<Health> =>/);
+});
+
 test("a GET with a path param takes { pathParams } and no body", () => {
   const out = emitClient([op({ method: "GET", path: "/users/{id}", responseType: "User" })]);
   assert.match(out, /getUsersById: \(args: \{ pathParams: \{ id: string \} \}\): Promise<User> =>/);
