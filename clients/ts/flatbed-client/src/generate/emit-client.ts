@@ -73,16 +73,20 @@ const argType = (op: Operation, params: readonly string[]): string | undefined =
   return parts.length > 0 ? `{ ${parts.join("; ")} }` : undefined;
 };
 
-const pathExpr = (op: Operation, params: readonly string[]): string =>
-  params.length === 0
-    ? `"${op.path}"`
-    : "`" +
-      params.reduce(
-        // Encode each value — a `/`, `?`, `#`, `&`, or space would misroute the URL.
-        (tmpl, p) => tmpl.replace(`{${p}}`, `\${encodeURIComponent(args.pathParams.${paramIdent(p)})}`),
-        op.path,
-      ) +
-      "`";
+// Build the request path as concatenated pieces: each static chunk is
+// JSON.stringify'd (so a stray quote/backslash/backtick in an untrusted spec
+// path can't break the emitted literal) and each param is URL-encoded — a `/`,
+// `?`, `#`, `&`, or space in a value would otherwise misroute the URL.
+const pathExpr = (op: Operation): string => {
+  const expr = op.path
+    .split(/\{([^}]+)\}/u)
+    .map((part, i) =>
+      i % 2 === 0 ? JSON.stringify(part) : `encodeURIComponent(args.pathParams.${paramIdent(part)})`,
+    )
+    .filter((piece) => piece !== '""')
+    .join(" + ");
+  return expr === "" ? '""' : expr;
+};
 
 const method = (op: Operation): string => {
   const params = pathParams(op.path);
@@ -94,7 +98,7 @@ const method = (op: Operation): string => {
     op.responseType !== undefined ? `codec.decode${op.responseType}Root` : "(bytes: Uint8Array) => bytes";
   return (
     `  ${methodName(op)}: (${arg !== undefined ? `args: ${arg}` : ""}): Promise<${returns}> =>\n` +
-    `    request(config, "${op.method}", ${pathExpr(op, params)}, ${body}, ${decode}),\n`
+    `    request(config, "${op.method}", ${pathExpr(op)}, ${body}, ${decode}),\n`
   );
 };
 

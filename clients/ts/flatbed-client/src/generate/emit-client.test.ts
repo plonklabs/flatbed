@@ -35,6 +35,11 @@ test("a PUT with a body and a path param takes both keys", () => {
   assert.match(out, /codec\.encodeUserPatchRoot\(args\.body\)/);
 });
 
+test("escapes an unsafe character in the path so the generated literal is valid", () => {
+  const out = emitClient([{ method: "GET", path: '/a"b', responseType: "R" }]);
+  assert.ok(out.includes(JSON.stringify('/a"b'))); // quote is escaped, not embedded raw
+});
+
 test("an operation with neither body nor path params takes no argument", () => {
   const out = emitClient([{ method: "GET", path: "/health", responseType: "Health" }]);
   assert.match(out, /getHealth: \(\): Promise<Health> =>/);
