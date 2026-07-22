@@ -51,12 +51,10 @@ test("reads a success response under a non-200 code, request-less", () => {
 });
 
 test("supportsJson is true when every direction also advertises application/json", () => {
-  // `/echo` advertises both formats in both directions in the shared fixture.
   assert.equal(readOperations(spec).find((o) => o.path === "/echo")?.supportsJson, true);
 });
 
 test("supportsJson is true for a request-absent op whose response advertises JSON", () => {
-  // `/users/{id}` in the fixture is a GET with a both-formats response, no body.
   assert.equal(readOperations(spec).find((o) => o.path === "/users/{id}")?.supportsJson, true);
 });
 

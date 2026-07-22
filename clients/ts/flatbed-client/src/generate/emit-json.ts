@@ -52,7 +52,6 @@ const toWireField = (f: FbsField): string => {
 const fromWireField = (f: FbsField): string => {
   const v = `obj.${f.name}`;
   const conv = fromWire(f.type, v);
-  // fromWire always adds a cast, so `conv` always differs from `v`.
   if (optional(f.type)) return `${v} != null ? ${conv} : undefined`;
   return `${v} != null ? ${conv} : ${defaultLiteral(f)}`;
 };
