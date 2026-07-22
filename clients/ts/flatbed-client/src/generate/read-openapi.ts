@@ -40,8 +40,10 @@ const operationFrom = (method: string, path: string, op: Record<string, unknown>
     method: method.toUpperCase(),
     path,
     operationId: typeof operationId === "string" ? operationId : undefined,
-    requestType: jsonRef(request),
-    responseType: jsonRef(response),
+    // Bind a codec type only for a direction that speaks flatbuffers, so a
+    // JSON-only request/response never gets a flatbuffer encoder/decoder.
+    requestType: advertisesFlatbuffers(request) ? jsonRef(request) : undefined,
+    responseType: advertisesFlatbuffers(response) ? jsonRef(response) : undefined,
   };
 };
 

@@ -67,6 +67,23 @@ test("picks the lowest 2xx code when a route has multiple", () => {
   assert.equal(got[0]?.responseType, "Upload200");
 });
 
+test("binds a codec type only for the direction that speaks flatbuffers", () => {
+  const ops = readOperations({
+    paths: {
+      "/mixed": {
+        post: {
+          requestBody: { content: { "application/x-flatbuffers": fb, "application/json": json("MixedRequest") } },
+          // Response advertises JSON only — its $ref must not become a FB decoder.
+          responses: { "200": { content: { "application/json": json("MixedResponse") } } },
+        },
+      },
+    },
+  });
+  assert.equal(ops.length, 1);
+  assert.equal(ops[0]?.requestType, "MixedRequest");
+  assert.equal(ops[0]?.responseType, undefined);
+});
+
 test("returns nothing for a spec with no paths", () => {
   assert.deepEqual(readOperations({}), []);
   assert.deepEqual(readOperations(null), []);
