@@ -12,7 +12,10 @@ const is64 = (t: FbsType): boolean =>
 const toWire = (t: FbsType, expr: string): string => {
   if (t.kind === "enum") return `${t.name}[${expr}]`;
   if (t.kind === "table") return `toWire${t.name}(${expr})`;
-  if (t.kind === "vector") return `${expr}.map((x) => ${toWire(t.element, "x")})`;
+  if (t.kind === "vector") {
+    const elem = toWire(t.element, "x");
+    return elem === "x" ? expr : `${expr}.map((x) => ${elem})`;
+  }
   return is64(t) ? `Number(${expr})` : expr;
 };
 
@@ -30,6 +33,17 @@ const fromWire = (t: FbsType, expr: string): string => {
 const optional = (t: FbsType): boolean =>
   t.kind === "string" || t.kind === "table" || t.kind === "vector";
 
+// A scalar/enum absent from the JSON decodes to its declared default — the same
+// value the FlatBuffer path yields for an omitted field, and it keeps
+// `BigInt(undefined)` from throwing on a missing 64-bit field.
+const defaultLiteral = (f: FbsField): string => {
+  const { type: t, default: d } = f;
+  if (t.kind === "scalar" && t.scalar === "bool") return d.kind === "int" && d.value !== 0n ? "true" : "false";
+  if (d.kind === "int") return is64(t) ? `${d.value}n` : `${d.value}`;
+  if (d.kind === "real") return `${d.value}`;
+  return "undefined";
+};
+
 const toWireField = (f: FbsField): string => {
   const v = `value.${f.name}`;
   const conv = toWire(f.type, v);
@@ -39,7 +53,8 @@ const toWireField = (f: FbsField): string => {
 const fromWireField = (f: FbsField): string => {
   const v = `obj.${f.name}`;
   const conv = fromWire(f.type, v);
-  return optional(f.type) && conv !== v ? `${v} != null ? ${conv} : undefined` : conv;
+  if (optional(f.type)) return conv !== v ? `${v} != null ? ${conv} : undefined` : conv;
+  return `${v} != null ? ${conv} : ${defaultLiteral(f)}`;
 };
 
 // Emitted as hoisted `function` declarations, not arrows: a table's toWire/

@@ -66,6 +66,14 @@ test("64-bit ints serialize as JSON numbers on the wire", () =>
     assert.equal(w.value, 42);
   }));
 
+test("an absent 64-bit field decodes to its default instead of throwing", () =>
+  // A server that omits a zero-valued field must not make BigInt(undefined) throw.
+  codec.then((c) => {
+    const decode = c.decodeTestResponseJson as unknown as (b: Uint8Array) => { value: bigint; success: boolean };
+    const bytes = new TextEncoder().encode(JSON.stringify({ message: "x", success: true }));
+    assert.equal(decode(bytes).value, 0n);
+  }));
+
 test("64-bit values above 2^53 lose precision on the JSON path", () =>
   // The server encodes 64-bit as a JSON number too — precision loss here is a limit of the JSON number type.
   codec.then((c) => {
