@@ -5,8 +5,8 @@
 #   1. boot examples/openapi
 #   2. regenerate the committed client from the live spec and diff it — a
 #      staleness gate, so the checked-in client can't drift from the schema
-#   3. build the example and run it against the server, exercising both the
-#      FlatBuffer and JSON wire formats (main.ts asserts the decoded responses)
+#   3. build the example and run it against the server over both the FlatBuffer
+#      and JSON wire formats, exiting non-zero if a decoded response is wrong
 #
 # Requires cargo + flatc (to build the example server) and node/npm. The
 # consumer half (generate → tsc → run) needs neither Rust nor flatc.
@@ -37,7 +37,7 @@ echo "verify-fb-client-npm: building examples/openapi…"
 cargo build --quiet --manifest-path examples/openapi/Cargo.toml
 examples/openapi/target/debug/flatbed-example-openapi >"$LOG" 2>&1 &
 SERVER_PID=$!
-cleanup() { kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$LOG" "$gen"; }
+cleanup() { kill "$SERVER_PID" 2>/dev/null || true; rm -f "$LOG"; [ -n "$gen" ] && rm -rf "$gen"; }
 trap cleanup EXIT
 
 for _ in $(seq 1 60); do
@@ -58,7 +58,7 @@ curl -sf "$BASE/openapi.json" >/dev/null 2>&1 \
 echo "verify-fb-client-npm: installing the workspace…"
 npm ci --silent --no-audit --no-fund
 
-# The example imports @plonklabs/flatbed-client's built dist, so build it first.
+# The example imports the client package's compiled output, so build it first.
 npm run -w @plonklabs/flatbed-client build
 
 # Staleness gate: regenerate from the live spec and diff the committed client.
