@@ -97,8 +97,7 @@ npm ci --silent --no-audit --no-fund >"$WORK/npm-ci.log" 2>&1 \
   || { echo "npm ci failed:" >&2; cat "$WORK/npm-ci.log" >&2; exit 1; }
 mkdir -p "$WORK/npm/src"
 ABS_BFBS="$(pwd)/$BFBS"
-# The CLI runs from the package dir so its `tsx` loader resolves; inputs and
-# output are absolute since the cwd changes.
+# src/cli.ts is relative to the package dir; inputs and output are absolute.
 ( cd "$PKG" && node --import tsx src/cli.ts generate \
     --openapi "$WORK/empty.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >"$WORK/npm-gen.log" 2>&1 ) \
   || { echo "npm codec generation failed:" >&2; cat "$WORK/npm-gen.log" >&2; exit 1; }
