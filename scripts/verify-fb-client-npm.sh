@@ -25,6 +25,11 @@ PORT=8080
 BASE="http://127.0.0.1:$PORT"
 LOG="$(mktemp)"
 gen=""
+SERVER_PID=""
+# Registered before any early exit so the temp log/dir are cleaned even if the
+# port check or the build bails.
+cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true; rm -f "$LOG"; [ -n "$gen" ] && rm -rf "$gen"; }
+trap cleanup EXIT
 
 # A pre-existing listener on the port would answer the readiness probe below, so
 # the test would run against the wrong server while our binary fails to bind.
@@ -37,8 +42,6 @@ echo "verify-fb-client-npm: building examples/openapi…"
 cargo build --quiet --manifest-path examples/openapi/Cargo.toml
 examples/openapi/target/debug/flatbed-example-openapi >"$LOG" 2>&1 &
 SERVER_PID=$!
-cleanup() { kill "$SERVER_PID" 2>/dev/null || true; rm -f "$LOG"; [ -n "$gen" ] && rm -rf "$gen"; }
-trap cleanup EXIT
 
 for _ in $(seq 1 60); do
   # Bail as soon as the server dies (e.g. failed to bind) instead of waiting out

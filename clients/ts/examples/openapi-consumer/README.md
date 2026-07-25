@@ -34,11 +34,12 @@ from the service's schema.
 ## Running it
 
 ```bash
-# 1. boot the service (needs flatc on PATH)
-cargo run -p flatbed-example-openapi   # serves on :8080
+# 1. boot the service (needs flatc on PATH; the example isn't a workspace member)
+cargo run --manifest-path examples/openapi/Cargo.toml   # serves on :8080
 
-# 2. from the repo root, build and run the example
+# 2. from the repo root, build the client, then build and run the example
 npm ci
+npm run -w @plonklabs/flatbed-client build
 npm run -w @plonklabs/flatbed-openapi-example build
 npm run -w @plonklabs/flatbed-openapi-example start
 ```
