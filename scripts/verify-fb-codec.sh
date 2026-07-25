@@ -93,7 +93,6 @@ mkdir -p "$WORK/rust/src"
 driver "$WORK/rust/src"
 
 echo "verify-fb-codec: generating the npm codec (@plonklabs/flatbed-client)…"
-# The package's own node_modules resolves the `tsx` loader used below.
 ( npm ci --silent --no-audit --no-fund >"$WORK/npm-ci.log" 2>&1 ) \
   || { echo "npm ci failed:" >&2; cat "$WORK/npm-ci.log" >&2; exit 1; }
 mkdir -p "$WORK/npm/src"
