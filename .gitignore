@@ -6,6 +6,10 @@ examples/*/Cargo.lock
 **/*.bak
 Cargo.lock.bak
 
+# npm workspace build/dependency output (any package under the workspace)
+node_modules/
+clients/ts/**/dist/
+
 # IDE noise
 .idea/
 .vscode/

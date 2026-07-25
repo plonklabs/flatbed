@@ -102,20 +102,17 @@ jobs:
   flatbed-client:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: clients/ts/flatbed-client
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: clients/ts/flatbed-client/package-lock.json
+          cache-dependency-path: package-lock.json
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm test
+      - run: npm run -w @plonklabs/flatbed-client typecheck
+      - run: npm run -w @plonklabs/flatbed-client build
+      - run: npm run -w @plonklabs/flatbed-client test
 
   codec-compat:
     runs-on: ubuntu-latest
