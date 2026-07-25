@@ -135,9 +135,8 @@ jobs:
       - run: bash scripts/check-ts-reflection.sh
       - run: bash scripts/verify-fb-codec.sh
 
-  # Prove the generated TS client works end-to-end against a live server: boot
-  # examples/openapi, regenerate + diff the committed client, then build and run
-  # the example over both wire formats. Needs Rust, flatc, and node.
+  # Live-server proof, distinct from the byte-compat codec-compat job above.
+  # Needs Rust + flatc (for the example server) and node.
   flatbed-client-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 30

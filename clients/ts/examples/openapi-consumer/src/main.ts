@@ -4,12 +4,9 @@ import { createFlatbedClient, Priority } from "./generated/index.js";
 
 const client = createFlatbedClient({ baseUrl: process.env.FLATBED_BASE_URL ?? "http://localhost:8080" });
 
-// A richer request than greet: an enum (`priority`), a `uint32` (`times`), and a
-// vector of tables (`tags`) — all handled by the generated codec.
 const echoBody = { message: "hi", times: 3, priority: Priority.High, tags: [{ label: "demo" }] };
 
 const main = (): Promise<void> =>
-  // FlatBuffer is the default wire format.
   client
     .postGreet({ body: { name: "Ada" } })
     .then((res) => {

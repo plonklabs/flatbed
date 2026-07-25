@@ -24,6 +24,7 @@ GENERATED="$EXAMPLE/src/generated"
 PORT=8080
 BASE="http://127.0.0.1:$PORT"
 LOG="$(mktemp)"
+gen=""
 
 # A pre-existing listener on the port would answer the readiness probe below, so
 # the test would run against the wrong server while our binary fails to bind.
@@ -36,7 +37,7 @@ echo "verify-fb-client-npm: building examples/openapi…"
 cargo build --quiet --manifest-path examples/openapi/Cargo.toml
 examples/openapi/target/debug/flatbed-example-openapi >"$LOG" 2>&1 &
 SERVER_PID=$!
-cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+cleanup() { kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$LOG" "$gen"; }
 trap cleanup EXIT
 
 for _ in $(seq 1 60); do
