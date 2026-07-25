@@ -73,7 +73,7 @@ if ! diff -r "$gen" "$GENERATED" >/dev/null; then
   exit 1
 fi
 
-# Build and run the example against the live server; main.ts asserts the results.
+# Build and run the example against the live server; exit non-zero if any assertion fails.
 echo "verify-fb-client-npm: building + running the example…"
 npm run -w @plonklabs/flatbed-openapi-example build
 FLATBED_BASE_URL="$BASE" npm run -w @plonklabs/flatbed-openapi-example start
