@@ -1,0 +1,19 @@
+{
+  "name": "@plonklabs/flatbed-openapi-example",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Runnable example: a generated flatbed client calling the examples/openapi service.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@plonklabs/flatbed-client": "*",
+    "flatbuffers": "^25.9.23"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5"
+  }
+}
