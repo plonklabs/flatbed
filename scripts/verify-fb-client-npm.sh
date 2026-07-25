@@ -64,7 +64,6 @@ npm ci --silent --no-audit --no-fund
 # The example imports the client package's compiled output, so build it first.
 npm run -w @plonklabs/flatbed-client build
 
-# Staleness gate: regenerate from the live spec and diff the committed client.
 echo "verify-fb-client-npm: checking the committed generated client is current…"
 gen="$(mktemp -d)"
 ( cd clients/ts/flatbed-client && node --import tsx src/cli.ts generate --server "$BASE" --out "$gen" )
@@ -76,7 +75,6 @@ if ! diff -r "$gen" "$GENERATED" >/dev/null; then
   exit 1
 fi
 
-# Build and run the example against the live server; exit non-zero if any assertion fails.
 echo "verify-fb-client-npm: building + running the example…"
 npm run -w @plonklabs/flatbed-openapi-example build
 FLATBED_BASE_URL="$BASE" npm run -w @plonklabs/flatbed-openapi-example start
