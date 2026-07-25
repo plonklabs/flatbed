@@ -6,6 +6,8 @@ examples/*/Cargo.lock
 **/*.bak
 Cargo.lock.bak
 
+node_modules/
+
 # IDE noise
 .idea/
 .vscode/
