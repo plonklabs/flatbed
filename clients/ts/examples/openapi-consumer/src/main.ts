@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 
 import { createFlatbedClient, Priority } from "./generated/index.js";
 
-// The generated client talks to any flatbed service; point it at the running
-// examples/openapi server (override with FLATBED_BASE_URL).
 const client = createFlatbedClient({ baseUrl: process.env.FLATBED_BASE_URL ?? "http://localhost:8080" });
 
 // A richer request than greet: an enum (`priority`), a `uint32` (`times`), and a
@@ -11,13 +9,12 @@ const client = createFlatbedClient({ baseUrl: process.env.FLATBED_BASE_URL ?? "h
 const echoBody = { message: "hi", times: 3, priority: Priority.High, tags: [{ label: "demo" }] };
 
 const main = (): Promise<void> =>
-  // FlatBuffer is the default wire format — the call site is a single typed argument.
+  // FlatBuffer is the default wire format.
   client
     .postGreet({ body: { name: "Ada" } })
     .then((res) => {
       console.log("greet  (flatbuffer):", res.greeting);
       assert.equal(res.greeting, "Hello, Ada!");
-      // The same operation over JSON, chosen per-call with `{ as: "json" }`.
       return client.postGreet({ body: { name: "Ada" } }, { as: "json" });
     })
     .then((res) => {

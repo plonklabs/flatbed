@@ -21,8 +21,16 @@ fi
 
 EXAMPLE="clients/ts/examples/openapi-consumer"
 GENERATED="$EXAMPLE/src/generated"
-BASE="http://localhost:8080"
+PORT=8080
+BASE="http://127.0.0.1:$PORT"
 LOG="$(mktemp)"
+
+# A pre-existing listener on the port would answer the readiness probe below, so
+# the test would run against the wrong server while our binary fails to bind.
+if (exec 3<>"/dev/tcp/127.0.0.1/$PORT") 2>/dev/null; then
+  echo "verify-fb-client-npm: something is already listening on port $PORT — free it first." >&2
+  exit 1
+fi
 
 echo "verify-fb-client-npm: building examples/openapi…"
 cargo build --quiet --manifest-path examples/openapi/Cargo.toml
@@ -32,11 +40,19 @@ cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
 for _ in $(seq 1 60); do
+  # Bail as soon as the server dies (e.g. failed to bind) instead of waiting out
+  # the timeout against a port nothing is serving.
+  kill -0 "$SERVER_PID" 2>/dev/null || break
   curl -sf "$BASE/openapi.json" >/dev/null 2>&1 && break
   sleep 0.5
 done
+if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+  echo "verify-fb-client-npm: server process exited during startup" >&2
+  cat "$LOG" >&2
+  exit 1
+fi
 curl -sf "$BASE/openapi.json" >/dev/null 2>&1 \
-  || { echo "server did not become ready:" >&2; cat "$LOG" >&2; exit 1; }
+  || { echo "verify-fb-client-npm: server did not become ready within 30s:" >&2; cat "$LOG" >&2; exit 1; }
 
 echo "verify-fb-client-npm: installing the workspace…"
 npm ci --silent --no-audit --no-fund
