@@ -1,7 +1,7 @@
 {
   "name": "flatbed-workspace",
   "private": true,
-  "description": "Workspace root for the flatbed repo's published TypeScript packages.",
+  "description": "Workspace root for the flatbed repo's TypeScript packages.",
   "workspaces": [
     "clients/ts/flatbed-client"
   ]
