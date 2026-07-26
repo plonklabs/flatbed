@@ -5,7 +5,7 @@ import type { EchoRequest, EchoResponse, GreetRequest, GreetResponse, Tag, Prior
 
 export function encodeEchoRequest(builder: flatbuffers.Builder, value: EchoRequest): flatbuffers.Offset {
   const messageOffset = value.message != null ? builder.createString(value.message) : 0;
-  const tagsOffset = value.tags != null ? (() => { const o = value.tags.map((x) => encodeTag(builder, x)); builder.startVector(4, o.length, 4); for (let i = o.length - 1; i >= 0; i--) builder.addOffset(o[i]); return builder.endVector(); })() : 0;
+  const tagsOffset = value.tags != null ? (() => { const o = value.tags.map((x) => encodeTag(builder, x)); builder.startVector(4, o.length, 4); [...o].reverse().forEach((off) => builder.addOffset(off)); return builder.endVector(); })() : 0;
   builder.startObject(4);
   if (messageOffset) builder.addFieldOffset(0, messageOffset, 0);
   builder.addFieldInt32(1, value.times, 0);
@@ -29,7 +29,7 @@ export function decodeEchoRequest(bb: flatbuffers.ByteBuffer, pos: number): Echo
     message: message_o ? (bb.__string(pos + message_o) as string) : undefined,
     times: times_o ? bb.readUint32(pos + times_o) : 0,
     priority: (priority_o ? bb.readInt8(pos + priority_o) : 0) as Priority,
-    tags: tags_o ? (() => { const len = bb.__vector_len(pos + tags_o); const base = bb.__vector(pos + tags_o); const arr: Tag[] = []; for (let i = 0; i < len; i++) arr.push(decodeTag(bb, bb.__indirect(base + i * 4))); return arr; })() : undefined,
+    tags: tags_o ? (() => { const len = bb.__vector_len(pos + tags_o); const base = bb.__vector(pos + tags_o); return Array.from({ length: len }, (_, i): Tag => decodeTag(bb, bb.__indirect(base + i * 4))); })() : undefined,
   };
 }
 

@@ -7,25 +7,25 @@ export enum Priority {
 }
 
 export interface EchoRequest {
-  message?: string;
-  times: number;
-  priority: Priority;
-  tags?: Tag[];
+  readonly message?: string;
+  readonly times: number;
+  readonly priority: Priority;
+  readonly tags?: readonly Tag[];
 }
 
 export interface EchoResponse {
-  message?: string;
+  readonly message?: string;
 }
 
 export interface GreetRequest {
-  name?: string;
+  readonly name?: string;
 }
 
 export interface GreetResponse {
-  greeting?: string;
+  readonly greeting?: string;
 }
 
 export interface Tag {
-  label?: string;
+  readonly label?: string;
 }
 
