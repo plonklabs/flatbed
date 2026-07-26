@@ -35,7 +35,7 @@ cleanup() {
   # a late crash or a mismatched response leaves no trace.
   [ "$rc" -ne 0 ] && [ -s "$LOG" ] && { echo "--- server log ---" >&2; cat "$LOG" >&2; }
   rm -f "$LOG"
-  [ -n "$gen" ] && rm -rf "$gen"
+  [ -n "$gen" ] && rm -rf "$gen" || true
   return "$rc"
 }
 trap cleanup EXIT
@@ -61,16 +61,14 @@ for _ in $(seq 1 60); do
 done
 if ! kill -0 "$SERVER_PID" 2>/dev/null; then
   echo "verify-fb-client-npm: server process exited during startup" >&2
-  cat "$LOG" >&2
   exit 1
 fi
 curl -sf "$BASE/openapi.json" >/dev/null 2>&1 \
-  || { echo "verify-fb-client-npm: server did not become ready within 30s:" >&2; cat "$LOG" >&2; exit 1; }
+  || { echo "verify-fb-client-npm: server did not become ready within 30s" >&2; exit 1; }
 
 echo "verify-fb-client-npm: installing the workspace…"
 npm ci --silent --no-audit --no-fund
 
-# The example imports the client package's compiled output, so build it first.
 npm run -w @plonklabs/flatbed-client build
 
 echo "verify-fb-client-npm: checking the committed generated client is current…"
