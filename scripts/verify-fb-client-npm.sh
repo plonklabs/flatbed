@@ -66,7 +66,8 @@ npm run -w @plonklabs/flatbed-client build
 
 echo "verify-fb-client-npm: checking the committed generated client is current…"
 gen="$(mktemp -d)"
-( cd clients/ts/flatbed-client && node --import tsx src/cli.ts generate --server "$BASE" --out "$gen" )
+( cd clients/ts/flatbed-client && node --import tsx src/cli.ts generate --server "$BASE" --out "$gen" ) \
+  || { echo "verify-fb-client-npm: generate failed (see above)" >&2; exit 1; }
 if ! diff -r "$gen" "$GENERATED" >/dev/null; then
   echo "error: committed client in $GENERATED is out of date for examples/openapi." >&2
   echo "Regenerate (with the server running):" >&2
