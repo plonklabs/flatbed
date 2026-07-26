@@ -48,14 +48,14 @@ const defaults = (ctx: Ctx, f: FbsField): { readonly encode: string; readonly de
 /** A single-line IIFE building a vector of `element` from `expr`, back-to-front. */
 const buildVector = (ctx: Ctx, expr: string, element: FbsType): string => {
   if (element.kind === "table") {
-    return `(() => { const o = ${expr}.map((x) => encode${element.name}(builder, x)); builder.startVector(4, o.length, 4); for (let i = o.length - 1; i >= 0; i--) builder.addOffset(o[i]); return builder.endVector(); })()`;
+    return `(() => { const o = ${expr}.map((x) => encode${element.name}(builder, x)); builder.startVector(4, o.length, 4); [...o].reverse().forEach((off) => builder.addOffset(off)); return builder.endVector(); })()`;
   }
   if (element.kind === "string") {
-    return `(() => { const o = ${expr}.map((x) => builder.createString(x)); builder.startVector(4, o.length, 4); for (let i = o.length - 1; i >= 0; i--) builder.addOffset(o[i]); return builder.endVector(); })()`;
+    return `(() => { const o = ${expr}.map((x) => builder.createString(x)); builder.startVector(4, o.length, 4); [...o].reverse().forEach((off) => builder.addOffset(off)); return builder.endVector(); })()`;
   }
   const ops = opsFor(ctx, element);
   const elem = element.kind === "scalar" && element.scalar === "bool" ? "x ? 1 : 0" : "x";
-  return `(() => { const a = ${expr}; builder.startVector(${ops.size}, a.length, ${ops.size}); for (let i = a.length - 1; i >= 0; i--) { const x = a[i]; builder.${ops.vecAdd}(${elem}); } return builder.endVector(); })()`;
+  return `(() => { const a = ${expr}; builder.startVector(${ops.size}, a.length, ${ops.size}); [...a].reverse().forEach((x) => builder.${ops.vecAdd}(${elem})); return builder.endVector(); })()`;
 };
 
 /** `[prep lines, addField line]` for one field's encode. */
@@ -116,7 +116,7 @@ const decodeField = (ctx: Ctx, f: FbsField): string => {
   const t = f.type;
   if (t.kind === "vector") {
     const tsElem = decodeElementType(t.element);
-    return `${o} ? (() => { const len = bb.__vector_len(pos + ${o}); const base = bb.__vector(pos + ${o}); const arr: ${tsElem}[] = []; for (let i = 0; i < len; i++) arr.push(${decodeElement(ctx, t.element)}); return arr; })() : undefined`;
+    return `${o} ? (() => { const len = bb.__vector_len(pos + ${o}); const base = bb.__vector(pos + ${o}); return Array.from({ length: len }, (_, i): ${tsElem} => ${decodeElement(ctx, t.element)}); })() : undefined`;
   }
   if (t.kind === "table") return `${o} ? decode${t.name}(bb, bb.__indirect(pos + ${o})) : undefined`;
   if (t.kind === "string") return `${o} ? (bb.__string(pos + ${o}) as string) : undefined`;
