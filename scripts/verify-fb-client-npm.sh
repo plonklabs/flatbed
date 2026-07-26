@@ -26,8 +26,6 @@ BASE="http://127.0.0.1:$PORT"
 LOG="$(mktemp)"
 gen=""
 SERVER_PID=""
-# Registered before any early exit so the temp log/dir are cleaned even if the
-# port check or the build bails.
 cleanup() {
   local rc=$?
   [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
@@ -53,8 +51,6 @@ examples/openapi/target/debug/flatbed-example-openapi >"$LOG" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 60); do
-  # Bail as soon as the server dies (e.g. failed to bind) instead of waiting out
-  # the timeout against a port nothing is serving.
   kill -0 "$SERVER_PID" 2>/dev/null || break
   curl -sf "$BASE/openapi.json" >/dev/null 2>&1 && break
   sleep 0.5
