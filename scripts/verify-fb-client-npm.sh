@@ -28,7 +28,16 @@ gen=""
 SERVER_PID=""
 # Registered before any early exit so the temp log/dir are cleaned even if the
 # port check or the build bails.
-cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true; rm -f "$LOG"; [ -n "$gen" ] && rm -rf "$gen"; }
+cleanup() {
+  local rc=$?
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
+  # Surface the server log if the run failed after the server started, otherwise
+  # a late crash or a mismatched response leaves no trace.
+  [ "$rc" -ne 0 ] && [ -s "$LOG" ] && { echo "--- server log ---" >&2; cat "$LOG" >&2; }
+  rm -f "$LOG"
+  [ -n "$gen" ] && rm -rf "$gen"
+  return "$rc"
+}
 trap cleanup EXIT
 
 # A pre-existing listener on the port would answer the readiness probe below, so
