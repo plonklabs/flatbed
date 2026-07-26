@@ -15,7 +15,7 @@ const tsType = (t: FbsType): string => {
     case "table":
       return t.name;
     case "vector":
-      return `${tsType(t.element)}[]`;
+      return `readonly ${tsType(t.element)}[]`;
   }
 };
 
@@ -30,7 +30,7 @@ const emitEnum = (e: FbsEnum): string =>
 
 const emitInterface = (t: FbsTable): string =>
   `export interface ${t.name} {\n` +
-  t.fields.map((f) => `  ${f.name}${isWireOptional(f.type) ? "?" : ""}: ${tsType(f.type)};\n`).join("") +
+  t.fields.map((f) => `  readonly ${f.name}${isWireOptional(f.type) ? "?" : ""}: ${tsType(f.type)};\n`).join("") +
   "}\n\n";
 
 /** Emit numeric enums (true wire values) + table interfaces. */

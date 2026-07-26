@@ -26,7 +26,7 @@ test("maps scalar wire types to their TS types", () => {
   assert.match(out, /ratio: number;/);
 });
 
-test("marks strings, tables, and vectors optional; scalars and enums required", () => {
+test("emits readonly fields, optional for strings/tables/vectors and readonly arrays", () => {
   const out = emitTypes(
     table("Row", [
       field("name", { kind: "string" }),
@@ -36,11 +36,11 @@ test("marks strings, tables, and vectors optional; scalars and enums required", 
       field("level", { kind: "enum", name: "Severity" }),
     ]),
   );
-  assert.match(out, /name\?: string;/);
-  assert.match(out, /addr\?: Address;/);
-  assert.match(out, /tags\?: string\[\];/);
-  assert.match(out, /age: number;/);
-  assert.match(out, /level: Severity;/);
+  assert.match(out, /readonly name\?: string;/);
+  assert.match(out, /readonly addr\?: Address;/);
+  assert.match(out, /readonly tags\?: readonly string\[\];/);
+  assert.match(out, /readonly age: number;/);
+  assert.match(out, /readonly level: Severity;/);
 });
 
 test("emits numeric enums with their wire values", () => {
