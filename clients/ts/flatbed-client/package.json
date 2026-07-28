@@ -1,6 +1,6 @@
 {
   "name": "@plonklabs/flatbed-client",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Runtime and generator for FlatBuffer clients of flatbed services.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
@@ -24,10 +24,14 @@
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test \"src/**/*.test.ts\""
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "prepare": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^22",

@@ -1,0 +1,46 @@
+name: Publish flatbed-client to npm
+
+# `workflow_dispatch` re-runs publish against an existing tag without re-pushing
+# it — dispatch against `--ref flatbed-client-vX.Y.Z`.
+
+on:
+  push:
+    tags: ['flatbed-client-v*']
+  workflow_dispatch:
+
+concurrency:
+  group: publish-client-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Verify tag matches package version
+        run: |
+          tag="${GITHUB_REF_NAME#flatbed-client-v}"
+          pkg="$(node -p "require('./clients/ts/flatbed-client/package.json').version")"
+          [ "$tag" = "$pkg" ] || { echo "ref $GITHUB_REF_NAME does not match package version $pkg" >&2; exit 1; }
+      - run: npm publish -w @plonklabs/flatbed-client --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  notify-failure:
+    needs: [publish]
+    if: failure()
+    uses: plonklabs/.github/.github/workflows/discord-notify-failure.yml@main
+    with:
+      workflow_name: Publish flatbed-client to npm
+    secrets: inherit
