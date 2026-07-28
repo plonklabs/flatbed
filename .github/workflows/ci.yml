@@ -97,8 +97,8 @@ jobs:
             echo "::endgroup::"
           done
 
-  # The TypeScript client package is outside the cargo workspace; typecheck,
-  # build, and test it on its own.
+  # The TypeScript client package is outside the cargo workspace; typecheck and
+  # test it on its own (`npm ci` builds it via the `prepare` script).
   flatbed-client:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -111,7 +111,6 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npm run -w @plonklabs/flatbed-client typecheck
-      - run: npm run -w @plonklabs/flatbed-client build
       - run: npm run -w @plonklabs/flatbed-client test
 
   codec-compat:
