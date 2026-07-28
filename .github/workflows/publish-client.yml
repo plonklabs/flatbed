@@ -2,9 +2,8 @@ name: Publish flatbed-client to npm
 
 # Tag-driven publish of @plonklabs/flatbed-client. Primary trigger is a
 # `flatbed-client-v*` tag push; the version in the tag must match the
-# package.json version. `NPM_TOKEN` is a repo secret sourced from 1Password
-# (winkoz/npm-token). This tag namespace is distinct from the Rust `flatbed-v*`
-# tags, so the two release paths never collide.
+# package.json version. `NPM_TOKEN` is a repo secret. This tag namespace is
+# distinct from the Rust `flatbed-v*` tags, so the two release paths never collide.
 #
 # `workflow_dispatch` re-runs publish against an existing tag without
 # re-pushing it (dispatch against `--ref flatbed-client-vX.Y.Z`).
