@@ -37,7 +37,7 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME#flatbed-client-v}"
           pkg="$(node -p "require('./clients/ts/flatbed-client/package.json').version")"
-          [ "$tag" = "$pkg" ] || { echo "tag $GITHUB_REF_NAME does not match package version $pkg" >&2; exit 1; }
+          [ "$tag" = "$pkg" ] || { echo "ref $GITHUB_REF_NAME does not match package version $pkg" >&2; exit 1; }
       - run: npm publish -w @plonklabs/flatbed-client --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -98,7 +98,7 @@ jobs:
           done
 
   # The TypeScript client package is outside the cargo workspace; typecheck and
-  # test it on its own (`npm ci` builds it via the `prepare` script).
+  # test it on its own.
   flatbed-client:
     runs-on: ubuntu-latest
     timeout-minutes: 15
