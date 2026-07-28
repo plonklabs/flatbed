@@ -12,11 +12,13 @@ npm i -D @plonklabs/flatbed-client
 npx flatbed-client generate --server http://localhost:8080 --out src/api
 ```
 
-It writes four files into `--out`:
+It writes five files into `--out`:
 
 - `types.ts` — an interface per table and a numeric enum (true wire values).
 - `codec.ts` — per-table `encode…Root` / `decode…Root` over the `flatbuffers`
   runtime, byte-identical to flatbed's Rust codec.
+- `json-codec.ts` — per-table `encode…Json` / `decode…Json` matching flatbed's
+  JSON wire shape (enums as variant names, numbers for scalars).
 - `client.ts` — a `createFlatbedClient(config)` factory with one method per route.
 - `index.ts` — a barrel re-exporting the folder.
 
@@ -45,6 +47,25 @@ const api = createFlatbedClient({
   headers: { authorization: `Bearer ${token}` },
 });
 ```
+
+## Choosing the wire format
+
+Every call sends FlatBuffer by default. Pass `{ as: "json" }` as a second
+argument to make that call over JSON instead — the option is generated only for
+operations the spec advertises for both formats:
+
+```ts
+// FlatBuffer (default)
+const echo = await api.postEcho({ body: { message: "hi", times: 3, priority: Priority.Low } });
+
+// same operation, JSON — chosen per call
+const echoJson = await api.postEcho({ body: { message: "hi", times: 3, priority: Priority.Low } }, { as: "json" });
+```
+
+FlatBuffer is compact and covers the full wire range; JSON is human-readable.
+**On the JSON path, 64-bit integers (`bigint`) are limited to the safe-integer
+range** — the server encodes them as JSON numbers, so a value above 2^53 loses
+precision. Use the FlatBuffer path when full 64-bit range matters.
 
 ## Transport — open for extension, closed for modification
 

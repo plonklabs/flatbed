@@ -158,6 +158,32 @@ request/response type's fields at compile time, and the server exposes:
 Point Swagger UI, Redoc, or a client generator at those endpoints and they stay
 in sync with the code automatically.
 
+## TypeScript client
+
+A service's OpenAPI spec (`/openapi.json`) and served FlatBuffer schema
+(`/schema.bfbs`) are enough to generate a fully typed TypeScript client — no Rust
+toolchain, no `flatc`. [`@plonklabs/flatbed-client`](clients/ts/flatbed-client)
+reads both and emits typed methods, one per route:
+
+```bash
+npm i -D @plonklabs/flatbed-client
+npx flatbed-client generate --server http://localhost:8080 --out src/api
+```
+
+```ts
+import { createFlatbedClient } from "./api";
+
+const api = createFlatbedClient({ baseUrl: "http://localhost:8080" });
+
+const pong = await api.postPing({ body: { message: "hi" } });                     // FlatBuffer (default)
+const pongJson = await api.postPing({ body: { message: "hi" } }, { as: "json" }); // JSON, per call
+```
+
+The generated client speaks the same two wire formats the server does. See the
+[package README](clients/ts/flatbed-client) for the full walkthrough and
+[`examples/openapi-consumer`](clients/ts/examples/openapi-consumer) for a runnable
+end-to-end example.
+
 ## Serving static files and a bundled SPA
 
 A flatbed service can serve a built frontend (a Vite/React `dist/`, say)
