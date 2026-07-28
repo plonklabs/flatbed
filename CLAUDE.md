@@ -46,6 +46,13 @@ Kubernetes pods behind an Envoy sidecar. Three crates:
   standalone `flatbed` CLI tool that drives codegen from `.fbs`
   schemas.
 
+A TypeScript client generator lives outside the cargo workspace under
+`clients/ts/` (its own npm workspace): **`@plonklabs/flatbed-client`**
+reads a running service's `/openapi.json` + `/schema.bfbs` and emits a
+typed client (types + FlatBuffer/JSON codecs + a functional
+`createFlatbedClient` factory) — pure TypeScript, no Rust or `flatc` in
+the consumer loop.
+
 The framework was extracted from `plonklabs/plonk` at v0.0.1. Its
 design biases: zero TLS in the framework (the sidecar handles it),
 zero magic dependency injection (handlers take typed `Request<T, C>`),
@@ -253,3 +260,8 @@ HTML/CSV/images/etc.
 - Version bumps live in `[workspace.package]` of the root `Cargo.toml`.
   Per Cargo semver-compat, every `0.0.x → 0.0.(x+1)` is treated as
   breaking, so pre-1.0 releases can change the public surface freely.
+- The TypeScript client publishes to npm separately via
+  `.github/workflows/publish-client.yml`, triggered by `flatbed-client-v*`
+  tag pushes (a distinct namespace from `flatbed-v*`). The tag version must
+  match `clients/ts/flatbed-client/package.json`; the workflow uses the
+  `NPM_TOKEN` repo secret.
