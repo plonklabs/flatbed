@@ -45,8 +45,9 @@ const defaults = (ctx: Ctx, f: FbsField): { readonly encode: string; readonly de
   return { encode: lit, decode: lit };
 };
 
-// A multi-line IIFE building a vector of `element` from `expr`, back-to-front —
-// `stmts` are its body statements, one per emitted line.
+// Wrap a vector's build statements in a multi-line IIFE returning the finished
+// `builder.endVector()` offset. Callers emit the elements back-to-front (a
+// FlatBuffer vector is written last element first).
 const vectorIife = (stmts: readonly string[]): string =>
   "(() => {\n" +
   stmts.map((s) => `      ${s}\n`).join("") +
