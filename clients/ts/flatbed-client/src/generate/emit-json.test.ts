@@ -11,7 +11,7 @@ import { readBfbs } from "./read-bfbs.js";
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
 
 // Emit every table's full encode+decode surface, so the round-trip assertions
-// below reach each type's `…Json` functions regardless of direction.
+// here reach each type's `…Json` functions regardless of direction.
 const bothRoots = (s: FbsSchema): CodecRoots => {
   const all = new Set(s.tables.map((t) => t.name));
   return { encodeRoots: all, decodeRoots: all };

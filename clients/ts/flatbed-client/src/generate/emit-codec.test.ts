@@ -9,9 +9,9 @@ import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
 
-// Treat every table as both a request and a response body, so import and
-// round-trip assertions see the full encode+decode surface — the direction
-// pruning itself is covered end-to-end by the openapi-consumer snapshot.
+// Treat every table as both a request and a response body, so the import and
+// round-trip assertions here exercise the full encode+decode surface; the
+// direction pruning has its own focused tests.
 const bothRoots = (s: FbsSchema): CodecRoots => {
   const all = new Set(s.tables.map((t) => t.name));
   return { encodeRoots: all, decodeRoots: all };
@@ -43,6 +43,21 @@ test("an enum a field references is imported", () => {
     enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
   };
   assert.match(emitCodec(s, bothRoots(s)), /import type \{ T, E \} from ".\/types.js";/);
+});
+
+test("an enum field of an encode-only table is not imported (encode writes the raw int)", () => {
+  const s: FbsSchema = {
+    tables: [
+      { name: "T", fields: [{ name: "e", id: 0, type: { kind: "enum", name: "E" }, default: { kind: "int", value: 0n } }] },
+    ],
+    enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
+  };
+  // Only encoded: the FlatBuffer encode path writes E's underlying integer and
+  // never names the enum, so E stays out of the type import (a `decode` cast is
+  // the only place the codec names an enum).
+  const out = emitCodec(s, { encodeRoots: new Set(["T"]), decodeRoots: new Set() });
+  assert.match(out, /import type \{ T \} from ".\/types.js";/);
+  assert.doesNotMatch(out, /\bE\b/);
 });
 
 const scalarField = (name: string): FbsField => ({
