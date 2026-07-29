@@ -125,7 +125,9 @@ const method = (op: Operation): string => {
     .join(", ");
   return (
     `  ${name}: (${sig}): Promise<${returns}> =>\n` +
-    `    opts?.as === "json" ? ${call(op, "json")} : ${call(op, "fb")},\n`
+    `    opts?.as === "json"\n` +
+    `      ? ${call(op, "json")}\n` +
+    `      : ${call(op, "fb")},\n`
   );
 };
 

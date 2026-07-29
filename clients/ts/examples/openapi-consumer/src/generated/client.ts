@@ -7,7 +7,11 @@ import type { EchoRequest, EchoResponse, GreetRequest, GreetResponse } from "./t
 
 export const createFlatbedClient = (config: ClientConfig) => ({
   postEcho: (args: { body: EchoRequest }, opts?: { as?: "json" | "flatbuffer" }): Promise<EchoResponse> =>
-    opts?.as === "json" ? request(config, "POST", "/echo", json.encodeEchoRequestJson(args.body), json.decodeEchoResponseJson, JSON_CONTENT_TYPE) : request(config, "POST", "/echo", codec.encodeEchoRequestRoot(args.body), codec.decodeEchoResponseRoot, FLATBUFFERS_CONTENT_TYPE),
+    opts?.as === "json"
+      ? request(config, "POST", "/echo", json.encodeEchoRequestJson(args.body), json.decodeEchoResponseJson, JSON_CONTENT_TYPE)
+      : request(config, "POST", "/echo", codec.encodeEchoRequestRoot(args.body), codec.decodeEchoResponseRoot, FLATBUFFERS_CONTENT_TYPE),
   postGreet: (args: { body: GreetRequest }, opts?: { as?: "json" | "flatbuffer" }): Promise<GreetResponse> =>
-    opts?.as === "json" ? request(config, "POST", "/greet", json.encodeGreetRequestJson(args.body), json.decodeGreetResponseJson, JSON_CONTENT_TYPE) : request(config, "POST", "/greet", codec.encodeGreetRequestRoot(args.body), codec.decodeGreetResponseRoot, FLATBUFFERS_CONTENT_TYPE),
+    opts?.as === "json"
+      ? request(config, "POST", "/greet", json.encodeGreetRequestJson(args.body), json.decodeGreetResponseJson, JSON_CONTENT_TYPE)
+      : request(config, "POST", "/greet", codec.encodeGreetRequestRoot(args.body), codec.decodeGreetResponseRoot, FLATBUFFERS_CONTENT_TYPE),
 });
