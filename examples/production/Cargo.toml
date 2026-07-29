@@ -1,0 +1,21 @@
+[package]
+name = "flatbed-example-production"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Empty table: standalone package, not a member of the flatbed workspace above.
+[workspace]
+
+[dependencies]
+# `telemetry` + `prometheus` add the readiness probe (`/readyz`) a deployment
+# needs before it receives traffic; `openapi` serves the spec a client generates
+# from.
+flatbed = { path = "../../crates/flatbed", features = ["openapi", "telemetry", "prometheus"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# The flatc-generated wire-format code references these crates by name.
+flatbuffers = "25.2.10"
+serde = { version = "1", features = ["derive"] }
+
+[build-dependencies]
+flatbed_build = { path = "../../crates/flatbed_build" }
