@@ -66,8 +66,8 @@ test("an enum field of a decode-only table is imported (decode casts with `as`)"
     ],
     enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
   };
-  // The positive half of the asymmetry: a decoded field reads `as E`, so the
-  // decode-only table pulls E into the import even with no encode side.
+  // A decoded field reads `as E`, so a decode-only table pulls E into the type
+  // import even with no encode side.
   const out = emitCodec(s, { encodeRoots: new Set(), decodeRoots: new Set(["T"]) });
   assert.match(out, /import type \{ T, E \} from ".\/types.js";/);
 });

@@ -35,17 +35,18 @@ printf '{"paths":{}}' > "$WORK/empty.json"
 # The npm codec emits a type's `…Root` only for types an operation declares as a
 # request/response body, so the spec must name every round-trip type on both
 # sides for each Root to be emitted (JSON `$ref` names the type; x-flatbuffers
-# marks the binary direction).
-node -e '
+# marks the binary direction). The type list is passed via an env var, not argv,
+# so it doesn't depend on what `node -e` puts at `process.argv[1]`.
+TYPES="$TYPES" node -e '
 const body = (t) => ({ content: {
   "application/json": { schema: { $ref: "#/components/schemas/" + t } },
   "application/x-flatbuffers": {} } });
 const paths = {};
-process.argv.slice(1).forEach((t) => {
+process.env.TYPES.trim().split(/\s+/).forEach((t) => {
   paths["/rt/" + t] = { post: { operationId: "rt" + t, requestBody: body(t), responses: { "200": body(t) } } };
 });
 process.stdout.write(JSON.stringify({ paths }));
-' $TYPES > "$WORK/roundtrip.json"
+' > "$WORK/roundtrip.json"
 
 driver() {
   cat >"$1/roundtrip.ts" <<'TS'

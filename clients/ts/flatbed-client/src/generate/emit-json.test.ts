@@ -48,9 +48,20 @@ test("an enum field of an encode-only table is still imported (toWire names it)"
     tables: [{ name: "T", fields: [{ name: "e", id: 0, type: { kind: "enum", name: "E" }, default: { kind: "int", value: 0n } }] }],
     enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
   };
-  // The JSON path is the mirror of the FlatBuffer codec: toWire names the enum at
-  // runtime (`E[value.e]`), so an encode-only table still needs its value import.
+  // toWire names the enum at runtime (`E[value.e]`), so an encode-only table
+  // still needs its value import.
   const out = emitJson(s, { encodeRoots: new Set(["T"]), decodeRoots: new Set() });
+  assert.match(out, /import \{ E \} from ".\/types.js";/);
+});
+
+test("an enum field of a decode-only table is still imported (fromWire names it)", () => {
+  const s: FbsSchema = {
+    tables: [{ name: "T", fields: [{ name: "e", id: 0, type: { kind: "enum", name: "E" }, default: { kind: "int", value: 0n } }] }],
+    enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
+  };
+  // fromWire also names the enum at runtime (`E[obj.e as keyof typeof E]`), so a
+  // decode-only table needs its value import too — unlike the FlatBuffer codec.
+  const out = emitJson(s, { encodeRoots: new Set(), decodeRoots: new Set(["T"]) });
   assert.match(out, /import \{ E \} from ".\/types.js";/);
 });
 
