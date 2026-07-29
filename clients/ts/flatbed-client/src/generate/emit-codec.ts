@@ -45,17 +45,36 @@ const defaults = (ctx: Ctx, f: FbsField): { readonly encode: string; readonly de
   return { encode: lit, decode: lit };
 };
 
-/** A single-line IIFE building a vector of `element` from `expr`, back-to-front. */
+// A multi-line IIFE building a vector of `element` from `expr`, back-to-front —
+// `stmts` are its body statements, one per emitted line.
+const vectorIife = (stmts: readonly string[]): string =>
+  "(() => {\n" +
+  stmts.map((s) => `      ${s}\n`).join("") +
+  "      return builder.endVector();\n" +
+  "    })()";
+
 const buildVector = (ctx: Ctx, expr: string, element: FbsType): string => {
   if (element.kind === "table") {
-    return `(() => { const o = ${expr}.map((x) => encode${element.name}(builder, x)); builder.startVector(4, o.length, 4); [...o].reverse().forEach((off) => builder.addOffset(off)); return builder.endVector(); })()`;
+    return vectorIife([
+      `const o = ${expr}.map((x) => encode${element.name}(builder, x));`,
+      "builder.startVector(4, o.length, 4);",
+      "[...o].reverse().forEach((off) => builder.addOffset(off));",
+    ]);
   }
   if (element.kind === "string") {
-    return `(() => { const o = ${expr}.map((x) => builder.createString(x)); builder.startVector(4, o.length, 4); [...o].reverse().forEach((off) => builder.addOffset(off)); return builder.endVector(); })()`;
+    return vectorIife([
+      `const o = ${expr}.map((x) => builder.createString(x));`,
+      "builder.startVector(4, o.length, 4);",
+      "[...o].reverse().forEach((off) => builder.addOffset(off));",
+    ]);
   }
   const ops = opsFor(ctx, element);
   const elem = element.kind === "scalar" && element.scalar === "bool" ? "x ? 1 : 0" : "x";
-  return `(() => { const a = ${expr}; builder.startVector(${ops.size}, a.length, ${ops.size}); [...a].reverse().forEach((x) => builder.${ops.vecAdd}(${elem})); return builder.endVector(); })()`;
+  return vectorIife([
+    `const a = ${expr};`,
+    `builder.startVector(${ops.size}, a.length, ${ops.size});`,
+    `[...a].reverse().forEach((x) => builder.${ops.vecAdd}(${elem}));`,
+  ]);
 };
 
 /** `[prep lines, addField line]` for one field's encode. */
@@ -116,7 +135,15 @@ const decodeField = (ctx: Ctx, f: FbsField): string => {
   const t = f.type;
   if (t.kind === "vector") {
     const tsElem = decodeElementType(t.element);
-    return `${o} ? (() => { const len = bb.__vector_len(pos + ${o}); const base = bb.__vector(pos + ${o}); return Array.from({ length: len }, (_, i): ${tsElem} => ${decodeElement(ctx, t.element)}); })() : undefined`;
+    return (
+      `${o}\n` +
+      `      ? (() => {\n` +
+      `          const len = bb.__vector_len(pos + ${o});\n` +
+      `          const base = bb.__vector(pos + ${o});\n` +
+      `          return Array.from({ length: len }, (_, i): ${tsElem} => ${decodeElement(ctx, t.element)});\n` +
+      `        })()\n` +
+      `      : undefined`
+    );
   }
   if (t.kind === "table") return `${o} ? decode${t.name}(bb, bb.__indirect(pos + ${o})) : undefined`;
   if (t.kind === "string") return `${o} ? (bb.__string(pos + ${o}) as string) : undefined`;

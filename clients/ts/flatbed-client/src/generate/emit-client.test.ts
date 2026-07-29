@@ -33,8 +33,8 @@ test("a JSON-capable operation offers { as } defaulting to FlatBuffer", () => {
     op({ method: "POST", path: "/echo", operationId: "echo", requestType: "EchoRequest", responseType: "EchoResponse", supportsJson: true }),
   ]);
   assert.match(out, /echo: \(args: \{ body: EchoRequest \}, opts\?: \{ as\?: "json" \| "flatbuffer" \}\): Promise<EchoResponse> =>/);
-  assert.match(out, /opts\?\.as === "json" \? request\(config, "POST", "\/echo", json\.encodeEchoRequestJson\(args\.body\), json\.decodeEchoResponseJson, JSON_CONTENT_TYPE\)/);
-  assert.match(out, /: request\(config, "POST", "\/echo", codec\.encodeEchoRequestRoot\(args\.body\), codec\.decodeEchoResponseRoot, FLATBUFFERS_CONTENT_TYPE\)/);
+  assert.match(out, /opts\?\.as === "json"\n\s*\? request\(config, "POST", "\/echo", json\.encodeEchoRequestJson\(args\.body\), json\.decodeEchoResponseJson, JSON_CONTENT_TYPE\)/);
+  assert.match(out, /\n\s*: request\(config, "POST", "\/echo", codec\.encodeEchoRequestRoot\(args\.body\), codec\.decodeEchoResponseRoot, FLATBUFFERS_CONTENT_TYPE\)/);
   assert.match(out, /import \* as json from ".\/json-codec.js";/);
   assert.match(out, /JSON_CONTENT_TYPE/);
 });
