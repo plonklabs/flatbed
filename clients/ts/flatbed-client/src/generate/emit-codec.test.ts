@@ -9,9 +9,8 @@ import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
 
-// Treat every table as both a request and a response body, so the import and
-// round-trip assertions here exercise the full encode+decode surface; the
-// direction pruning has its own focused tests.
+// Treat every table as both a request and a response body so the import and
+// round-trip assertions exercise the full encode+decode surface.
 const bothRoots = (s: FbsSchema): CodecRoots => {
   const all = new Set(s.tables.map((t) => t.name));
   return { encodeRoots: all, decodeRoots: all };

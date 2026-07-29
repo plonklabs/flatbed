@@ -10,8 +10,8 @@ import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
 
-// Emit every table's full encode+decode surface, so the round-trip assertions
-// here reach each type's `…Json` functions regardless of direction.
+// Emit every table's full encode+decode surface so the round-trip assertions
+// reach each type's `…Json` functions.
 const bothRoots = (s: FbsSchema): CodecRoots => {
   const all = new Set(s.tables.map((t) => t.name));
   return { encodeRoots: all, decodeRoots: all };
@@ -41,6 +41,17 @@ test("emits only the direction each body type is actually used in", () => {
   assert.doesNotMatch(out, /decodeReqJson\b/);
   assert.match(out, /export function decodeRespJson\(/);
   assert.doesNotMatch(out, /encodeRespJson\b/);
+});
+
+test("an enum field of an encode-only table is still imported (toWire names it)", () => {
+  const s: FbsSchema = {
+    tables: [{ name: "T", fields: [{ name: "e", id: 0, type: { kind: "enum", name: "E" }, default: { kind: "int", value: 0n } }] }],
+    enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
+  };
+  // The JSON path is the mirror of the FlatBuffer codec: toWire names the enum at
+  // runtime (`E[value.e]`), so an encode-only table still needs its value import.
+  const out = emitJson(s, { encodeRoots: new Set(["T"]), decodeRoots: new Set() });
+  assert.match(out, /import \{ E \} from ".\/types.js";/);
 });
 
 const Severity = { Info: 0, Warning: 1, Error: 2 } as const;

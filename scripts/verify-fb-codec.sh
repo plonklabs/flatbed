@@ -32,11 +32,10 @@ trap cleanup EXIT
 
 printf '{"paths":{}}' > "$WORK/empty.json"
 
-# The npm codec emits a type's `…Root` only when an operation advertises it as a
-# request/response body, so drive it with a spec that offers each round-trip type
-# on both sides (JSON `$ref` names the type; x-flatbuffers marks the binary codec
-# direction). The Rust generator ignores operations and emits everything, so it
-# keeps the empty spec.
+# The npm codec emits a type's `…Root` only for types an operation declares as a
+# request/response body, so the spec must name every round-trip type on both
+# sides for each Root to be emitted (JSON `$ref` names the type; x-flatbuffers
+# marks the binary direction).
 node -e '
 const body = (t) => ({ content: {
   "application/json": { schema: { $ref: "#/components/schemas/" + t } },
