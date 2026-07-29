@@ -182,7 +182,9 @@ const pongJson = await api.postPing({ body: { message: "hi" } }, { as: "json" })
 The generated client speaks the same two wire formats the server does. See the
 [package README](clients/ts/flatbed-client) for the full walkthrough and
 [`clients/ts/examples/openapi-consumer`](clients/ts/examples/openapi-consumer) for
-a runnable end-to-end example.
+a runnable end-to-end example. The [`production`](examples/production) example is
+a deploy-shaped server — a business route plus telemetry and served reflection —
+to point the generator at.
 
 ## Serving static files and a bundled SPA
 

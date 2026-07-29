@@ -1,0 +1,11 @@
+namespace greet;
+
+table GreetRequest {
+  name: string;
+}
+
+table GreetResponse {
+  greeting: string;
+}
+
+root_type GreetRequest;
