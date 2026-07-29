@@ -1,8 +1,8 @@
 # production
 
-A flatbed service with every production feature switched on — the shape you'd
-actually deploy as a box and generate a typed client against. Where the other
-examples isolate one capability, this one wires them together on one listener:
+A deployable flatbed service — the shape you'd actually ship as a box and
+generate a typed client against. It combines a business route, telemetry, and a
+served spec on one listener:
 
 - `POST /greet` — the business route
 - `GET /openapi.json` — generated OpenAPI 3 spec (`openapi` feature)

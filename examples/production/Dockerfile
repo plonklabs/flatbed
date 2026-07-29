@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# Build context is the flatbed repo root (see docker-compose.yml) because this
-# example depends on ../../crates/flatbed by path.
+# Build context must be the flatbed repo root, because this example depends on
+# ../../crates/flatbed by path.
 
 FROM rust:1-bookworm AS builder
 

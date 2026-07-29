@@ -1,6 +1,6 @@
-//! flatbed with every production feature switched on — the shape you'd deploy as
-//! a box and generate a typed client against. The other examples isolate one
-//! capability; this one wires them together on a single listener:
+//! A deployable flatbed service — a business route, telemetry (so a deployment's
+//! readiness probe passes), and a served spec + reflection to generate a typed
+//! client from, all on one listener:
 //!
 //! - `POST /greet`       — the business route (typed request/response)
 //! - `GET /openapi.json` — generated OpenAPI 3 spec (`openapi` feature)

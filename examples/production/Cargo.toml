@@ -8,9 +8,9 @@ publish = false
 [workspace]
 
 [dependencies]
-# Every production feature: `openapi` (served spec), `telemetry` + `prometheus`
-# (health/readiness/metrics — the readiness probe is what lets a deployment
-# receive traffic).
+# `telemetry` + `prometheus` add the readiness probe (`/readyz`) a deployment
+# needs before it receives traffic; `openapi` serves the spec a client generates
+# from.
 flatbed = { path = "../../crates/flatbed", features = ["openapi", "telemetry", "prometheus"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 # The flatc-generated wire-format code references these crates by name.
