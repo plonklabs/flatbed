@@ -19,8 +19,13 @@ COPY . .
 RUN cargo build --release --manifest-path examples/production/Cargo.toml
 
 FROM debian:bookworm-slim
+# curl is here for the HEALTHCHECK, which reports container health off `/healthz`.
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=builder \
   /src/examples/production/target/release/flatbed-example-production \
   /usr/local/bin/app
 EXPOSE 8080
+HEALTHCHECK --interval=5s --timeout=3s --retries=5 \
+  CMD curl -fsS http://localhost:8080/healthz || exit 1
 CMD ["app"]
