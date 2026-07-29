@@ -18,8 +18,9 @@ It writes five files into `--out`:
 - `codec.ts` — `encode…Root` for each request body and `decode…Root` for each
   response body, over the `flatbuffers` runtime, byte-identical to flatbed's Rust
   codec. Only the directions a client uses are emitted.
-- `json-codec.ts` — the matching `encode…Json` / `decode…Json` for flatbed's JSON
-  wire shape (enums as variant names, numbers for scalars).
+- `json-codec.ts` — `encode…Json` for each request body and `decode…Json` for
+  each response body, matching flatbed's JSON wire shape (enums as variant names,
+  numbers for scalars).
 - `client.ts` — a `createFlatbedClient(config)` factory with one method per route.
 - `index.ts` — a barrel re-exporting the folder.
 
