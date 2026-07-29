@@ -15,10 +15,12 @@ npx flatbed-client generate --server http://localhost:8080 --out src/api
 It writes five files into `--out`:
 
 - `types.ts` — an interface per table and a numeric enum (true wire values).
-- `codec.ts` — per-table `encode…Root` / `decode…Root` over the `flatbuffers`
-  runtime, byte-identical to flatbed's Rust codec.
-- `json-codec.ts` — per-table `encode…Json` / `decode…Json` matching flatbed's
-  JSON wire shape (enums as variant names, numbers for scalars).
+- `codec.ts` — `encode…Root` for each request body and `decode…Root` for each
+  response body, over the `flatbuffers` runtime, byte-identical to flatbed's Rust
+  codec. Only the directions a client uses are emitted.
+- `json-codec.ts` — `encode…Json` for each request body and `decode…Json` for
+  each response body, matching flatbed's JSON wire shape (enums as variant names,
+  numbers for scalars).
 - `client.ts` — a `createFlatbedClient(config)` factory with one method per route.
 - `index.ts` — a barrel re-exporting the folder.
 

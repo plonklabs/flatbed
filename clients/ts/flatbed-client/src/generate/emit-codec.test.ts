@@ -4,10 +4,17 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { emitCodec } from "./emit-codec.js";
-import type { FbsSchema } from "./model.js";
+import type { CodecRoots, FbsField, FbsSchema } from "./model.js";
 import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
+
+// Treat every table as both a request and a response body so the import and
+// round-trip assertions exercise the full encode+decode surface.
+const bothRoots = (s: FbsSchema): CodecRoots => {
+  const all = new Set(s.tables.map((t) => t.name));
+  return { encodeRoots: all, decodeRoots: all };
+};
 
 test("an enum no field references is not imported (would trip noUnusedLocals)", () => {
   const s: FbsSchema = {
@@ -16,14 +23,14 @@ test("an enum no field references is not imported (would trip noUnusedLocals)", 
     ],
     enums: [{ name: "Unused", underlying: "int8", members: [{ name: "A", value: 0n }] }],
   };
-  const out = emitCodec(s);
+  const out = emitCodec(s, bothRoots(s));
   assert.doesNotMatch(out, /Unused/);
   assert.match(out, /import type \{ T \} from ".\/types.js";/);
 });
 
 test("omits the flatbuffers import when the schema has no tables", () => {
   // With no tables the runtime is unused; emitting the import would trip noUnusedLocals.
-  const out = emitCodec({ tables: [], enums: [] });
+  const out = emitCodec({ tables: [], enums: [] }, { encodeRoots: new Set(), decodeRoots: new Set() });
   assert.doesNotMatch(out, /import \* as flatbuffers/);
 });
 
@@ -34,7 +41,78 @@ test("an enum a field references is imported", () => {
     ],
     enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
   };
-  assert.match(emitCodec(s), /import type \{ T, E \} from ".\/types.js";/);
+  assert.match(emitCodec(s, bothRoots(s)), /import type \{ T, E \} from ".\/types.js";/);
+});
+
+test("an enum field of an encode-only table is not imported (encode writes the raw int)", () => {
+  const s: FbsSchema = {
+    tables: [
+      { name: "T", fields: [{ name: "e", id: 0, type: { kind: "enum", name: "E" }, default: { kind: "int", value: 0n } }] },
+    ],
+    enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
+  };
+  // Only encoded: the FlatBuffer encode path writes E's underlying integer and
+  // never names the enum, so E stays out of the type import (a `decode` cast is
+  // the only place the codec names an enum).
+  const out = emitCodec(s, { encodeRoots: new Set(["T"]), decodeRoots: new Set() });
+  assert.match(out, /import type \{ T \} from ".\/types.js";/);
+  assert.doesNotMatch(out, /\bE\b/);
+});
+
+test("an enum field of a decode-only table is imported (decode casts with `as`)", () => {
+  const s: FbsSchema = {
+    tables: [
+      { name: "T", fields: [{ name: "e", id: 0, type: { kind: "enum", name: "E" }, default: { kind: "int", value: 0n } }] },
+    ],
+    enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
+  };
+  // A decoded field reads `as E`, so a decode-only table pulls E into the type
+  // import even with no encode side.
+  const out = emitCodec(s, { encodeRoots: new Set(), decodeRoots: new Set(["T"]) });
+  assert.match(out, /import type \{ T, E \} from ".\/types.js";/);
+});
+
+const scalarField = (name: string): FbsField => ({
+  name,
+  id: 0,
+  type: { kind: "scalar", scalar: "int32" },
+  default: { kind: "int", value: 0n },
+});
+
+test("emits only the direction each body type is actually used in", () => {
+  const s: FbsSchema = {
+    tables: [
+      { name: "Req", fields: [scalarField("x")] },
+      { name: "Resp", fields: [scalarField("y")] },
+      { name: "ServerOnly", fields: [scalarField("z")] },
+    ],
+    enums: [],
+  };
+  const out = emitCodec(s, { encodeRoots: new Set(["Req"]), decodeRoots: new Set(["Resp"]) });
+  // A request body is encoded, never decoded, by a client.
+  assert.match(out, /export function encodeReq\(/);
+  assert.match(out, /export function encodeReqRoot\(/);
+  assert.doesNotMatch(out, /decodeReq\b/);
+  // A response body is decoded, never encoded.
+  assert.match(out, /export function decodeResp\(/);
+  assert.match(out, /export function decodeRespRoot\(/);
+  assert.doesNotMatch(out, /encodeResp\b/);
+  // A table on neither side of any operation is not emitted at all.
+  assert.doesNotMatch(out, /ServerOnly/);
+});
+
+test("a nested table gets its parent's direction but no Root of its own", () => {
+  const s: FbsSchema = {
+    tables: [
+      { name: "Req", fields: [{ name: "n", id: 0, type: { kind: "table", name: "Nested" }, default: { kind: "none" } }] },
+      { name: "Nested", fields: [scalarField("x")] },
+    ],
+    enums: [],
+  };
+  const out = emitCodec(s, { encodeRoots: new Set(["Req"]), decodeRoots: new Set() });
+  assert.match(out, /export function encodeNested\(/); // reachable from a request body
+  assert.doesNotMatch(out, /encodeNestedRoot\b/); // nested, so never a top-level body
+  assert.doesNotMatch(out, /decodeNested\b/); // no response body reaches it
 });
 
 /**
@@ -47,7 +125,7 @@ type Codec = Record<string, (arg: never) => never>;
 const codec: Promise<Codec> = (() => {
   const dir = fileURLToPath(new URL("../../node_modules/.cache/flatbed-codec-test", import.meta.url));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(`${dir}/codec.ts`, emitCodec(schema));
+  writeFileSync(`${dir}/codec.ts`, emitCodec(schema, bothRoots(schema)));
   return import(`${dir}/codec.ts`) as Promise<Codec>;
 })();
 

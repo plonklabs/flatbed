@@ -3,7 +3,7 @@ import { camelCase, isValidTsIdentifier, paramIdent, pascalCase, pathParams } fr
 import { HEADER } from "./util.js";
 
 /** GET/HEAD never carry a body, so their request type is dropped. */
-const effectiveRequestType = (op: Operation): string | undefined =>
+export const effectiveRequestType = (op: Operation): string | undefined =>
   op.method === "GET" || op.method === "HEAD" ? undefined : op.requestType;
 
 /** The camelCased operationId when present, else `<method><PascalPathSegments>`. */

@@ -79,3 +79,14 @@ export interface Operation {
   readonly responseType?: string;
   readonly supportsJson: boolean;
 }
+
+/**
+ * The body types a client actually uses, so the codec emitters can skip the
+ * dead direction of every type. A client encodes request bodies (`encodeRoots`)
+ * and decodes response bodies (`decodeRoots`); it never decodes a request or
+ * encodes a response — those halves are the server's.
+ */
+export interface CodecRoots {
+  readonly encodeRoots: ReadonlySet<string>;
+  readonly decodeRoots: ReadonlySet<string>;
+}
