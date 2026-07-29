@@ -47,9 +47,9 @@ const defaults = (ctx: Ctx, f: FbsField): { readonly encode: string; readonly de
 
 const vectorIife = (stmts: readonly string[]): string =>
   "(() => {\n" +
-  stmts.map((s) => `      ${s}\n`).join("") +
-  "      return builder.endVector();\n" +
-  "    })()";
+  stmts.map((s) => `        ${s}\n`).join("") +
+  "        return builder.endVector();\n" +
+  "      })()";
 
 const buildVector = (ctx: Ctx, expr: string, element: FbsType): string => {
   if (element.kind === "table") {
@@ -82,7 +82,10 @@ const encodeField = (ctx: Ctx, f: FbsField): readonly [string, string] => {
   const offsetAdd = `  if (${off}) builder.addFieldOffset(${f.id}, ${off}, 0);\n`;
   const t = f.type;
   if (t.kind === "vector") {
-    return [`  const ${off} = ${val} != null ? ${buildVector(ctx, val, t.element)} : 0;\n`, offsetAdd];
+    return [
+      `  const ${off} = ${val} != null\n    ? ${buildVector(ctx, val, t.element)}\n    : 0;\n`,
+      offsetAdd,
+    ];
   }
   if (t.kind === "table") {
     return [`  const ${off} = ${val} != null ? encode${t.name}(builder, ${val}) : 0;\n`, offsetAdd];

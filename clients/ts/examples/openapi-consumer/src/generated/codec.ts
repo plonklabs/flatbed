@@ -5,12 +5,14 @@ import type { EchoRequest, EchoResponse, GreetRequest, GreetResponse, Tag, Prior
 
 export function encodeEchoRequest(builder: flatbuffers.Builder, value: EchoRequest): flatbuffers.Offset {
   const messageOffset = value.message != null ? builder.createString(value.message) : 0;
-  const tagsOffset = value.tags != null ? (() => {
-      const o = value.tags.map((x) => encodeTag(builder, x));
-      builder.startVector(4, o.length, 4);
-      [...o].reverse().forEach((off) => builder.addOffset(off));
-      return builder.endVector();
-    })() : 0;
+  const tagsOffset = value.tags != null
+    ? (() => {
+        const o = value.tags.map((x) => encodeTag(builder, x));
+        builder.startVector(4, o.length, 4);
+        [...o].reverse().forEach((off) => builder.addOffset(off));
+        return builder.endVector();
+      })()
+    : 0;
   builder.startObject(4);
   if (messageOffset) builder.addFieldOffset(0, messageOffset, 0);
   builder.addFieldInt32(1, value.times, 0);
