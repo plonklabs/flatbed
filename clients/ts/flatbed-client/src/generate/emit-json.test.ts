@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { emitJson } from "./emit-json.js";
 import { emitTypes } from "./emit-types.js";
-import type { CodecRoots, FbsSchema } from "./model.js";
+import type { CodecRoots, FbsField, FbsSchema } from "./model.js";
 import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
@@ -26,6 +26,22 @@ const codec: Promise<Codec> = (() => {
   writeFileSync(`${dir}/json-codec.ts`, emitJson(schema, bothRoots(schema)));
   return import(`${dir}/json-codec.ts`) as Promise<Codec>;
 })();
+
+test("emits only the direction each body type is actually used in", () => {
+  const scalar: FbsField = { name: "x", id: 0, type: { kind: "scalar", scalar: "int32" }, default: { kind: "int", value: 0n } };
+  const s: FbsSchema = {
+    tables: [
+      { name: "Req", fields: [scalar] },
+      { name: "Resp", fields: [scalar] },
+    ],
+    enums: [],
+  };
+  const out = emitJson(s, { encodeRoots: new Set(["Req"]), decodeRoots: new Set(["Resp"]) });
+  assert.match(out, /export function encodeReqJson\(/);
+  assert.doesNotMatch(out, /decodeReqJson\b/);
+  assert.match(out, /export function decodeRespJson\(/);
+  assert.doesNotMatch(out, /encodeRespJson\b/);
+});
 
 const Severity = { Info: 0, Warning: 1, Error: 2 } as const;
 
