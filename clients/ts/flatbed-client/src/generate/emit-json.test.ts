@@ -5,9 +5,17 @@ import { fileURLToPath } from "node:url";
 
 import { emitJson } from "./emit-json.js";
 import { emitTypes } from "./emit-types.js";
+import type { CodecRoots, FbsSchema } from "./model.js";
 import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
+
+// Emit every table's full encode+decode surface, so the round-trip assertions
+// below reach each type's `…Json` functions regardless of direction.
+const bothRoots = (s: FbsSchema): CodecRoots => {
+  const all = new Set(s.tables.map((t) => t.name));
+  return { encodeRoots: all, decodeRoots: all };
+};
 
 /** Compile-and-load the generated JSON codec once; it imports enum values as runtime values, so the type module must sit alongside it. */
 type Codec = Record<string, (arg: never) => never>;
@@ -15,7 +23,7 @@ const codec: Promise<Codec> = (() => {
   const dir = fileURLToPath(new URL("../../node_modules/.cache/flatbed-json-test", import.meta.url));
   mkdirSync(dir, { recursive: true });
   writeFileSync(`${dir}/types.ts`, emitTypes(schema));
-  writeFileSync(`${dir}/json-codec.ts`, emitJson(schema));
+  writeFileSync(`${dir}/json-codec.ts`, emitJson(schema, bothRoots(schema)));
   return import(`${dir}/json-codec.ts`) as Promise<Codec>;
 })();
 

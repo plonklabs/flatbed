@@ -1,4 +1,5 @@
-import type { FbsEnum, FbsField, FbsSchema, FbsTable, FbsType } from "./model.js";
+import type { CodecRoots, FbsEnum, FbsField, FbsSchema, FbsTable, FbsType } from "./model.js";
+import { reachableTables } from "./reachable.js";
 import { HEADER } from "./util.js";
 import { SCALAR_OPS, type ScalarOps } from "./wire.js";
 
@@ -103,7 +104,7 @@ const encodeField = (ctx: Ctx, f: FbsField): readonly [string, string] => {
 const slotCount = (t: FbsTable): number =>
   t.fields.reduce((max, f) => Math.max(max, f.id + 1), 0);
 
-const encodeTable = (ctx: Ctx, t: FbsTable): string => {
+const encodeFn = (ctx: Ctx, t: FbsTable): string => {
   const [preps, adds] = t.fields
     .map((f) => encodeField(ctx, f))
     .reduce<[string, string]>(([p, a], [fp, fa]) => [p + fp, a + fa], ["", ""]);
@@ -112,13 +113,17 @@ const encodeTable = (ctx: Ctx, t: FbsTable): string => {
     preps +
     `  builder.startObject(${slotCount(t)});\n` +
     adds +
-    "  return builder.endObject();\n}\n\n" +
-    `export function encode${t.name}Root(value: ${t.name}): Uint8Array {\n` +
-    "  const builder = new flatbuffers.Builder();\n" +
-    `  builder.finish(encode${t.name}(builder, value));\n` +
-    "  return builder.asUint8Array();\n}\n\n"
+    "  return builder.endObject();\n}\n\n"
   );
 };
+
+// Only a request body is encoded from the top; nested tables are reached through
+// their parent's `encode…`, so they never need a Root entry point.
+const encodeRootFn = (t: FbsTable): string =>
+  `export function encode${t.name}Root(value: ${t.name}): Uint8Array {\n` +
+  "  const builder = new flatbuffers.Builder();\n" +
+  `  builder.finish(encode${t.name}(builder, value));\n` +
+  "  return builder.asUint8Array();\n}\n\n";
 
 /** The TS expression reading the i-th vector element from `base`. */
 const decodeElement = (ctx: Ctx, element: FbsType): string => {
@@ -163,7 +168,7 @@ const decodeElementType = (t: FbsType): string => {
   return "unknown";
 };
 
-const decodeTable = (ctx: Ctx, t: FbsTable): string => {
+const decodeFn = (ctx: Ctx, t: FbsTable): string => {
   const offsets = t.fields
     .map((f) => `  const ${f.name}_o = bb.__offset(pos, ${4 + f.id * 2});\n`)
     .join("");
@@ -173,40 +178,60 @@ const decodeTable = (ctx: Ctx, t: FbsTable): string => {
     offsets +
     "  return {\n" +
     fields +
-    "  };\n}\n\n" +
-    `export function decode${t.name}Root(bytes: Uint8Array): ${t.name} {\n` +
-    "  const bb = new flatbuffers.ByteBuffer(bytes);\n" +
-    `  return decode${t.name}(bb, bb.__indirect(bb.position()));\n}\n\n`
+    "  };\n}\n\n"
   );
 };
 
-// An enum only appears in the codec as an `as Name` cast, so import only those a
-// field actually uses; an unreferenced enum would be a dead import.
-const referencedEnums = (schema: FbsSchema): ReadonlySet<string> => {
+const decodeRootFn = (t: FbsTable): string =>
+  `export function decode${t.name}Root(bytes: Uint8Array): ${t.name} {\n` +
+  "  const bb = new flatbuffers.ByteBuffer(bytes);\n" +
+  `  return decode${t.name}(bb, bb.__indirect(bb.position()));\n}\n\n`;
+
+// An enum only appears in the codec as an `as Name` cast on the decode side —
+// encode writes its underlying integer literal, naming no enum — so import only
+// the enums that decoded tables reference; any other would be a dead import.
+const referencedEnums = (tables: readonly FbsTable[]): ReadonlySet<string> => {
   const names = new Set<string>();
   const visit = (t: FbsType): void => {
     if (t.kind === "enum") names.add(t.name);
     if (t.kind === "vector") visit(t.element);
   };
-  schema.tables.forEach((table) => table.fields.forEach((f) => visit(f.type)));
+  tables.forEach((table) => table.fields.forEach((f) => visit(f.type)));
   return names;
 };
 
-/** Emit per-table encode/decode functions over the `flatbuffers` runtime. */
-export const emitCodec = (schema: FbsSchema): string => {
+/**
+ * Emit the encode/decode functions over the `flatbuffers` runtime. A table gets
+ * an `encode…` when it's reachable from a request body and a `decode…` when
+ * reachable from a response body; the `…Root` entry points are limited to the
+ * body types themselves, so the dead direction of every type is never emitted.
+ */
+export const emitCodec = (schema: FbsSchema, roots: CodecRoots): string => {
   const ctx = ctxOf(schema);
-  const used = referencedEnums(schema);
+  const encodeSet = reachableTables(schema, roots.encodeRoots);
+  const decodeSet = reachableTables(schema, roots.decodeRoots);
+  const body = schema.tables
+    .map((t) =>
+      (encodeSet.has(t.name) ? encodeFn(ctx, t) : "") +
+      (roots.encodeRoots.has(t.name) ? encodeRootFn(t) : "") +
+      (decodeSet.has(t.name) ? decodeFn(ctx, t) : "") +
+      (roots.decodeRoots.has(t.name) ? decodeRootFn(t) : ""),
+    )
+    .join("");
+  const emitted = schema.tables.filter((t) => encodeSet.has(t.name) || decodeSet.has(t.name));
+  const decoded = schema.tables.filter((t) => decodeSet.has(t.name));
+  const used = referencedEnums(decoded);
   const typeList = [
-    ...schema.tables.map((t) => t.name),
+    ...emitted.map((t) => t.name),
     ...schema.enums.filter((e) => used.has(e.name)).map((e) => e.name),
   ].join(", ");
   return (
     HEADER +
-    // Only table encode/decode uses the runtime; with no tables the import would
-    // be unused and `noUnusedLocals` would reject the generated file.
-    (schema.tables.length > 0 ? 'import * as flatbuffers from "flatbuffers";\n' : "") +
+    // Only table encode/decode uses the runtime; with nothing emitted the import
+    // would be unused and `noUnusedLocals` would reject the generated file.
+    (emitted.length > 0 ? 'import * as flatbuffers from "flatbuffers";\n' : "") +
     (typeList.length > 0 ? `import type { ${typeList} } from "./types.js";\n` : "") +
     "\n" +
-    schema.tables.map((t) => encodeTable(ctx, t) + decodeTable(ctx, t)).join("")
+    body
   );
 };

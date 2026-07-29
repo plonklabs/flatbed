@@ -1,4 +1,5 @@
-import type { FbsField, FbsSchema, FbsTable, FbsType } from "./model.js";
+import type { CodecRoots, FbsField, FbsSchema, FbsTable, FbsType } from "./model.js";
+import { reachableTables } from "./reachable.js";
 import { HEADER } from "./util.js";
 
 // The JSON wire shape is the server's serde output: enums are variant-name
@@ -69,33 +70,52 @@ const fromWireFn = (t: FbsTable): string =>
   t.fields.map((f) => `    ${f.name}: ${fromWireField(f)},\n`).join("") +
   "  };\n}\n\n";
 
-const rootFns = (t: FbsTable): string =>
+const encodeJsonFn = (t: FbsTable): string =>
   `export function encode${t.name}Json(value: ${t.name}): Uint8Array {\n` +
-  `  return new TextEncoder().encode(JSON.stringify(toWire${t.name}(value)));\n}\n\n` +
+  `  return new TextEncoder().encode(JSON.stringify(toWire${t.name}(value)));\n}\n\n`;
+
+const decodeJsonFn = (t: FbsTable): string =>
   `export function decode${t.name}Json(bytes: Uint8Array): ${t.name} {\n` +
   `  return fromWire${t.name}(JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>);\n}\n\n`;
 
-// Enums need a value import: used as `Name[...]` at runtime.
-const referencedEnums = (schema: FbsSchema): ReadonlySet<string> => {
+// Both toWire and fromWire name the enum at runtime (`Name[...]`), so a table on
+// either side needs its enums as value imports; import only those referenced.
+const referencedEnums = (tables: readonly FbsTable[]): ReadonlySet<string> => {
   const names = new Set<string>();
   const visit = (t: FbsType): void => {
     if (t.kind === "enum") names.add(t.name);
     if (t.kind === "vector") visit(t.element);
   };
-  schema.tables.forEach((table) => table.fields.forEach((f) => visit(f.type)));
+  tables.forEach((table) => table.fields.forEach((f) => visit(f.type)));
   return names;
 };
 
-/** Emit per-table JSON encode/decode that matches the server's serde wire shape. */
-export const emitJson = (schema: FbsSchema): string => {
-  const enumSet = referencedEnums(schema);
+/**
+ * Emit the JSON encode/decode that matches the server's serde wire shape. A
+ * table gets a `toWire…`/`encode…Json` when it's reachable from a request body
+ * and a `fromWire…`/`decode…Json` when reachable from a response body; the
+ * exported `…Json` entry points are limited to the body types themselves.
+ */
+export const emitJson = (schema: FbsSchema, roots: CodecRoots): string => {
+  const encodeSet = reachableTables(schema, roots.encodeRoots);
+  const decodeSet = reachableTables(schema, roots.decodeRoots);
+  const body = schema.tables
+    .map((t) =>
+      (encodeSet.has(t.name) ? toWireFn(t) : "") +
+      (roots.encodeRoots.has(t.name) ? encodeJsonFn(t) : "") +
+      (decodeSet.has(t.name) ? fromWireFn(t) : "") +
+      (roots.decodeRoots.has(t.name) ? decodeJsonFn(t) : ""),
+    )
+    .join("");
+  const emitted = schema.tables.filter((t) => encodeSet.has(t.name) || decodeSet.has(t.name));
+  const enumSet = referencedEnums(emitted);
   const enums = schema.enums.filter((e) => enumSet.has(e.name)).map((e) => e.name);
-  const typeImports = schema.tables.map((t) => t.name);
+  const typeImports = emitted.map((t) => t.name);
   return (
     HEADER +
     (enums.length > 0 ? `import { ${enums.join(", ")} } from "./types.js";\n` : "") +
     (typeImports.length > 0 ? `import type { ${typeImports.join(", ")} } from "./types.js";\n` : "") +
     "\n" +
-    schema.tables.map((t) => toWireFn(t) + fromWireFn(t) + rootFns(t)).join("")
+    body
   );
 };

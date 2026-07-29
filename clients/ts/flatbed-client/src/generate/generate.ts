@@ -1,12 +1,19 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { checkNames, checkTypes, emitClient, emitIndex } from "./emit-client.js";
+import { checkNames, checkTypes, effectiveRequestType, emitClient, emitIndex } from "./emit-client.js";
 import { emitCodec } from "./emit-codec.js";
 import { emitJson } from "./emit-json.js";
 import { emitTypes } from "./emit-types.js";
+import type { CodecRoots, Operation } from "./model.js";
 import { readBfbs } from "./read-bfbs.js";
 import { readOperations } from "./read-openapi.js";
+
+/** The request bodies a client encodes and the response bodies it decodes. */
+const codecRoots = (ops: readonly Operation[]): CodecRoots => ({
+  encodeRoots: new Set(ops.map(effectiveRequestType).filter((t): t is string => t !== undefined)),
+  decodeRoots: new Set(ops.map((op) => op.responseType).filter((t): t is string => t !== undefined)),
+});
 
 /** The two inputs the generator reads: the OpenAPI spec and the `.bfbs`. */
 export interface GenerateInput {
@@ -29,10 +36,11 @@ export const generateFiles = ({ spec, bfbs }: GenerateInput): GeneratedFiles => 
   const ops = readOperations(spec);
   checkNames(ops);
   checkTypes(schema, ops);
+  const roots = codecRoots(ops);
   return {
     "types.ts": emitTypes(schema),
-    "codec.ts": emitCodec(schema),
-    "json-codec.ts": emitJson(schema),
+    "codec.ts": emitCodec(schema, roots),
+    "json-codec.ts": emitJson(schema, roots),
     "client.ts": emitClient(ops),
     "index.ts": emitIndex(),
   };

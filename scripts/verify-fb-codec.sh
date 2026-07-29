@@ -32,6 +32,22 @@ trap cleanup EXIT
 
 printf '{"paths":{}}' > "$WORK/empty.json"
 
+# The npm codec now emits a type's `…Root` only when an operation advertises it
+# as a request/response body, so drive it with a spec that offers each round-trip
+# type on both sides (JSON `$ref` names the type; x-flatbuffers marks the binary
+# codec direction). The Rust generator ignores operations and emits everything,
+# so it keeps the empty spec.
+node -e '
+const body = (t) => ({ content: {
+  "application/json": { schema: { $ref: "#/components/schemas/" + t } },
+  "application/x-flatbuffers": {} } });
+const paths = {};
+process.argv.slice(1).forEach((t) => {
+  paths["/rt/" + t] = { post: { operationId: "rt" + t, requestBody: body(t), responses: { "200": body(t) } } };
+});
+process.stdout.write(JSON.stringify({ paths }));
+' $TYPES > "$WORK/roundtrip.json"
+
 driver() {
   cat >"$1/roundtrip.ts" <<'TS'
 import * as codec from "./codec.js";
@@ -99,7 +115,7 @@ mkdir -p "$WORK/npm/src"
 ABS_BFBS="$(pwd)/$BFBS"
 # Run from the package dir so the relative `src/cli.ts` path resolves.
 ( cd "$PKG" && node --import tsx src/cli.ts generate \
-    --openapi "$WORK/empty.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >"$WORK/npm-gen.log" 2>&1 ) \
+    --openapi "$WORK/roundtrip.json" --schema "$ABS_BFBS" --out "$WORK/npm/gen" >"$WORK/npm-gen.log" 2>&1 ) \
   || { echo "npm codec generation failed:" >&2; cat "$WORK/npm-gen.log" >&2; exit 1; }
 # The round-trip needs the FlatBuffer codec and the type module (enums are
 # runtime value imports, not type-erased); the JSON codec is copied only for the

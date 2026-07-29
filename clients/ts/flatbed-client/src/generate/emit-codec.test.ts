@@ -4,10 +4,18 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { emitCodec } from "./emit-codec.js";
-import type { FbsSchema } from "./model.js";
+import type { CodecRoots, FbsSchema } from "./model.js";
 import { readBfbs } from "./read-bfbs.js";
 
 const schema = readBfbs(readFileSync(fileURLToPath(new URL("./__fixtures__/test.bfbs", import.meta.url))));
+
+// Treat every table as both a request and a response body, so import and
+// round-trip assertions see the full encode+decode surface — the direction
+// pruning itself is covered end-to-end by the openapi-consumer snapshot.
+const bothRoots = (s: FbsSchema): CodecRoots => {
+  const all = new Set(s.tables.map((t) => t.name));
+  return { encodeRoots: all, decodeRoots: all };
+};
 
 test("an enum no field references is not imported (would trip noUnusedLocals)", () => {
   const s: FbsSchema = {
@@ -16,14 +24,14 @@ test("an enum no field references is not imported (would trip noUnusedLocals)", 
     ],
     enums: [{ name: "Unused", underlying: "int8", members: [{ name: "A", value: 0n }] }],
   };
-  const out = emitCodec(s);
+  const out = emitCodec(s, bothRoots(s));
   assert.doesNotMatch(out, /Unused/);
   assert.match(out, /import type \{ T \} from ".\/types.js";/);
 });
 
 test("omits the flatbuffers import when the schema has no tables", () => {
   // With no tables the runtime is unused; emitting the import would trip noUnusedLocals.
-  const out = emitCodec({ tables: [], enums: [] });
+  const out = emitCodec({ tables: [], enums: [] }, { encodeRoots: new Set(), decodeRoots: new Set() });
   assert.doesNotMatch(out, /import \* as flatbuffers/);
 });
 
@@ -34,7 +42,7 @@ test("an enum a field references is imported", () => {
     ],
     enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
   };
-  assert.match(emitCodec(s), /import type \{ T, E \} from ".\/types.js";/);
+  assert.match(emitCodec(s, bothRoots(s)), /import type \{ T, E \} from ".\/types.js";/);
 });
 
 /**
@@ -47,7 +55,7 @@ type Codec = Record<string, (arg: never) => never>;
 const codec: Promise<Codec> = (() => {
   const dir = fileURLToPath(new URL("../../node_modules/.cache/flatbed-codec-test", import.meta.url));
   mkdirSync(dir, { recursive: true });
-  writeFileSync(`${dir}/codec.ts`, emitCodec(schema));
+  writeFileSync(`${dir}/codec.ts`, emitCodec(schema, bothRoots(schema)));
   return import(`${dir}/codec.ts`) as Promise<Codec>;
 })();
 
