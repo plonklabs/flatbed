@@ -59,6 +59,19 @@ test("an enum field of an encode-only table is not imported (encode writes the r
   assert.doesNotMatch(out, /\bE\b/);
 });
 
+test("an enum field of a decode-only table is imported (decode casts with `as`)", () => {
+  const s: FbsSchema = {
+    tables: [
+      { name: "T", fields: [{ name: "e", id: 0, type: { kind: "enum", name: "E" }, default: { kind: "int", value: 0n } }] },
+    ],
+    enums: [{ name: "E", underlying: "int8", members: [{ name: "A", value: 0n }] }],
+  };
+  // The positive half of the asymmetry: a decoded field reads `as E`, so the
+  // decode-only table pulls E into the import even with no encode side.
+  const out = emitCodec(s, { encodeRoots: new Set(), decodeRoots: new Set(["T"]) });
+  assert.match(out, /import type \{ T, E \} from ".\/types.js";/);
+});
+
 const scalarField = (name: string): FbsField => ({
   name,
   id: 0,
