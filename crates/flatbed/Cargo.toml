@@ -62,6 +62,10 @@ name = "reconciler_tests"
 required-features = ["nats", "k8s"]
 
 [[test]]
+name = "nats_broker"
+required-features = ["nats", "openapi"]
+
+[[test]]
 name = "flatbuffer_enum"
 required-features = ["openapi"]
 

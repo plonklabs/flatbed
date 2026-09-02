@@ -54,6 +54,31 @@ jobs:
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
 
+  # StreamWorker / KvWorker integration tests against a real JetStream
+  # broker. GitHub service containers can't pass container args (the -js
+  # flag that enables JetStream), so the broker runs as a docker step.
+  nats-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Start NATS with JetStream
+        run: |
+          docker run -d --name nats -p 4222:4222 -p 8222:8222 \
+            nats:2.10-alpine -js -m 8222
+          # Docker's port proxy binds the host port before the server
+          # inside is listening, so a TCP probe reports ready too early.
+          # /healthz is the server's own readiness, JetStream included.
+          for _ in $(seq 1 30); do
+            curl -sf localhost:8222/healthz && exit 0
+            sleep 1
+          done
+          docker logs nats
+          exit 1
+      - run: cargo test -p flatbed --features nats,openapi --test nats_broker -- --ignored
+
   check-generated:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -157,7 +182,7 @@ jobs:
   # Alert Discord only on main-branch breakage. PR failures are visible to the
   # author already, and fork PRs don't get the DISCORD_WEBHOOK secret.
   notify-failure:
-    needs: [fmt, clippy, test, check-generated, examples, flatbed-client, codec-compat, flatbed-client-e2e]
+    needs: [fmt, clippy, test, nats-integration, check-generated, examples, flatbed-client, codec-compat, flatbed-client-e2e]
     if: failure() && github.event_name == 'push'
     uses: plonklabs/.github/.github/workflows/discord-notify-failure.yml@main
     with:
