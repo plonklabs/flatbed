@@ -35,6 +35,32 @@ scheduler.
   evidence to the responsible worker without assuming attribution or
   implementing the fix in the orchestrator session.
 
+## Relay, don't drive
+
+A dispatch hands the worker the **whole** assignment: the worker runs the
+full `/implement` loop — implementation, self-review, ready flip, review
+rounds, gates, merge, close-out — as one uninterrupted ownership. The
+orchestrator relays work in and status out. It does not issue the loop's
+phases as separate instructions, checkpoint the worker between phases, ask
+it to pause for orchestrator approval mid-loop, or perform any phase
+itself. An orchestrator that feeds a worker step-by-step directions is the
+failure mode this section exists to prevent: it re-serializes the fleet
+onto one context and makes the worker's ownership fiction.
+
+Intervention is for exceptions, not cadence. Two signals justify stepping
+in:
+
+- the worker reports `state:🛑blocked`, or
+- monitoring shows it **stuck in a loop** — the same review finding
+  recurring across rounds, the same gate failing repeatedly with fix
+  attempts that don't change the shape of the failure.
+
+Then the orchestrator investigates directly — read the PR, the failing
+logs, the thread history — forms its own diagnosis, and **re-briefs the
+worker with better guidance**: what is actually happening, what the
+evidence shows, what direction to take. The worker still executes; the
+orchestrator still never commits to the worker's branch.
+
 ## Merge discipline
 
 - `fleet merge <n>` is the **only** sanctioned merge path for orchestrated
@@ -43,8 +69,12 @@ scheduler.
   and every gate in `.fleet/merge.toml` passes — flatbed's gates are
   `ci-green` (the whole CI workflow successful at head, not just the required
   fmt/clippy/test trio) and `review-body-clean` (a `claude[bot]` verdict tied
-  to the head SHA with no unacknowledged finding). Bare `gh pr merge` is
-  never the way past a refusal — the refusal is the gate working.
+  to the head SHA with no unacknowledged finding). `.fleet/merge.toml` also
+  declares `admin_bypass = true`, because the ruleset's code-owner approval
+  is unobtainable for a sole maintainer who authors every PR — so a merge
+  that clears everything above is issued with `--admin`, and the audit says
+  so. Bare `gh pr merge` is never the way past a refusal — the refusal is
+  the gate working.
 - **Never issue or arm a merge in the same action as `gh pr ready`.** Marking
   a draft ready re-triggers its checks; confirm they are freshly green at the
   ready-state head first, then merge as a separate step.
