@@ -10,8 +10,8 @@ description: Self-review a draft PR or address bot review comments.
 Two-mode workflow keyed off PR state, with an opt-in autonomous loop:
 
 - **Draft PR** → the assistant performs a local self-review against the [Quality checklist](#quality-checklist) and prints findings in the chat. Nothing is posted to GitHub. The point is to surface issues *before* flipping to ready, so the developer can fix them before the `claude[bot]` reviewer (configured in `.github/workflows/claude-review.yml`) sees them.
-- **Ready-for-review PR** → the assistant waits for the bot's review run for the current HEAD commit to finish, then fetches its unresolved inline threads + top-level comments and runs a holistic fix loop. The fix loop reads each affected file in full (not just diff hunks) and applies the [Quality checklist](#quality-checklist) to catch siblings of every flagged issue. By default, Phase 2c asks the user to fix/decline each thread.
-- **Autonomous mode** (`/review <pr-number> --auto`) → same as ready-for-review mode but skips Phase 2c (every bot finding is treated as fix-bound) and chains rounds: after Phase 2f posts the top-level summary, re-arms the wait loop on the new HEAD and goes back to Phase 2a. Loops until the bot returns a green review, the workflow run fails or times out, or the user interrupts. **Never marks the PR ready, never merges.**
+- **Ready-for-review PR** → the assistant waits for the `review / review` check run to conclude at the current HEAD commit, then fetches its unresolved inline threads + top-level comments and runs a holistic fix loop. The fix loop reads each affected file in full (not just diff hunks) and applies the [Quality checklist](#quality-checklist) to catch siblings of every flagged issue. By default, Phase 2c asks the user to fix/decline each thread.
+- **Autonomous mode** (`/review <pr-number> --auto`) → same as ready-for-review mode but skips Phase 2c (every bot finding is treated as fix-bound) and chains rounds: after Phase 2f posts the top-level summary, re-arms the wait loop on the new HEAD and goes back to Phase 2a. Loops until the bot returns a green review, the `review / review` check run fails or times out, or the user interrupts. **Never marks the PR ready, never merges.**
 
 ## Instructions
 
@@ -61,42 +61,45 @@ gh pr view "$PR_NUMBER" --json isDraft,state,headRefOid,headRefName
 
 #### Phase 2a: Wait for the bot review to complete
 
+A round is terminal when the `review / review` check run concludes at the
+PR's head SHA — never wait for a *review object* to appear. On a clean round
+the bot posts no review object at all (its verdict lands as a plain issue
+comment); a watcher keyed on "a fresh review object at head" never sees a
+clean round land and hangs on an already-merge-ready PR. This is the same
+check-run signal `scripts/merge-gates/review-body` keys on (its
+`REVIEW_CHECK_NAME`), so the live loop and the merge gate agree on what
+"done" means. Poll the check run via REST — `gh pr view`/`gh api graphql`
+are GraphQL-backed and go dark together during a GraphQL outage, while
+check-runs and issue comments (both REST) stay reachable:
+
 ```bash
-HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid --jq '.headRefOid')
-BRANCH=$(gh pr view "$PR_NUMBER" --json headRefName --jq '.headRefName')
+HEAD_SHA=$(gh api "repos/plonklabs/flatbed/pulls/$PR_NUMBER" --jq '.head.sha')
 
 WAIT_DEADLINE=$(($(date +%s) + 1800))   # 30 minutes
-TRIGGER_DEADLINE=$(($(date +%s) + 60))  # 60 s for the workflow to appear
+TRIGGER_DEADLINE=$(($(date +%s) + 60))  # 60 s for the check run to appear
 
 while :; do
     NOW=$(date +%s)
     if [ "$NOW" -gt "$WAIT_DEADLINE" ]; then
-        echo "Bot review did not finish within 30 minutes — surfacing for user." >&2
+        echo "review / review did not conclude within 30 minutes — surfacing for user." >&2
         break
     fi
 
-    # Pull status + conclusion for the run matching HEAD_SHA. The
-    # `--jq` filter emits a single colon-joined string ("status:concl")
-    # so we don't depend on multi-line JSON parsing — `head -1` on
-    # `gh ... --jq '.[] | select(...)'` would only capture the
-    # opening `{` of the first object.
-    RESULT=$(gh run list --workflow=claude-review.yml \
-        --branch "$BRANCH" --limit 10 \
-        --json status,conclusion,headSha \
-        --jq "first(.[] | select(.headSha == \"$HEAD_SHA\"))
-              | \"\(.status):\(.conclusion // \"\")\"")
+    # Pull status + conclusion for the "review / review" check run at
+    # HEAD_SHA. The `--jq` filter emits a single colon-joined string
+    # ("status:concl") so we don't depend on multi-line JSON parsing.
+    RESULT=$(gh api "repos/plonklabs/flatbed/commits/$HEAD_SHA/check-runs" \
+        --jq '[.check_runs[] | select(.name == "review / review")]
+              | if length == 0 then "" else "\(.[0].status):\(.[0].conclusion // "")" end')
 
     case "$RESULT" in
         "")
-            # No matching run yet.
+            # No matching check run yet.
             if [ "$NOW" -gt "$TRIGGER_DEADLINE" ]; then
-                echo "No claude-review run found for $HEAD_SHA — workflow may have been skipped." >&2
+                echo "No review / review check run found for $HEAD_SHA — workflow may have been skipped." >&2
                 break
             fi
             sleep 10
-            ;;
-        "in_progress:"*|"queued:"*|"waiting:"*|"requested:"*|"pending:"*)
-            sleep 15
             ;;
         "completed:success")
             break
@@ -106,12 +109,11 @@ while :; do
             # cancelled by the workflow's own concurrency policy).
             # Surface to the user — don't silently treat as done.
             CONCL="${RESULT#completed:}"
-            echo "claude-review run completed with conclusion=${CONCL:-<empty>}; surfacing for user." >&2
+            echo "review / review concluded ${CONCL:-<empty>}; surfacing for user." >&2
             break
             ;;
         *)
-            echo "Unexpected workflow status: $RESULT — surfacing for user." >&2
-            break
+            sleep 15   # queued / in_progress
             ;;
     esac
 done
@@ -174,7 +176,9 @@ gh api "repos/plonklabs/flatbed/issues/$PR_NUMBER/comments" \
           {id, body, created_at}'
 ```
 
-If the GraphQL query returns zero unresolved bot threads (and the latest bot run completed without a new top-level summary that claims a blocker), the bot's findings are all addressed — report and stop.
+The bot pins a machine-readable `Verdict: clean` or `Verdict: findings` marker line to the end of every verdict comment (see `scripts/merge-gates/review-body`'s `VERDICT_RE`); read the **latest** `claude[bot]` issue comment's marker line as the round's authoritative verdict — the same signal the merge gate reads at merge time. A clean round has no inline threads to enumerate, so the marker line (not thread count) is what actually distinguishes "clean" from "not yet posted." Treat freeform phrasing (see the Exit-the-loop "Green review" condition below) as a fallback only for a pre-marker-era comment with no marker line.
+
+If the GraphQL query returns zero unresolved bot threads AND the latest `claude[bot]` issue comment's `Verdict:` marker line reads `clean` (or, absent a marker, carries no blocker phrasing), the bot's findings are all addressed — report and stop.
 
 #### Phase 2c: Triage with the user
 
@@ -265,9 +269,9 @@ ROUND=$((ROUND + 1))
 
 **Exit the loop** when any of the following hold. On each exit, post a final close-out summary that names the exit reason and the round count.
 
-1. **Green review.** The Phase 2b GraphQL query returns zero unresolved bot threads AND the top-level summary doesn't claim a blocker. Positive signals: "Ready to merge", "No blocking concerns", "no issues found", bare "clean" / "LGTM" (not followed by a qualifier). Negative signals: an unresolved bot thread, "Blocking:", a numbered fix list, "must change", "regression", "consider", "optional", "minor nit". **Qualifier rule:** any positive signal followed by "but", "though", "however", "except", "consider", or a suggestion is a negative signal — the qualifier moves the verdict from green to ambiguous, and ambiguous reverts to another round per the Rules section. "LGTM but consider X" / "clean overall but Y" are negatives, not positives, so substring matching on the bare phrase must not exit. When in doubt, ask the user before exiting — false-positive green exit silently leaves a finding unaddressed; false-positive red just runs another round.
-2. **Bot run failed.** `completed:failure`, `completed:cancelled`, `completed:timed_out`, or any non-success terminal status. Surface to the user; the loop exits. Don't auto-retry the workflow.
-3. **Monitor timeout.** 30 minutes elapsed without the bot run reaching a terminal state. Surface and exit.
+1. **Green review.** The `review / review` check run concluded `success` at HEAD_SHA (Phase 2a) AND the latest `claude[bot]` issue comment's `Verdict:` marker line reads `clean`. The Phase 2b GraphQL query returning zero unresolved bot threads corroborates this but is never sufficient on its own — a clean round posts no thread at all, so an empty thread list is equally true before the round has even run. For a pre-marker-era comment with no `Verdict:` line, fall back to phrase heuristics: positive signals "Ready to merge", "No blocking concerns", "no issues found", bare "clean" / "LGTM" (not followed by a qualifier); negative signals an unresolved bot thread, "Blocking:", a numbered fix list, "must change", "regression", "consider", "optional", "minor nit". **Qualifier rule:** any positive signal followed by "but", "though", "however", "except", "consider", or a suggestion is a negative signal — the qualifier moves the verdict from green to ambiguous, and ambiguous reverts to another round per the Rules section. "LGTM but consider X" / "clean overall but Y" are negatives, not positives, so substring matching on the bare phrase must not exit. When in doubt, ask the user before exiting — false-positive green exit silently leaves a finding unaddressed; false-positive red just runs another round.
+2. **Bot run failed.** The `review / review` check run concluded `completed:failure`, `completed:cancelled`, `completed:timed_out`, or any non-success terminal status. Surface to the user; the loop exits. Don't auto-retry the workflow.
+3. **Monitor timeout.** 30 minutes elapsed without the `review / review` check run reaching a terminal state. Surface and exit.
 4. **User interrupts.** Any out-of-band user message during the loop. Pause the loop, address the user, and ask whether to resume.
 5. **Recurrence.** If the same file region (file path + 5-line window around the anchor line) is flagged in two consecutive rounds despite an applied fix, break the loop. The autonomous mode's "every finding is fix-bound" stance assumes the assistant can satisfy the bot in finite rounds; a recurrence means either the fix misreads the finding or the bot's expectation is unattainable. Post a summary of what was tried on the recurring region and ask the user whether to decline the finding (with reasoning), take a different approach, or accept the current state. The `cargo test` / clippy guards catch fixes that break CI but not fixes that pass CI while still mismatching the bot's intent — recurrence is the complementary signal for that case.
 
