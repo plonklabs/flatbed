@@ -85,12 +85,19 @@ while :; do
         break
     fi
 
-    # Pull status + conclusion for the "review / review" check run at
-    # HEAD_SHA. The `--jq` filter emits a single colon-joined string
-    # ("status:concl") so we don't depend on multi-line JSON parsing.
+    # Pull status + conclusion for the LATEST "review / review" check run
+    # at HEAD_SHA, by `started_at`. A draft push and its later `gh pr
+    # ready` flip can both leave a check run named "review / review" at
+    # the same SHA — a stale `completed:skipped` one from the draft push
+    # alongside the real one the ready flip triggered — and the API does
+    # not guarantee run order, so taking the first array match can read
+    # the stale skipped run as the round's terminal state. `max_by` picks
+    # the truly latest one regardless of array order. The `--jq` filter
+    # emits a single colon-joined string ("status:concl") so we don't
+    # depend on multi-line JSON parsing.
     RESULT=$(gh api "repos/plonklabs/flatbed/commits/$HEAD_SHA/check-runs" \
         --jq '[.check_runs[] | select(.name == "review / review")]
-              | if length == 0 then "" else "\(.[0].status):\(.[0].conclusion // "")" end')
+              | if length == 0 then "" else (max_by(.started_at) | "\(.status):\(.conclusion // "")") end')
 
     case "$RESULT" in
         "")
