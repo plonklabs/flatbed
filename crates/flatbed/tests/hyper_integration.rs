@@ -727,6 +727,135 @@ async fn test_boot_lifecycle_probes() {
     server_handle.abort();
 }
 
+/// Send a HEAD request over a fresh HTTP/2 cleartext (h2c, prior-knowledge)
+/// connection and return the response status, its `content-length` header,
+/// and the number of body bytes actually received on the wire.
+///
+/// A client library discards a HEAD response's body per HTTP semantics, so
+/// asserting against a client-parsed body can't tell a fixed server from a
+/// broken one — an HTTP/1.1 client won't even surface the framing error a
+/// broken server produces. `hyper`'s HTTP/1.1 encoder special-cases HEAD
+/// (suppressing the body while still deriving `content-length` from it), but
+/// its HTTP/2 encoder does not: a response built with a real body is sent
+/// with one, which a compliant HTTP/2 client (this one included) rejects as
+/// `PROTOCOL_ERROR` because content-length promised zero bytes past headers.
+/// Speaking raw h2c is the only way to observe this at the transport the
+/// framework actually serves.
+async fn h2c_head_request(port: u16, path: &str) -> (http::StatusCode, Option<String>, usize) {
+    let tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let (mut client, connection) = h2::client::handshake(tcp).await.unwrap();
+    tokio::spawn(connection);
+
+    let request = http::Request::builder()
+        .method("HEAD")
+        .uri(path)
+        .body(())
+        .unwrap();
+    let (response_fut, _send_stream) = client.send_request(request, true).unwrap();
+    let response = response_fut.await.unwrap();
+
+    let status = response.status();
+    let content_length = response
+        .headers()
+        .get(http::header::CONTENT_LENGTH)
+        .map(|v| v.to_str().unwrap().to_string());
+
+    let mut body = response.into_body();
+    let mut received = 0usize;
+    while let Some(chunk) = body.data().await {
+        received += chunk.unwrap().len();
+    }
+
+    (status, content_length, received)
+}
+
+/// HEAD requests to built-in endpoints (splash, healthz/readyz, openapi.json,
+/// schema.bfbs) put the same `Content-Length` header on the wire as GET but
+/// no body bytes, over both HTTP/1.1 and HTTP/2.
+#[tokio::test]
+async fn test_head_request_builtins_strip_body_keep_length() {
+    use flatbed::{Flatbed, FlatbedConfig};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let telemetry: Arc<dyn flatbed::TelemetryService> = Arc::new(StubTelemetryService);
+    let config = FlatbedConfig::new("Test API")
+        .host("127.0.0.1")
+        .port(port)
+        .splash("Test API Server")
+        .with_telemetry(telemetry);
+
+    let server = tokio::spawn(async move { Flatbed::run(config, |_| async { Ok(()) }).await });
+
+    let base = format!("http://127.0.0.1:{}", port);
+    let client = reqwest::Client::new();
+
+    // Wait for the server to become ready.
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = client.get(format!("{}/readyz", base)).send().await {
+            if r.status().as_u16() == 200 {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    }
+    assert!(ready, "server did not become ready");
+
+    for path in ["/", "/healthz", "/readyz", "/schema.bfbs", "/openapi.json"] {
+        let url = format!("{}{}", base, path);
+
+        // HTTP/1.1, via reqwest: same status and content-length as GET, no
+        // client-visible body.
+        let get = client.get(&url).send().await.unwrap();
+        assert_eq!(get.status().as_u16(), 200, "GET {path} should be 200");
+        let get_content_length = get
+            .headers()
+            .get("content-length")
+            .expect("GET content-length present")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let head = client.head(&url).send().await.unwrap();
+        assert_eq!(head.status().as_u16(), 200, "HEAD {path} should be 200");
+        assert_eq!(
+            head.headers()
+                .get("content-length")
+                .expect("HEAD content-length present")
+                .to_str()
+                .unwrap(),
+            get_content_length,
+            "HEAD {path} content-length must equal GET's over HTTP/1.1"
+        );
+
+        // HTTP/2 cleartext: no protocol error, same content-length, zero
+        // actual body bytes received.
+        let (status, content_length, received) = h2c_head_request(port, path).await;
+        assert_eq!(
+            status,
+            http::StatusCode::OK,
+            "HEAD {path} should be 200 over h2c"
+        );
+        assert_eq!(
+            content_length.as_deref(),
+            Some(get_content_length.as_str()),
+            "HEAD {path} content-length must equal GET's over h2c"
+        );
+        assert_eq!(
+            received, 0,
+            "HEAD {path} must not put a body on the wire over h2c"
+        );
+    }
+
+    server.abort();
+}
+
 #[test]
 fn test_router_path_matching() {
     use flatbed::hyper::Router;
