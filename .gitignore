@@ -22,3 +22,10 @@ Thumbs.db
 # Claude Code session artifacts that shouldn't propagate
 .claude/worktrees/
 .claude/settings.local.json
+
+# Worker seats (parallel dev checkouts) and local fleet ledger
+worktrees/flatbed*/
+.plonk/local/
+
+# Orchestrator identity (seeded from .env.tpl)
+.env

@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""flatbed's `fleet merge` review-body gate.
+
+Fleet enforces the project-agnostic merge built-ins; the flatbed-specific
+merge policy — that the `claude[bot]` reviewer actually ran at the head SHA
+and that its body logs no unacknowledged findings — lives here, in the
+consuming repo, not in the fleet binary.
+
+Contract (fleet's executable-gate seam):
+  stdin  : PR-context JSON `{pr, head_sha, base, repo, acks: [..]}`.
+  stdout : a human-readable reason, printed verbatim into the merge audit.
+  exit   : 0 = pass, nonzero = refuse. Fail closed on anything ambiguous.
+
+Sourcing the verdict at head. The bot only creates a PR *review object* (with
+a `commit_id`) on rounds that carry inline findings; on a clean round it posts
+its verdict as a plain *issue comment*, and `GET /pulls/{n}/reviews` returns
+`[]`. So the gate ties the verdict to the head SHA through two paths, in order:
+
+  1. A `claude[bot]` review object whose `commit_id` is exactly the head SHA.
+     The review object is itself the freshness proof for the round.
+  2. Failing that, correlate the `review / review` check run at the head SHA
+     with a fresh bot comment: the run must have completed `success`, and the
+     latest `claude[bot]` issue comment must fall inside that run's
+     `[started_at, completed_at]` window. The review job posts its verdict as
+     one of its final steps, before the job — and thus the check run —
+     concludes, so a genuine verdict's timestamp lands inside the window
+     (empirically ~10s before `completed_at`). A comment before `started_at`
+     belongs to an earlier round; a comment after `completed_at` is a straggler
+     from a prior push's run that outlived its concurrency cancellation. Both
+     are excluded, so the body parsed belongs to the round that ran at *this*
+     head, not a clearance carried over from another push.
+
+Either way the chosen body is read for findings identically. Fail closed when
+neither path yields a body: no verdict is never read as clearance.
+
+Two refusal shapes:
+  1. No verdict can be tied to the head SHA — no review object at head, and
+     either no successful `review / review` run or no bot comment inside that
+     run's window. A clean verdict on an older SHA does not clear the current
+     head.
+  2. The verdict body logs findings not covered by an `--ack`. Fleet forwards
+     the ack strings opaquely; this gate counts one ack as covering one
+     finding, in declaration order, and lists any that remain uncovered.
+
+The finding-detection convention mirrors the review-body reading that the
+`/monitor-ci` seam (`scripts/monitor-ci-eval.py`) reduces to its
+`review_findings` count: a green verdict clears, an enumerated finding list
+does not, and an unrecognized verdict fails closed rather than passing.
+
+For hermetic contract testing the stdin JSON may carry `reviews`, `summaries`,
+and `check_runs` arrays directly; when any is present they are all used
+verbatim and no `gh` call is made.
+"""
+import json
+import re
+import subprocess
+import sys
+
+BOT_LOGIN = "claude[bot]"
+
+# The check run the review workflow publishes at head (`<workflow> / <job>`).
+REVIEW_CHECK_NAME = "review / review"
+
+# The machine-readable verdict line the review prompt (`REVIEW.md`) pins to the
+# end of every verdict comment: a line reading `Verdict: clean` or `Verdict:
+# findings`, matched case-insensitively and anchored to its own line (leading
+# markdown emphasis / blockquote markers tolerated, but never across a
+# newline). When a marker line is present it is authoritative: prose phrasing
+# alone does not decide the gate. Prose merely containing the word "verdict"
+# does not match — the line must start with the marker and name one of the two
+# states.
+VERDICT_RE = re.compile(r"(?im)^[ \t>*_]*verdict:[ \t*_]*(clean|findings)\b")
+
+# Fallback for verdict comments without a `Verdict:` marker line: a green
+# top-level verdict phrased in prose. Any of these substrings, with no
+# enumerated finding list, clears the body. New phrasings should pin a marker
+# rather than extend this tuple.
+CLEAN_MARKERS = (
+    "no blocking",
+    "no findings",
+    "no issues",
+    "no concerns",
+    "ready to merge",
+    "lgtm",
+    "looks good to me",
+    "approved",
+    "nothing new flagged",
+    "no new issues",
+    "nothing to flag",
+    "no other issues",
+)
+
+# The bot enumerates findings as `**Finding 1 ...`, `Finding 2:`, etc.
+FINDING_RE = re.compile(r"(?im)\bfinding\s+(\d+)\b")
+
+
+def login_of(entry):
+    user = entry.get("user")
+    if isinstance(user, dict) and "login" in user:
+        return user["login"]
+    return entry.get("login")
+
+
+def bot_reviewed_at_head(reviews, head_sha):
+    """True if a `claude[bot]` review was submitted against exactly head_sha."""
+    return any(
+        login_of(r) == BOT_LOGIN and r.get("commit_id") == head_sha
+        for r in reviews
+    )
+
+
+def latest_bot_summary(summaries):
+    """The most recent `claude[bot]` top-level summary body, or ''."""
+    bot = [c for c in summaries if login_of(c) == BOT_LOGIN]
+    if not bot:
+        return ""
+    bot.sort(key=lambda c: c.get("created_at", ""))
+    return bot[-1].get("body") or ""
+
+
+def successful_review_run_window(check_runs):
+    """`(started_at, completed_at)` of the latest successful `review / review`
+    run at head, or None.
+
+    ISO-8601 Zulu timestamps share a fixed width and lexicographically order by
+    time, so the run with the greatest `started_at` is the latest.
+    """
+    runs = [
+        r
+        for r in check_runs
+        if r.get("name") == REVIEW_CHECK_NAME
+        and r.get("status") == "completed"
+        and r.get("conclusion") == "success"
+        and r.get("started_at")
+        and r.get("completed_at")
+    ]
+    if not runs:
+        return None
+    latest = max(runs, key=lambda r: r["started_at"])
+    return latest["started_at"], latest["completed_at"]
+
+
+def latest_bot_comment_in_window(summaries, start, end):
+    """Body of the latest `claude[bot]` comment created within [start, end], or None.
+
+    None means no bot comment belongs to the run that produced this window —
+    distinct from '' (a bot comment exists but its body is empty, which fails
+    closed as an uncertified verdict downstream).
+    """
+    in_window = [
+        c
+        for c in summaries
+        if login_of(c) == BOT_LOGIN and start <= (c.get("created_at") or "") <= end
+    ]
+    if not in_window:
+        return None
+    in_window.sort(key=lambda c: c.get("created_at", ""))
+    return in_window[-1].get("body") or ""
+
+
+def verdict_body(head_sha, reviews, summaries, check_runs):
+    """Return (body, refusal). Exactly one is non-None.
+
+    `body` is the verdict text to read for findings; `refusal` is the reason no
+    verdict could be tied to the head SHA.
+    """
+    if bot_reviewed_at_head(reviews, head_sha):
+        return latest_bot_summary(summaries), None
+    window = successful_review_run_window(check_runs)
+    if window is None:
+        return None, (
+            f"no {BOT_LOGIN} verdict at head SHA {head_sha}: no review object "
+            f"and no successful `{REVIEW_CHECK_NAME}` run"
+        )
+    start, end = window
+    body = latest_bot_comment_in_window(summaries, start, end)
+    if body is None:
+        return None, (
+            f"no {BOT_LOGIN} verdict at head SHA {head_sha}: `{REVIEW_CHECK_NAME}` "
+            f"ran but no comment falls within it (latest verdict is stale)"
+        )
+    return body, None
+
+
+def enumerated_findings(body):
+    """The `Finding N` labels a body logs, one per distinct N, or []."""
+    numbers = sorted({int(n) for n in FINDING_RE.findall(body)})
+    return [f"finding {n}" for n in numbers]
+
+
+def parse_findings(body):
+    """The findings a bot summary body logs.
+
+    Reads the pinned `Verdict:` marker line first when present: `clean` yields
+    no findings; `findings` yields the enumerated `Finding N` labels (or a
+    single generic finding if the marker declares findings without enumerating
+    them). Only when no marker line is present does the gate fall back to prose
+    heuristics — an enumerated `Finding N` list, then an explicit clean marker,
+    then fail-closed as a single uncertified-verdict finding. The gate never
+    reads silence as clearance.
+    """
+    verdict = VERDICT_RE.search(body)
+    if verdict is not None:
+        if verdict.group(1).lower() == "clean":
+            return []
+        return enumerated_findings(body) or ["review findings reported"]
+    findings = enumerated_findings(body)
+    if findings:
+        return findings
+    lowered = body.lower()
+    if any(marker in lowered for marker in CLEAN_MARKERS):
+        return []
+    return ["review verdict not certified clean"]
+
+
+def classify(head_sha, acks, reviews, summaries, check_runs):
+    """Return (passed, reason). Pure over already-fetched review state."""
+    body, refusal = verdict_body(head_sha, reviews, summaries, check_runs)
+    if refusal is not None:
+        return False, refusal
+    findings = parse_findings(body)
+    uncovered = findings[len(acks):]
+    if uncovered:
+        listed = "; ".join(uncovered)
+        return False, (
+            f"{len(uncovered)} unacknowledged finding(s): {listed} "
+            f"({len(findings)} finding(s), {len(acks)} ack(s))"
+        )
+    if findings:
+        return True, f"{len(findings)} finding(s) acknowledged via --ack"
+    return True, f"{BOT_LOGIN} verdict clean at head"
+
+
+def gh_json(path):
+    out = subprocess.run(
+        ["gh", "api", "--paginate", path],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    # `gh --paginate` concatenates pages; with a single page it is one array.
+    return json.loads(out) if out.strip() else []
+
+
+def gh_check_runs(repo, head_sha):
+    """Every check run at head, flattened across pages.
+
+    `--slurp` yields one `{check_runs: [..]}` object per page as a top-level
+    array; without it a run on page 2+ reads as missing.
+    """
+    out = subprocess.run(
+        [
+            "gh", "api", "--paginate", "--slurp",
+            f"repos/{repo}/commits/{head_sha}/check-runs?per_page=100",
+        ],
+        check=True, capture_output=True, text=True,
+    ).stdout
+    pages = json.loads(out) if out.strip() else []
+    runs = []
+    for page in pages:
+        runs.extend(page.get("check_runs", []))
+    return runs
+
+
+def fetch(context):
+    repo, pr, head_sha = context["repo"], context["pr"], context["head_sha"]
+    reviews = gh_json(f"repos/{repo}/pulls/{pr}/reviews")
+    summaries = gh_json(f"repos/{repo}/issues/{pr}/comments")
+    check_runs = gh_check_runs(repo, head_sha)
+    return reviews, summaries, check_runs
+
+
+def main():
+    context = json.load(sys.stdin)
+    head_sha = context["head_sha"]
+    acks = context.get("acks", [])
+    if any(k in context for k in ("reviews", "summaries", "check_runs")):
+        reviews = context.get("reviews", [])
+        summaries = context.get("summaries", [])
+        check_runs = context.get("check_runs", [])
+    else:
+        reviews, summaries, check_runs = fetch(context)
+    passed, reason = classify(head_sha, acks, reviews, summaries, check_runs)
+    print(reason)
+    raise SystemExit(0 if passed else 1)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyError, ValueError, json.JSONDecodeError) as exc:
+        # A malformed context or unparseable review payload fails closed.
+        print(f"review-body gate error: {exc}", file=sys.stderr)
+        raise SystemExit(1)
