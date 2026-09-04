@@ -15,8 +15,8 @@ use crate::{HeaderName, HeaderValue, ResponseParts, StaticRouteInfo};
 /// Returns `None` when no mount matches, the resolved file is absent, and no
 /// fallback applies.
 ///
-/// The full file is read even for a HEAD request; hyper omits the body at the
-/// connection layer while still emitting the correct `Content-Length`.
+/// The full file is read regardless of request method; the caller strips the
+/// body for a HEAD request while preserving the `Content-Length` it implies.
 pub async fn serve(routes: &[StaticRouteInfo], path: &str) -> Option<ResponseParts> {
     for route in routes {
         if let Some(parts) = serve_one(route, path).await {

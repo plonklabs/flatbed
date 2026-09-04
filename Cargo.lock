@@ -602,6 +602,7 @@ dependencies = [
  "flatbed_macros",
  "flatbuffers",
  "futures",
+ "h2",
  "http",
  "http-body-util",
  "hyper",

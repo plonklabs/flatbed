@@ -95,8 +95,45 @@ impl<C: Clone + Send + Sync + 'static> Service<Request<Incoming>> for FlatbedSer
     }
 }
 
-/// Handle an incoming HTTP request
+/// Handle an incoming HTTP request.
+///
+/// Dispatches to build the response, then enforces RFC 9110 §9.3.2 for HEAD:
+/// the response carries the same headers a GET would (including
+/// `content-length`) but no body.
 async fn handle_request<C: Clone + Send + Sync + 'static>(
+    req: Request<Incoming>,
+    ctx: ServiceContext<C>,
+) -> Response<Full<Bytes>> {
+    let is_head = req.method() == http::Method::HEAD;
+    let response = dispatch(req, ctx).await;
+    if is_head {
+        strip_body_for_head(response).await
+    } else {
+        response
+    }
+}
+
+/// Strip a response's body for a HEAD request while preserving its headers,
+/// setting `content-length` to the size the body would have had.
+///
+/// `hyper`'s HTTP/1.1 encoder already special-cases HEAD, but its HTTP/2
+/// encoder does not: a response built with a real body is sent with one,
+/// which a compliant HTTP/2 client rejects outright (the received data
+/// contradicts the `content-length` a HEAD response is still expected to
+/// carry). Stripping the body here, uniformly, keeps every transport
+/// correct regardless of what a lower layer happens to already handle.
+async fn strip_body_for_head(response: Response<Full<Bytes>>) -> Response<Full<Bytes>> {
+    let (mut parts, body) = response.into_parts();
+    let Ok(collected) = body.collect().await;
+    let len = collected.to_bytes().len();
+    parts
+        .headers
+        .insert(http::header::CONTENT_LENGTH, HeaderValue::from(len));
+    Response::from_parts(parts, Full::new(Bytes::new()))
+}
+
+/// Build the response for a request, including any body.
+async fn dispatch<C: Clone + Send + Sync + 'static>(
     req: Request<Incoming>,
     ctx: ServiceContext<C>,
 ) -> Response<Full<Bytes>> {

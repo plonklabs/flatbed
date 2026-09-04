@@ -15,6 +15,8 @@
 #[allow(warnings, clippy::all)]
 mod generated;
 
+mod common;
+
 // Import plain structs
 use generated::test::{TestRequest, TestResponse};
 
@@ -725,6 +727,91 @@ async fn test_boot_lifecycle_probes() {
 
     // Clean up: abort the server task (it would run forever otherwise)
     server_handle.abort();
+}
+
+/// HEAD requests to built-in endpoints (splash, healthz/readyz, openapi.json,
+/// schema.bfbs) put the same `Content-Length` header on the wire as GET but
+/// no body bytes, over both HTTP/1.1 and HTTP/2.
+#[tokio::test]
+async fn test_head_request_builtins_strip_body_keep_length() {
+    use flatbed::{Flatbed, FlatbedConfig};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let telemetry: Arc<dyn flatbed::TelemetryService> = Arc::new(StubTelemetryService);
+    let config = FlatbedConfig::new("Test API")
+        .host("127.0.0.1")
+        .port(port)
+        .splash("Test API Server")
+        .with_telemetry(telemetry);
+
+    let server = tokio::spawn(async move { Flatbed::run(config, |_| async { Ok(()) }).await });
+
+    let base = format!("http://127.0.0.1:{}", port);
+    let client = reqwest::Client::new();
+
+    // Wait for the server to become ready.
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = client.get(format!("{}/readyz", base)).send().await {
+            if r.status().as_u16() == 200 {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    }
+    assert!(ready, "server did not become ready");
+
+    for path in ["/", "/healthz", "/readyz", "/schema.bfbs", "/openapi.json"] {
+        let url = format!("{}{}", base, path);
+
+        // HTTP/1.1, via reqwest: same status and content-length as GET, no
+        // client-visible body.
+        let get = client.get(&url).send().await.unwrap();
+        assert_eq!(get.status().as_u16(), 200, "GET {path} should be 200");
+        let get_content_length = get
+            .headers()
+            .get("content-length")
+            .expect("GET content-length present")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let head = client.head(&url).send().await.unwrap();
+        assert_eq!(head.status().as_u16(), 200, "HEAD {path} should be 200");
+        assert_eq!(
+            head.headers()
+                .get("content-length")
+                .expect("HEAD content-length present")
+                .to_str()
+                .unwrap(),
+            get_content_length,
+            "HEAD {path} content-length must equal GET's over HTTP/1.1"
+        );
+
+        // HTTP/2 cleartext: no protocol error, same content-length, zero
+        // actual body bytes received.
+        let (status, content_length, received) = common::h2c_head_request(port, path).await;
+        assert_eq!(
+            status,
+            http::StatusCode::OK,
+            "HEAD {path} should be 200 over h2c"
+        );
+        assert_eq!(
+            content_length.as_deref(),
+            Some(get_content_length.as_str()),
+            "HEAD {path} content-length must equal GET's over h2c"
+        );
+        assert_eq!(
+            received, 0,
+            "HEAD {path} must not put a body on the wire over h2c"
+        );
+    }
+
+    server.abort();
 }
 
 #[test]

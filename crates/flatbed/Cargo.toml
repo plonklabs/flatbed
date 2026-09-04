@@ -51,6 +51,7 @@ flatbed_build = { path = "../flatbed_build", version = "0.0.2" }
 utoipa = "5"
 reqwest = { version = "0.12", features = ["json"] }
 k8s-openapi = { version = "0.25", features = ["v1_32"] }
+h2 = "0.4"
 futures = "0.3"
 
 [[test]]
