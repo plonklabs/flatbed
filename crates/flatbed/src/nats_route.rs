@@ -189,17 +189,27 @@ impl std::error::Error for NatsRouteConflict {}
 ///
 /// Returns [`NatsRouteConflict`] naming the first colliding pair found.
 pub fn validate_nats_routes() -> Result<(), NatsRouteConflict> {
-    let mut seen: HashMap<&'static str, &'static str> = HashMap::new();
-    for route in get_nats_routes() {
-        if let Some(first) = seen.insert(route.wire_subject, route.subject) {
-            return Err(NatsRouteConflict {
-                wire_subject: route.wire_subject.to_string(),
-                first_subject: first.to_string(),
-                second_subject: route.subject.to_string(),
-            });
-        }
+    match find_conflict(get_nats_routes()) {
+        Some(conflict) => Err(conflict),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+fn find_conflict<'a>(
+    routes: impl IntoIterator<Item = &'a NatsRouteInfo>,
+) -> Option<NatsRouteConflict> {
+    let mut seen: HashMap<&'static str, &'static str> = HashMap::new();
+    for route in routes {
+        let Some(first) = seen.insert(route.wire_subject, route.subject) else {
+            continue;
+        };
+        return Some(NatsRouteConflict {
+            wire_subject: route.wire_subject.to_string(),
+            first_subject: first.to_string(),
+            second_subject: route.subject.to_string(),
+        });
+    }
+    None
 }
 
 /// Build a success reply carrying `response`'s body in `encoding`.
@@ -464,6 +474,10 @@ where
         });
     }
 
+    warn!(
+        subject = route.subject,
+        "nats route subscription ended; the subject is no longer answered"
+    );
     Ok(())
 }
 
@@ -498,6 +512,58 @@ mod tests {
         assert_eq!(
             NatsEncoding::FlatBuffer.content_type(),
             "application/x-flatbuffers"
+        );
+    }
+
+    fn unreachable_handler(
+        _: NatsRequestParts,
+        _: Vec<u8>,
+        _: Arc<dyn Any + Send + Sync>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = NatsReply> + Send>> {
+        unreachable!("the conflict scan never dispatches")
+    }
+
+    fn route(subject: &'static str, wire_subject: &'static str) -> NatsRouteInfo {
+        NatsRouteInfo {
+            subject,
+            wire_subject,
+            params: &[],
+            queue: None,
+            request_type: "Req",
+            response_type: "Res",
+            handler: unreachable_handler,
+        }
+    }
+
+    #[test]
+    fn distinct_wire_subjects_do_not_conflict() {
+        let routes = [
+            route("a.{id}.status", "a.*.status"),
+            route("a.{id}.config", "a.*.config"),
+            route("b.report", "b.report"),
+        ];
+        assert!(find_conflict(&routes).is_none());
+    }
+
+    /// Two patterns that differ only in their capture names subscribe to the
+    /// same wire subject, so the second responder would silently steal a share
+    /// of the first's requests.
+    #[test]
+    fn patterns_differing_only_in_capture_names_conflict() {
+        let routes = [
+            route("a.report", "a.report"),
+            route("plonk.sat.{id}.status", "plonk.sat.*.status"),
+            route("plonk.sat.{name}.status", "plonk.sat.*.status"),
+        ];
+        let conflict = find_conflict(&routes).expect("the colliding pair must be reported");
+
+        assert_eq!(conflict.wire_subject, "plonk.sat.*.status");
+        assert_eq!(conflict.first_subject, "plonk.sat.{id}.status");
+        assert_eq!(conflict.second_subject, "plonk.sat.{name}.status");
+        assert_eq!(
+            conflict.to_string(),
+            "subjects 'plonk.sat.{id}.status' and 'plonk.sat.{name}.status' \
+             both subscribe to 'plonk.sat.*.status'",
         );
     }
 
@@ -575,18 +641,6 @@ mod tests {
             header_value(&reply.headers, CONTENT_TYPE_HEADER),
             Some("text/csv")
         );
-    }
-
-    #[test]
-    fn validation_rejects_two_patterns_that_share_a_wire_subject() {
-        let conflict = NatsRouteConflict {
-            wire_subject: "plonk.sat.*.status".to_string(),
-            first_subject: "plonk.sat.{id}.status".to_string(),
-            second_subject: "plonk.sat.{name}.status".to_string(),
-        };
-        assert!(conflict
-            .to_string()
-            .contains("both subscribe to 'plonk.sat.*.status'"));
     }
 
     #[test]

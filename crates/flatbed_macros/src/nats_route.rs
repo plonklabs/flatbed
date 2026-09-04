@@ -218,10 +218,9 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let response_type_str = &response_info.body_type_str;
 
     let wrapper_name = syn::Ident::new(&format!("__nats_handler_{fn_name}"), fn_name.span());
-    let route_const = syn::Ident::new(
-        &format!("__NATS_ROUTE_{}", fn_name.to_string().to_uppercase()),
-        fn_name.span(),
-    );
+    // Derived from the handler's name verbatim: uppercasing it would collide
+    // for two handlers whose names differ only in case.
+    let route_const = syn::Ident::new(&format!("__NATS_ROUTE_{fn_name}"), fn_name.span());
 
     let wire_subject = pattern.wire;
     let param_names = pattern.params.iter().map(|(name, _)| name);
@@ -314,6 +313,7 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             })
         }
 
+        #[allow(non_upper_case_globals)]
         #[doc(hidden)]
         pub const #route_const: ::flatbed::nats_route::NatsRouteInfo =
             ::flatbed::nats_route::NatsRouteInfo {
@@ -338,7 +338,7 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
                     ) -> ::std::pin::Pin<
-                        Box<dyn ::std::future::Future<Output = Result<(), ::flatbed::FlatbedWorkerError>> + Send>,
+                        Box<dyn ::std::future::Future<Output = ::std::result::Result<(), ::flatbed::FlatbedWorkerError>> + Send>,
                     > {
                         Box::pin(::flatbed::nats_route::run_nats_route::<#ctx_inner_type>(
                             ctx,
