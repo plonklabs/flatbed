@@ -69,8 +69,12 @@ orchestrator still never commits to the worker's branch.
   and every gate in `.fleet/merge.toml` passes — flatbed's gates are
   `ci-green` (the whole CI workflow successful at head, not just the required
   fmt/clippy/test trio) and `review-body-clean` (a `claude[bot]` verdict tied
-  to the head SHA with no unacknowledged finding). Bare `gh pr merge` is
-  never the way past a refusal — the refusal is the gate working.
+  to the head SHA with no unacknowledged finding). `.fleet/merge.toml` also
+  declares `admin_bypass = true`, because the ruleset's code-owner approval
+  is unobtainable for a sole maintainer who authors every PR — so a merge
+  that clears everything above is issued with `--admin`, and the audit says
+  so. Bare `gh pr merge` is never the way past a refusal — the refusal is
+  the gate working.
 - **Never issue or arm a merge in the same action as `gh pr ready`.** Marking
   a draft ready re-triggers its checks; confirm they are freshly green at the
   ready-state head first, then merge as a separate step.
