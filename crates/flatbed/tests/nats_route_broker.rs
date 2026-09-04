@@ -252,6 +252,50 @@ async fn responder_answers_a_json_request_in_json() {
 }
 
 // ============================================================================
+// Reply metadata the requester relies on
+// ============================================================================
+
+#[nats_route("flatbed.rr.tagged")]
+async fn tagged(
+    req: Request<TestRequest, Arc<RrCtx>>,
+) -> Result<Response<TestResponse>, FlatbedRouteError> {
+    Ok(Response::ok(TestResponse {
+        value: req.body.value,
+        ..TestResponse::default()
+    })
+    .header("x-replica", &req.ctx.replica))
+}
+
+/// A requester that sends no `x-request-id` still gets a correlation id back,
+/// and the handler's own response headers ride along with it.
+#[tokio::test]
+#[ignore]
+async fn a_reply_carries_a_generated_request_id_and_the_handlers_headers() {
+    let ctx = rr_ctx("solo").await;
+    let task = spawn_route("flatbed.rr.tagged", &ctx);
+    wait_route_ready(&ctx, "flatbed.rr.tagged").await;
+
+    let mut content_type_only = NatsHeaderMap::new();
+    content_type_only.append("content-type", "application/x-flatbuffers");
+    let reply = request(
+        &ctx,
+        "flatbed.rr.tagged",
+        content_type_only,
+        flatbuffers_request(8, "anon"),
+    )
+    .await;
+
+    let request_id = reply_header(&reply, REQUEST_ID_HEADER).expect("every reply is correlated");
+    assert!(
+        uuid::Uuid::parse_str(request_id).is_ok(),
+        "an absent x-request-id is replaced by a generated uuid, got '{request_id}'"
+    );
+    assert_eq!(reply_header(&reply, "x-replica"), Some("solo"));
+
+    task.abort();
+}
+
+// ============================================================================
 // Wildcard subject tokens
 // ============================================================================
 
@@ -505,6 +549,58 @@ async fn panicking_handler_is_answered_and_the_responder_keeps_serving() {
     .await;
     assert_eq!(reply_header(&second, ERROR_CODE_HEADER), Some("PANIC"));
     assert_eq!(ctx.snapshot(), vec![5, 6]);
+
+    task.abort();
+}
+
+// ============================================================================
+// Concurrent dispatch
+// ============================================================================
+
+#[nats_route("flatbed.rr.slow")]
+async fn slow(
+    req: Request<TestRequest, Arc<RrCtx>>,
+) -> Result<Response<TestResponse>, FlatbedRouteError> {
+    tokio::time::sleep(HANDLER_DELAY).await;
+    req.ctx.record(req.body.value);
+    Ok(Response::ok(TestResponse {
+        value: req.body.value,
+        ..TestResponse::default()
+    }))
+}
+
+const HANDLER_DELAY: Duration = Duration::from_millis(500);
+
+/// Each message is dispatched on its own task, so a slow handler holds up only
+/// its own reply. Serialized dispatch would take at least `n * HANDLER_DELAY`
+/// for `n` in-flight requests.
+#[tokio::test]
+#[ignore]
+async fn a_slow_handler_does_not_stall_the_subscription() {
+    let ctx = rr_ctx("solo").await;
+    let task = spawn_route("flatbed.rr.slow", &ctx);
+    wait_route_ready(&ctx, "flatbed.rr.slow").await;
+
+    const IN_FLIGHT: u64 = 5;
+    let started = Instant::now();
+    let replies = futures::future::join_all((1..=IN_FLIGHT).map(|value| {
+        request(
+            &ctx,
+            "flatbed.rr.slow",
+            headers("application/x-flatbuffers", "req-slow"),
+            flatbuffers_request(value, "wait"),
+        )
+    }))
+    .await;
+    let elapsed = started.elapsed();
+
+    assert_eq!(replies.len(), IN_FLIGHT as usize);
+    assert!(
+        elapsed < HANDLER_DELAY * 3,
+        "{IN_FLIGHT} concurrent requests took {elapsed:?}; serialized dispatch would need at \
+         least {:?}",
+        HANDLER_DELAY * u32::try_from(IN_FLIGHT).unwrap(),
+    );
 
     task.abort();
 }

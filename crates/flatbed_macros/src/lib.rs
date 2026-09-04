@@ -718,7 +718,8 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// A `{token}` segment subscribes as a NATS single-token wildcard and the
 /// matched value is readable through `req.param("token")`. Raw `*` and `>`
-/// wildcards are rejected — a capture has to be named.
+/// wildcards are rejected — a capture has to be named. Two responders whose
+/// subjects can both match one message are rejected at startup.
 ///
 /// # Replies
 ///
@@ -726,7 +727,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `content-type` picks the encoding for both directions (FlatBuffers when
 /// absent or unrecognized). A handler error becomes an error reply carrying
 /// `x-error-code`, `x-error-message`, and `x-error-status`, so a requester's
-/// timeout only ever means the subject was unreachable.
+/// timeout never means its request was rejected.
 ///
 /// # Example
 ///

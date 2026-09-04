@@ -257,8 +257,9 @@ replica answers every request.
 **Every request is answered.** The request's `Content-Type` picks the encoding
 for both directions (FlatBuffers when absent). A handler error comes back as a
 reply carrying `x-error-code`, `x-error-message`, and `x-error-status` — as do
-an undecodable payload and a panicking handler — so a requester's timeout only
-ever means the subject was unreachable, never that its request was rejected.
+an undecodable payload and a panicking handler — so a requester's timeout never
+means its request was rejected, only that the subject was unreachable or the
+handler never returned.
 
 ## Crates
 

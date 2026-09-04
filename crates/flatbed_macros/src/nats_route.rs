@@ -78,8 +78,15 @@ fn parse_subject(pattern: &str) -> Result<SubjectPattern, String> {
         let Some(name) = token.strip_prefix('{').and_then(|t| t.strip_suffix('}')) else {
             if token.contains(['{', '}', '*', '>']) {
                 return Err(format!(
-                    "subject '{pattern}' token '{token}' is neither a literal nor a \
-                     whole '{{token}}' segment"
+                    "subject '{pattern}' is neither a literal nor a \
+                     whole '{{token}}' segment at '{token}'"
+                ));
+            }
+            // The broker rejects these at subscribe time, which would surface
+            // as a worker failure and a restart loop instead of a build error.
+            if token.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                return Err(format!(
+                    "subject '{pattern}' token '{token}' contains whitespace"
                 ));
             }
             wire.push(token.to_string());
@@ -148,6 +155,24 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
 
+    // The wrapper calls the handler with no turbofish and exactly one
+    // argument, so a generic or multi-parameter signature would fail to
+    // compile with the error spanned at generated code.
+    if !fn_sig.generics.params.is_empty() || fn_sig.generics.where_clause.is_some() {
+        return syn::Error::new_spanned(&fn_sig.generics, "nats_route handler must not be generic")
+            .to_compile_error()
+            .into();
+    }
+
+    if fn_sig.inputs.len() != 1 {
+        return syn::Error::new_spanned(
+            &fn_sig.inputs,
+            "nats_route handler takes exactly one Request<T, Arc<C>> parameter",
+        )
+        .to_compile_error()
+        .into();
+    }
+
     let Some(syn::FnArg::Typed(first_param)) = fn_sig.inputs.first() else {
         return syn::Error::new_spanned(
             fn_sig,
@@ -167,9 +192,8 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     };
 
-    // A subject responder subscribes through its context, so unlike `#[route]`
-    // there is no contextless form: without `Arc<C>` there is no connection to
-    // answer on.
+    // Without `Arc<C>` there is no connection to subscribe on, so a subject
+    // responder has no contextless form.
     let has_context = request_info.has_context;
     let Some(context_type) = request_info.context_type.filter(|_| has_context) else {
         return syn::Error::new_spanned(
@@ -236,9 +260,8 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             #fn_block
         }
 
-        // Decodes the request payload, calls the user handler, and encodes the
-        // outcome. Every path returns a reply: a decode failure, a context
-        // mismatch, and a handler error all become error replies.
+        // Every path returns a reply: a decode failure, a context mismatch,
+        // and a handler error all become error replies.
         #[allow(non_snake_case)]
         #[doc(hidden)]
         pub fn #wrapper_name(
@@ -328,8 +351,8 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
 
         ::flatbed::inventory::submit! { #route_const }
 
-        // The responder runs as a worker so a failed subscription takes the
-        // process down the same way any other worker failure does.
+        // The responder runs as a worker so a subscription that fails or ends
+        // takes the process down the same way any other worker failure does.
         ::flatbed::inventory::submit! {
             ::flatbed::WorkerInfo {
                 name: concat!("nats_route:", #subject),
@@ -411,6 +434,13 @@ mod tests {
         assert!(parse_subject("plonk.{a.b}.status")
             .unwrap_err()
             .contains("neither a literal nor a whole"));
+    }
+
+    #[test]
+    fn a_literal_token_with_whitespace_is_rejected() {
+        assert!(parse_subject("plonk.hello world")
+            .unwrap_err()
+            .contains("contains whitespace"));
     }
 
     #[test]

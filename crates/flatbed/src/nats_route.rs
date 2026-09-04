@@ -11,13 +11,18 @@
 //!
 //! The request's `content-type` header selects the encoding for both the
 //! decoded request body and the reply; a request with no recognized
-//! `content-type` is read as FlatBuffers. Every reply carries `content-type`
-//! and `x-request-id`. A handler failure is answered with an error reply
-//! carrying `x-error-code`, `x-error-message`, and `x-error-status` (the
-//! numeric HTTP status the handler chose), so a requester's timeout only ever
-//! means the subject was unreachable — never that the handler rejected the
-//! request. An undecodable payload, a context-type mismatch, and a panicking
-//! handler are answered the same way.
+//! `content-type` is read as FlatBuffers, so an empty payload sent without
+//! headers is a decode failure rather than an empty body. Every reply carries
+//! `content-type` and `x-request-id`. A handler failure is answered with an
+//! error reply carrying `x-error-code`, `x-error-message`, and
+//! `x-error-status` (the numeric HTTP status the handler chose), so a
+//! requester's timeout never means the handler rejected the request. An
+//! undecodable payload and a panicking handler are answered the same way; a
+//! handler that never completes is the one case that produces no reply.
+//!
+//! A successful reply carries no status: [`Response::status`](crate::Response)
+//! is not put on the wire, and the presence of `x-error-code` is what
+//! distinguishes a rejection from a success.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -157,11 +162,9 @@ pub fn get_nats_routes() -> Vec<&'static NatsRouteInfo> {
     inventory::iter::<NatsRouteInfo>.into_iter().collect()
 }
 
-/// Two responders subscribing to the same wire subject.
+/// Two responders whose subjects can both match one message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NatsRouteConflict {
-    /// The wire subject both responders subscribe to.
-    pub wire_subject: String,
     /// The first responder's declared pattern.
     pub first_subject: String,
     /// The second responder's declared pattern.
@@ -172,22 +175,25 @@ impl std::fmt::Display for NatsRouteConflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "subjects '{}' and '{}' both subscribe to '{}'",
-            self.first_subject, self.second_subject, self.wire_subject
+            "subjects '{}' and '{}' overlap: a message matching both is answered twice",
+            self.first_subject, self.second_subject
         )
     }
 }
 
 impl std::error::Error for NatsRouteConflict {}
 
-/// Rejects two responders that would compete for the same wire subject.
+/// Rejects two responders whose subjects can both match one message.
 ///
-/// Patterns differing only in `{token}` names collide, because both
-/// subscribe to the same `*`-form subject.
+/// A message matching two subscriptions is dispatched twice and answered
+/// twice on the same reply subject, so the requester takes whichever reply
+/// arrives first and the other lands on a closed inbox. Patterns differing
+/// only in `{token}` names overlap, and so does a `{token}` segment against
+/// a literal one in the same position.
 ///
 /// # Errors
 ///
-/// Returns [`NatsRouteConflict`] naming the first colliding pair found.
+/// Returns [`NatsRouteConflict`] naming the first overlapping pair found.
 pub fn validate_nats_routes() -> Result<(), NatsRouteConflict> {
     match find_conflict(get_nats_routes()) {
         Some(conflict) => Err(conflict),
@@ -195,27 +201,41 @@ pub fn validate_nats_routes() -> Result<(), NatsRouteConflict> {
     }
 }
 
+/// A NATS `*` matches exactly one token, so two subjects can both match a
+/// message only when they have the same token count and every position is
+/// either equal or wildcarded on one side.
+fn subjects_overlap(first: &str, second: &str) -> bool {
+    let first: Vec<&str> = first.split('.').collect();
+    let second: Vec<&str> = second.split('.').collect();
+    first.len() == second.len()
+        && first
+            .iter()
+            .zip(&second)
+            .all(|(a, b)| *a == "*" || *b == "*" || a == b)
+}
+
 fn find_conflict<'a>(
     routes: impl IntoIterator<Item = &'a NatsRouteInfo>,
 ) -> Option<NatsRouteConflict> {
-    let mut seen: HashMap<&'static str, &'static str> = HashMap::new();
-    for route in routes {
-        let Some(first) = seen.insert(route.wire_subject, route.subject) else {
-            continue;
-        };
-        return Some(NatsRouteConflict {
-            wire_subject: route.wire_subject.to_string(),
-            first_subject: first.to_string(),
-            second_subject: route.subject.to_string(),
-        });
-    }
-    None
+    let routes: Vec<&NatsRouteInfo> = routes.into_iter().collect();
+    routes
+        .iter()
+        .enumerate()
+        .flat_map(|(i, first)| routes[i + 1..].iter().map(move |second| (*first, *second)))
+        .find(|(first, second)| subjects_overlap(first.wire_subject, second.wire_subject))
+        .map(|(first, second)| NatsRouteConflict {
+            first_subject: first.subject.to_string(),
+            second_subject: second.subject.to_string(),
+        })
 }
 
 /// Build a success reply carrying `response`'s body in `encoding`.
 ///
 /// A [`Response::raw`] body is published verbatim under its own
 /// content type; every other body goes through the encoding's serializer.
+/// The handler's own response headers ride along, except that the reply's
+/// `content-type` and `x-request-id` always describe what was actually
+/// published.
 #[must_use]
 pub fn reply_ok<T: ToFlatBuffer>(
     encoding: NatsEncoding,
@@ -225,7 +245,7 @@ pub fn reply_ok<T: ToFlatBuffer>(
     let (payload, content_type) = match response.take_raw() {
         Some((bytes, raw_content_type)) => (bytes, raw_content_type.into_owned()),
         None if encoding == NatsEncoding::Json => match serde_json::to_vec(&response.body) {
-            Ok(bytes) => (bytes, JSON_CONTENT_TYPE.to_string()),
+            Ok(bytes) => (bytes, encoding.content_type().to_string()),
             Err(e) => {
                 return reply_err(
                     encoding,
@@ -237,16 +257,13 @@ pub fn reply_ok<T: ToFlatBuffer>(
         },
         None => (
             response.body.to_flatbuffer(),
-            FLATBUFFER_CONTENT_TYPE.to_string(),
+            encoding.content_type().to_string(),
         ),
     };
 
-    let mut headers = HeaderMap::new();
+    let mut headers = copy_headers(&response.headers);
     set_header(&mut headers, CONTENT_TYPE_HEADER, &content_type);
     set_header(&mut headers, REQUEST_ID_HEADER, request_id);
-    for (key, value) in response.headers.iter() {
-        headers.insert(key.clone(), value.clone());
-    }
 
     NatsReply { payload, headers }
 }
@@ -265,7 +282,9 @@ struct ErrorBody<'a, D: serde::Serialize> {
 /// encodings so a requester can tell a rejection from a success without
 /// decoding the payload. In JSON the payload repeats them as an object; in
 /// FlatBuffers the payload is the encoded details, or empty when the error
-/// carries none.
+/// carries none. The error's own headers ride along, but never displace the
+/// framework's, so the discriminating headers always describe the error the
+/// handler actually returned.
 #[must_use]
 pub fn reply_err<D: ToFlatBuffer>(
     encoding: NatsEncoding,
@@ -292,36 +311,51 @@ pub fn reply_err<D: ToFlatBuffer>(
             .unwrap_or_default(),
     };
 
-    let mut headers = HeaderMap::new();
+    let mut headers = copy_headers(&err.headers);
     set_header(&mut headers, CONTENT_TYPE_HEADER, encoding.content_type());
     set_header(&mut headers, REQUEST_ID_HEADER, request_id);
     set_header(&mut headers, ERROR_CODE_HEADER, code);
     set_header(&mut headers, ERROR_MESSAGE_HEADER, &err.message);
     set_header(&mut headers, ERROR_STATUS_HEADER, err.status.as_str());
-    for (key, value) in err.headers.iter() {
-        headers.insert(key.clone(), value.clone());
-    }
 
     NatsReply { payload, headers }
 }
 
+fn copy_headers(source: &HeaderMap) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    for (name, value) in source.iter() {
+        headers.append(name.clone(), value.clone());
+    }
+    headers
+}
+
+/// A header value may not carry a control character, so an error message
+/// quoting a multi-line payload would otherwise be dropped from the reply
+/// rather than carried in a mangled form.
 fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
-    let (Ok(name), Ok(value)) = (HeaderName::try_from(name), HeaderValue::try_from(value)) else {
+    let flattened: String = value
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let (Ok(name), Ok(value)) = (
+        HeaderName::try_from(name),
+        HeaderValue::try_from(flattened.as_str()),
+    ) else {
         return;
     };
     headers.insert(name, value);
 }
 
-/// NATS header names are byte strings with no case normalization, while
-/// `http::HeaderName` is lowercase-only, so names are lowercased on the way in.
+/// NATS header names are case-preserving byte strings; `http::HeaderName`
+/// parsing lowercases them, so a `X-Request-Id` sent by a requester is read
+/// back under its lowercase name.
 fn from_nats_headers(source: Option<&async_nats::HeaderMap>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     let Some(source) = source else {
         return headers;
     };
     for (name, values) in source.iter() {
-        let lowercased = AsRef::<str>::as_ref(name).to_lowercase();
-        let Ok(name) = HeaderName::try_from(lowercased.as_str()) else {
+        let Ok(name) = HeaderName::try_from(AsRef::<str>::as_ref(name)) else {
             continue;
         };
         for value in values {
@@ -406,11 +440,15 @@ async fn dispatch(
 /// This is the runtime executor `#[nats_route]` registers as a worker: each
 /// message is dispatched on its own task, so a slow handler never stalls the
 /// subscription, and every message carrying a reply subject is answered.
+/// Dispatch tasks are detached, so replies still in flight when the process
+/// shuts down are not waited for.
 ///
 /// # Errors
 ///
 /// Returns [`FlatbedWorkerError`] if the service booted with a context other
-/// than `C`, or if the subscription cannot be established.
+/// than `C`, if the subscription cannot be established, or if the
+/// subscription ends — a responder that stops answering its subject must
+/// fail the worker rather than leave the process healthy and silent.
 pub async fn run_nats_route<C>(
     ctx: Arc<dyn Any + Send + Sync>,
     route: NatsRouteInfo,
@@ -474,11 +512,13 @@ where
         });
     }
 
-    warn!(
-        subject = route.subject,
-        "nats route subscription ended; the subject is no longer answered"
-    );
-    Ok(())
+    Err(FlatbedWorkerError::new(
+        "nats_route_subscription_ended",
+        format!(
+            "[{}] subscription ended; the subject is no longer answered",
+            route.subject
+        ),
+    ))
 }
 
 #[cfg(test)]
@@ -546,8 +586,7 @@ mod tests {
     }
 
     /// Two patterns that differ only in their capture names subscribe to the
-    /// same wire subject, so the second responder would silently steal a share
-    /// of the first's requests.
+    /// same wire subject, so both answer every matching request.
     #[test]
     fn patterns_differing_only_in_capture_names_conflict() {
         let routes = [
@@ -557,14 +596,39 @@ mod tests {
         ];
         let conflict = find_conflict(&routes).expect("the colliding pair must be reported");
 
-        assert_eq!(conflict.wire_subject, "plonk.sat.*.status");
         assert_eq!(conflict.first_subject, "plonk.sat.{id}.status");
         assert_eq!(conflict.second_subject, "plonk.sat.{name}.status");
         assert_eq!(
             conflict.to_string(),
             "subjects 'plonk.sat.{id}.status' and 'plonk.sat.{name}.status' \
-             both subscribe to 'plonk.sat.*.status'",
+             overlap: a message matching both is answered twice",
         );
+    }
+
+    /// A wildcard and a literal in the same position both match one concrete
+    /// subject, so the pair conflicts even though neither wire subject equals
+    /// the other.
+    #[test]
+    fn a_wildcard_conflicts_with_a_literal_in_the_same_position() {
+        let routes = [
+            route("plonk.sat.{id}.status", "plonk.sat.*.status"),
+            route("plonk.sat.alpha.status", "plonk.sat.alpha.status"),
+        ];
+        let conflict = find_conflict(&routes).expect("the overlapping pair must be reported");
+
+        assert_eq!(conflict.first_subject, "plonk.sat.{id}.status");
+        assert_eq!(conflict.second_subject, "plonk.sat.alpha.status");
+    }
+
+    /// A NATS `*` matches exactly one token, so subjects of different lengths
+    /// can never both match the same message.
+    #[test]
+    fn a_wildcard_does_not_conflict_across_different_token_counts() {
+        let routes = [
+            route("plonk.{id}", "plonk.*"),
+            route("plonk.{id}.status", "plonk.*.status"),
+        ];
+        assert!(find_conflict(&routes).is_none());
     }
 
     #[test]
@@ -625,6 +689,43 @@ mod tests {
         assert!(
             body.get("details").is_none(),
             "an error without details omits the field"
+        );
+    }
+
+    /// The error headers are what a requester reads to tell a rejection from a
+    /// success, so a handler that sets them on its own error must not be able
+    /// to misreport the error it actually returned.
+    #[test]
+    fn handler_headers_never_displace_the_frameworks_own() {
+        let err = FlatbedRouteError::not_found("gone")
+            .code("NOT_FOUND")
+            .header("x-error-code", "OK")
+            .header("content-type", "text/plain")
+            .header("x-trace", "t-9");
+        let reply = reply_err(NatsEncoding::Json, "req-4", &err);
+
+        assert_eq!(
+            header_value(&reply.headers, ERROR_CODE_HEADER),
+            Some("NOT_FOUND")
+        );
+        assert_eq!(
+            header_value(&reply.headers, CONTENT_TYPE_HEADER),
+            Some("application/json")
+        );
+        assert_eq!(header_value(&reply.headers, "x-trace"), Some("t-9"));
+    }
+
+    /// A header value cannot carry a control character, so a multi-line error
+    /// message has to be flattened rather than dropped — a reply missing
+    /// `x-error-message` would leave the requester without the reason.
+    #[test]
+    fn a_multi_line_error_message_is_flattened_onto_the_header() {
+        let err = FlatbedRouteError::bad_request("line one\nline two\r\tend").code("BAD");
+        let reply = reply_err(NatsEncoding::FlatBuffer, "req-5", &err);
+
+        assert_eq!(
+            header_value(&reply.headers, ERROR_MESSAGE_HEADER),
+            Some("line one line two  end")
         );
     }
 

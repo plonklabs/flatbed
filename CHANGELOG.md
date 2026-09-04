@@ -20,8 +20,10 @@ contain breaking changes during the pre-1.0 stabilization window.
   spreads requests across replicas, and every request carrying a reply subject
   is answered — a handler error, an undecodable payload, and a panicking
   handler all come back as error replies carrying `x-error-code`,
-  `x-error-message`, and `x-error-status`, so a requester's timeout only ever
-  means the subject was unreachable.
+  `x-error-message`, and `x-error-status`, so a requester's timeout never means
+  its request was rejected. Overlapping subjects are rejected at startup, and a
+  responder whose subscription ends fails its worker rather than leaving the
+  process healthy and the subject silent.
 
 ## [0.0.2] — 2026-07-21
 
