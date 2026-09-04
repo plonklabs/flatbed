@@ -17,7 +17,11 @@ its verdict as a plain *issue comment*, and `GET /pulls/{n}/reviews` returns
 `[]`. So the gate ties the verdict to the head SHA through two paths, in order:
 
   1. A `claude[bot]` review object whose `commit_id` is exactly the head SHA.
-     The review object is itself the freshness proof for the round.
+     The review object is itself the freshness proof for the round — but when
+     a successful `review / review` run exists at head, the summary body is
+     still taken from inside that run's window (path 2's bound applies to
+     both paths), so a straggler comment from another round can't be read as
+     this round's verdict.
   2. Failing that, correlate the `review / review` check run at the head SHA
      with a fresh bot comment: the run must have completed `success`, and the
      latest `claude[bot]` issue comment must fall inside that run's
@@ -71,10 +75,9 @@ REVIEW_CHECK_NAME = "review / review"
 # states.
 VERDICT_RE = re.compile(r"(?im)^[ \t>*_]*verdict:[ \t*_]*(clean|findings)\b")
 
-# Fallback for verdict comments without a `Verdict:` marker line: a green
-# top-level verdict phrased in prose. Any of these substrings, with no
-# enumerated finding list, clears the body. New phrasings should pin a marker
-# rather than extend this tuple.
+# Fallback for pre-marker-era verdict comments. Any of these substrings, with
+# no enumerated finding list, clears the body; the `Verdict:` marker line is
+# authoritative when present.
 CLEAN_MARKERS = (
     "no blocking",
     "no findings",
@@ -164,22 +167,28 @@ def verdict_body(head_sha, reviews, summaries, check_runs):
     `body` is the verdict text to read for findings; `refusal` is the reason no
     verdict could be tied to the head SHA.
     """
-    if bot_reviewed_at_head(reviews, head_sha):
-        return latest_bot_summary(summaries), None
     window = successful_review_run_window(check_runs)
-    if window is None:
-        return None, (
-            f"no {BOT_LOGIN} verdict at head SHA {head_sha}: no review object "
-            f"and no successful `{REVIEW_CHECK_NAME}` run"
-        )
-    start, end = window
-    body = latest_bot_comment_in_window(summaries, start, end)
-    if body is None:
+    reviewed_at_head = bot_reviewed_at_head(reviews, head_sha)
+    if window is not None:
+        start, end = window
+        body = latest_bot_comment_in_window(summaries, start, end)
+        if body is not None:
+            return body, None
+        # Both paths apply the window when one exists: a comment outside the
+        # successful run's [started_at, completed_at] belongs to another
+        # round (a straggler from a cancelled run can land after a fresh
+        # review object's submission), so a review object at head does not
+        # rehabilitate an out-of-window comment.
         return None, (
             f"no {BOT_LOGIN} verdict at head SHA {head_sha}: `{REVIEW_CHECK_NAME}` "
             f"ran but no comment falls within it (latest verdict is stale)"
         )
-    return body, None
+    if reviewed_at_head:
+        return latest_bot_summary(summaries), None
+    return None, (
+        f"no {BOT_LOGIN} verdict at head SHA {head_sha}: no review object "
+        f"and no successful `{REVIEW_CHECK_NAME}` run"
+    )
 
 
 def enumerated_findings(body):

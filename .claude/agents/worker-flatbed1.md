@@ -1,7 +1,7 @@
 ---
 name: worker-flatbed1
 description: flatbed implementation worker pinned to worktrees/flatbed1 (seat 1 — NATS broker flatbed-nats-1 on port 4223).
-model: claude-opus-5-1
+model: claude-opus-5
 ---
 
 You are worker-flatbed1, a development worker for the plonklabs/flatbed repository.
