@@ -122,14 +122,21 @@ Precondition (all must hold at the same HEAD):
 - Lane B green (where required): smoke green.
 - Local gate suite green: `cargo fmt --check` clean + clippy `-D warnings` + `cargo test --workspace` (+ `--all-features` when feature code changed) + `check-generated.sh`.
 
-Merge through `fleet merge <n>` — the only sanctioned merge path. It pins the head SHA and refuses unless every precondition holds *at that SHA*: not a draft; every branch-required check completed `SUCCESS`; and every gate in `.fleet/merge.toml` passes — `ci-green` (the whole CI workflow successful at head, not just the required fmt/clippy/test trio) and `review-body-clean` (a `claude[bot]` verdict tied to the head SHA with no unacknowledged finding). It merges with `--match-head-commit`, so a push between evaluation and merge fails the merge instead of landing unevaluated code, and pins the squash subject/body to the PR's own title/description — keeping GitHub's concatenated-commit default (which can carry a `/review --auto` attribution slip) off `main`. `.fleet/merge.toml` declares `admin_bypass = true` — the ruleset's code-owner approval is unobtainable for a sole maintainer who authors every PR — so a merge that clears every built-in and gate is issued with `--admin` and the audit block records the bypass. Nothing about what gets evaluated changes.
+Landing a PR is two steps, and `fleet merge <n> --no-merge` is the only sanctioned way to reach the second. It pins the head SHA and refuses unless every precondition holds *at that SHA*: not a draft; every branch-required check completed `SUCCESS`; and every gate in `.fleet/merge.toml` passes — `ci-green` (the whole CI workflow successful at head, not just the required fmt/clippy/test trio) and `review-body-clean` (a `claude[bot]` verdict tied to the head SHA with no unacknowledged finding). The branch ruleset also requires a code-owner approval that a sole maintainer authoring every PR can never obtain, so the merge needs `--admin`, which fleet's REST merge cannot issue — hence the split. Exit 0 from the check is the gate verdict and the only thing that authorizes the merge; exit 1 means do not merge.
 
 ```bash
-fleet merge <n>
+# exit 0 = every precondition passed at head
+PLONK_GITHUB_REPOSITORY=plonklabs/flatbed fleet merge <n> --no-merge
+gh pr merge <n> --squash --admin --match-head-commit <head-sha> \
+  --subject "<PR title>" --body "<PR description>"
 git fetch origin main && git log -1 origin/main   # verify the merge landed
 ```
 
-Refusals are actionable, not obstacles to route around: an in-progress check means wait; a review-body finding judged non-blocking is declined with `fleet merge <n> --ack "<reason>"` (repeatable, one per finding), which prints the declined finding into the audit. Never reach for bare `gh pr merge` to get past a refusal — the refusal is the gate working.
+Fleet resolves PRs against `plonklabs/plonk` unless `PLONK_GITHUB_REPOSITORY` names this repository; without it the check dies on a 404 instead of reporting anything about the PR.
+
+`--match-head-commit` makes a push landing between the two steps fail the merge instead of shipping unevaluated code, and pinning subject/body keeps GitHub's concatenated-commit default (which can carry a `/review --auto` attribution slip) off `main`.
+
+Refusals are actionable, not obstacles to route around: an in-progress check means wait; a review-body finding judged non-blocking is declined with `fleet merge <n> --no-merge --ack "<reason>"` (repeatable, one per finding), which prints the declined finding into the audit. A `gh pr merge` that no passing check authorized is never the way past a refusal — the refusal is the gate working.
 
 #### 2f. Prep next PR
 
@@ -164,7 +171,7 @@ When the loop completes (all PRs merged) OR stops on a blocker:
 - HEAD-pinning: every Lane B run is tagged with the SHA it started on. When Lane A pushes a fix, kill in-flight Lane B and restart against the new SHA. Merge requires both lanes green at the **same** SHA.
 - Merge gates: `/review --auto` green AND smoke green (when required) AND the local gate suite (fmt clean + clippy `-D warnings` + `cargo test --workspace` + `check-generated.sh`) green at HEAD. All must hold — no exceptions.
 - Test-flake policy: one automatic retry. A second failure is a real failure; do not paper over.
-- Merge form: `fleet merge <n>` — the precondition-checked path (not-draft, required checks `SUCCESS` at the pinned head SHA, `ci-green`, `review-body-clean`); it merges with `--match-head-commit` and pins the squash subject/body to the PR title/description. Decline a non-blocking review finding with `--ack "<reason>"`. Never fall back to bare `gh pr merge` to get past a refusal.
+- Merge form: `fleet merge <n> --no-merge` (the precondition check — not-draft, required checks `SUCCESS` at the pinned head SHA, `ci-green`, `review-body-clean`), then `gh pr merge <n> --squash --admin --match-head-commit <head-sha>` with subject/body pinned to the PR title/description. Exit 0 from the check authorizes the merge; exit 1 forbids it. Decline a non-blocking review finding with `--ack "<reason>"`. Never merge without a passing check to get past a refusal.
 - Run `/topr <pr#>` before re-opening review on a stacked PR.
 - Every merged PR leaves the system in a working state.
 - Per-PR scope stays mechanical; don't smuggle cleanups.

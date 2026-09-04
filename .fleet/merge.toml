@@ -8,11 +8,25 @@
 #
 # The same ruleset requires an approving code-owner review, and this
 # repository's sole CODEOWNER authors every orchestrated PR. GitHub never
-# counts an author's own approval, so that rule is unsatisfiable here and no
-# orchestrated PR could land without a bypass. Fleet appends `--admin` only
-# after every built-in and every gate below has passed at the pinned head
-# SHA, and names the bypass in the merge audit.
-admin_bypass = true
+# counts an author's own approval, so that rule is unsatisfiable here and an
+# orchestrated PR can only land through an admin bypass. Fleet merges over a
+# REST endpoint that carries no bypass parameter, so the bypassing command is
+# the caller's to run and the precondition check is split from the merge:
+#
+#   PLONK_GITHUB_REPOSITORY=plonklabs/flatbed fleet merge <pr> --no-merge
+#   gh pr merge <pr> --squash --admin --match-head-commit <head-sha> \
+#     --subject "<PR title>" --body "<PR description>"
+#
+# Fleet resolves PRs against `plonklabs/plonk` unless
+# `PLONK_GITHUB_REPOSITORY` names this repository; without it the check dies
+# on a 404 rather than reporting anything about the PR.
+#
+# Exit 0 from the first step is the gate verdict — every built-in and every
+# gate below passed at the pinned head SHA — and is what authorizes the
+# second. Exit 1 means the caller must not merge. `--match-head-commit` makes
+# a push between the two steps fail the merge rather than land unevaluated
+# code, and pinning subject/body keeps GitHub's concatenated-commit default
+# off `main`.
 
 [[gate]]
 name = "ci-green"
