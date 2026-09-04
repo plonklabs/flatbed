@@ -9,6 +9,20 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+### Added
+
+- `#[nats_route]` (feature `nats`): core-NATS request-reply responders, the
+  subject-transport sibling of `#[route]`. Handlers take the same
+  `Request<T, Arc<C>>` and return the same `Result<Response<U>,
+  FlatbedRouteError>`; each is registered through `inventory` and runs as a
+  worker that subscribes on the context's client (`HasNatsClient`). Subjects
+  can capture `{token}` segments as request params, an optional `queue` group
+  spreads requests across replicas, and every request carrying a reply subject
+  is answered — a handler error, an undecodable payload, and a panicking
+  handler all come back as error replies carrying `x-error-code`,
+  `x-error-message`, and `x-error-status`, so a requester's timeout only ever
+  means the subject was unreachable.
+
 ## [0.0.2] — 2026-07-21
 
 ### Added

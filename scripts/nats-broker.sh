@@ -17,7 +17,8 @@
 #
 # Run the tests against it with:
 #   NATS_URL=$(scripts/nats-broker.sh url) \
-#     cargo test -p flatbed --features nats,openapi --test nats_broker -- --ignored
+#     cargo test -p flatbed --features nats,openapi \
+#       --test nats_broker --test nats_route_broker -- --ignored
 set -euo pipefail
 
 slot=""

@@ -33,7 +33,17 @@ use std::sync::LazyLock;
 #[cfg(feature = "nats")]
 pub mod nats;
 #[cfg(feature = "nats")]
-pub use nats::{run_stream_worker, HasJetStream, NatsResult, StreamWorker};
+pub use nats::{run_stream_worker, HasJetStream, HasNatsClient, NatsResult, StreamWorker};
+
+// Core-NATS request-reply responders (enabled with "nats" feature)
+#[cfg(feature = "nats")]
+pub mod nats_route;
+#[cfg(feature = "nats")]
+pub use flatbed_macros::nats_route;
+#[cfg(feature = "nats")]
+pub use nats_route::{
+    get_nats_routes, run_nats_route, validate_nats_routes, NatsRouteConflict, NatsRouteInfo,
+};
 
 // NATS JetStream KV cache worker (enabled with "nats" feature)
 #[cfg(feature = "nats")]
@@ -370,6 +380,9 @@ impl Flatbed {
         crate::validate_routes().map_err(|e| Error::Custom(format!("Route conflict: {}", e)))?;
         crate::validate_type_registry()
             .map_err(|e| Error::Custom(format!("Type registry conflict: {}", e)))?;
+        #[cfg(feature = "nats")]
+        crate::validate_nats_routes()
+            .map_err(|e| Error::Custom(format!("NATS subject conflict: {}", e)))?;
 
         // Build router from inventory-registered routes
         let router = Arc::new(hyper::build_router());
