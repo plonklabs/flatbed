@@ -63,18 +63,36 @@ orchestrator still never commits to the worker's branch.
 
 ## Merge discipline
 
-- `fleet merge <n>` is the **only** sanctioned merge path for orchestrated
-  PRs. It pins the head SHA and refuses unless every precondition holds *at
-  that SHA*: not a draft; every branch-required check completed `SUCCESS`;
-  and every gate in `.fleet/merge.toml` passes — flatbed's gates are
-  `ci-green` (the whole CI workflow successful at head, not just the required
-  fmt/clippy/test trio) and `review-body-clean` (a `claude[bot]` verdict tied
-  to the head SHA with no unacknowledged finding). `.fleet/merge.toml` also
-  declares `admin_bypass = true`, because the ruleset's code-owner approval
-  is unobtainable for a sole maintainer who authors every PR — so a merge
-  that clears everything above is issued with `--admin`, and the audit says
-  so. Bare `gh pr merge` is never the way past a refusal — the refusal is
-  the gate working.
+- `fleet merge <n>` is the **only** sanctioned precondition check for
+  orchestrated PRs. It pins the head SHA and refuses unless every
+  precondition holds *at that SHA*: not a draft; every branch-required check
+  completed `SUCCESS`; and every gate in `.fleet/merge.toml` passes —
+  flatbed's gates are `ci-green` (the whole CI workflow successful at head,
+  not just the required fmt/clippy/test trio) and `review-body-clean` (a
+  `claude[bot]` verdict tied to the head SHA with no unacknowledged finding).
+  The ruleset also requires a code-owner approval that a sole maintainer
+  authoring every PR can never obtain, so the merge itself needs `--admin`,
+  which fleet's REST merge cannot issue. That splits the landing into two
+  steps, both required:
+
+  ```bash
+  # exit 0 = every precondition passed at head
+  PLONK_GITHUB_REPOSITORY=plonklabs/flatbed fleet merge <n> --no-merge
+  gh pr merge <n> --squash --admin --match-head-commit <head-sha> \
+    --subject "<PR title>" --body "<PR description>"
+  ```
+
+  Fleet resolves PRs against `plonklabs/plonk` unless
+  `PLONK_GITHUB_REPOSITORY` names this repository; without it the check dies
+  on a 404 instead of reporting anything about the PR.
+
+  Exit 0 from the first step is the gate verdict and the only thing that
+  authorizes the second; exit 1 means do not merge. `--match-head-commit`
+  makes a push landing between the two fail the merge rather than ship
+  unevaluated code, and pinning subject/body keeps GitHub's
+  concatenated-commit default off `main`. A `gh pr merge` that was not
+  authorized by a passing `--no-merge` run is never the way past a refusal —
+  the refusal is the gate working.
 - **Never issue or arm a merge in the same action as `gh pr ready`.** Marking
   a draft ready re-triggers its checks; confirm they are freshly green at the
   ready-state head first, then merge as a separate step.

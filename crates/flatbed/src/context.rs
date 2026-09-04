@@ -134,6 +134,13 @@ impl<C> crate::nats::HasJetStream for FlatbedContext<C> {
     }
 }
 
+#[cfg(feature = "nats")]
+impl<C> crate::nats::HasNatsClient for FlatbedContext<C> {
+    fn nats_client(&self) -> &async_nats::Client {
+        &self.nats_client
+    }
+}
+
 #[cfg(feature = "k8s")]
 impl<C> crate::k8s::HasKubeClient for FlatbedContext<C> {
     fn kube_client(&self) -> &kube::Client {

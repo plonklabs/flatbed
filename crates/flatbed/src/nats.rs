@@ -74,6 +74,30 @@ pub trait HasJetStream {
     }
 }
 
+/// Trait for application contexts that hold a core-NATS client.
+///
+/// `#[nats_route]` handlers subscribe through this: the context a service
+/// boots with must hand the framework the connection its subject responders
+/// answer on.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// struct AppContext {
+///     nats: async_nats::Client,
+/// }
+///
+/// impl HasNatsClient for AppContext {
+///     fn nats_client(&self) -> &async_nats::Client {
+///         &self.nats
+///     }
+/// }
+/// ```
+pub trait HasNatsClient {
+    /// Returns a reference to the core-NATS client.
+    fn nats_client(&self) -> &async_nats::Client;
+}
+
 // ============================================================================
 // StreamWorker Trait
 // ============================================================================

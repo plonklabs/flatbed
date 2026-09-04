@@ -223,12 +223,50 @@ The [`raw-response`](examples/raw-response) example returns CSV and SVG from
 handlers; the [`static-assets`](examples/static-assets) example serves a bundled
 `dist/` alongside a JSON API.
 
+## Answering NATS subjects (optional)
+
+With the `nats` feature, `#[nats_route]` answers core-NATS request-reply on a
+subject the same way `#[route]` answers an HTTP path — same `Request`, same
+`Response`, same `FlatbedRouteError`, same two wire formats:
+
+```rust
+#[nats_route("plonk.ground.report.worldstate", queue = "ground")]
+async fn ingest(req: Request<WorldStateDigest, Arc<Ctx>>)
+    -> Result<Response<Ack>, FlatbedRouteError>
+{
+    req.ctx.store(&req.body).await?;
+    Ok(Response::ok(Ack { accepted: true }))
+}
+
+// A {token} segment subscribes as a NATS wildcard and reaches the handler
+// as a named param.
+#[nats_route("plonk.satellite.{id}.call.status")]
+async fn status(req: Request<StatusQuery, Arc<Ctx>>)
+    -> Result<Response<SatelliteStatus>, FlatbedRouteError>
+{
+    Ok(Response::ok(req.ctx.status_of(req.param("id").unwrap_or_default()).await?))
+}
+```
+
+Each responder is discovered through `inventory` (declaring the module is
+enough) and runs as a worker that subscribes on the context's client, so the
+context type must implement `HasNatsClient`. A `queue` group makes one replica
+answer each request, which is how these scale horizontally; without one, every
+replica answers every request.
+
+**Every request is answered.** The request's `Content-Type` picks the encoding
+for both directions (FlatBuffers when absent). A handler error comes back as a
+reply carrying `x-error-code`, `x-error-message`, and `x-error-status` — as do
+an undecodable payload and a panicking handler — so a requester's timeout never
+means its request was rejected, only that the subject was unreachable or the
+handler never returned.
+
 ## Crates
 
 | Crate | Purpose |
 |---|---|
 | [`flatbed`](crates/flatbed) | HTTP server, route registry, optional telemetry / OpenAPI / NATS / Kubernetes feature gates |
-| [`flatbed_macros`](crates/flatbed_macros) | `#[route]`, `#[worker]`, and `#[flatbed::main]` procedural macros |
+| [`flatbed_macros`](crates/flatbed_macros) | `#[route]`, `#[nats_route]`, `#[worker]`, and `#[flatbed::main]` procedural macros |
 | [`flatbed_build`](crates/flatbed_build) | Build-time FlatBuffer codegen and the `flatbed` CLI tool (`cargo install flatbed_build` ships the binary) |
 
 ## License

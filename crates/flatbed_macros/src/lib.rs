@@ -6,6 +6,7 @@ use syn::{
 };
 
 mod main_macro;
+mod nats_route;
 
 /// HTTP methods supported by the route macro
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -698,6 +699,61 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// Core-NATS subject responder for async handler functions.
+///
+/// The subject-transport sibling of [`macro@route`]: the handler takes the same
+/// `Request<T, Arc<C>>`, returns the same `Result<Response<U>, FlatbedError>`,
+/// and is registered through `inventory` — declaring the module is enough, no
+/// re-export needed. Each responder runs as a worker that subscribes on the
+/// context's NATS client, so `C` must implement `flatbed::HasNatsClient`.
+///
+/// # Attributes
+/// - `queue` (optional): NATS queue group to subscribe under. With a queue
+///   group, one replica answers each request (horizontal scaling); without
+///   one, every replica answers every request.
+///
+/// # Subjects
+///
+/// A `{token}` segment subscribes as a NATS single-token wildcard and the
+/// matched value is readable through `req.param("token")`. Raw `*` and `>`
+/// wildcards are rejected — a capture has to be named. Two responders whose
+/// subjects can both match one message are rejected at startup.
+///
+/// # Replies
+///
+/// Every request carrying a reply subject is answered. The request's
+/// `content-type` picks the encoding for both directions (FlatBuffers when
+/// absent or unrecognized). A handler error becomes an error reply carrying
+/// `x-error-code`, `x-error-message`, and `x-error-status`, so a requester's
+/// timeout never means its request was rejected.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use flatbed::{nats_route, FlatbedError, Request, Response};
+/// use std::sync::Arc;
+///
+/// #[nats_route("plonk.ground.report.worldstate", queue = "ground")]
+/// async fn ingest(req: Request<WorldStateDigest, Arc<Ctx>>)
+///     -> Result<Response<Ack>, FlatbedError>
+/// {
+///     req.ctx.store(&req.body).await?;
+///     Ok(Response::ok(Ack { accepted: true }))
+/// }
+///
+/// #[nats_route("plonk.satellite.{id}.call.status")]
+/// async fn status(req: Request<StatusQuery, Arc<Ctx>>)
+///     -> Result<Response<SatelliteStatus>, FlatbedError>
+/// {
+///     let id = req.param("id").unwrap_or_default();
+///     Ok(Response::ok(req.ctx.status_of(id).await?))
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn nats_route(attr: TokenStream, item: TokenStream) -> TokenStream {
+    nats_route::nats_route_impl(attr, item)
 }
 
 /// Entry point macro for flatbed applications
