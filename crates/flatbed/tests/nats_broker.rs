@@ -540,6 +540,10 @@ async fn stream_worker_durable_consumer_resumes_after_restart() {
     .await;
     wait_consumer_drained(&stream, DurableWorker::NAME).await;
     first.abort();
+    // abort() only signals cancellation; awaiting the handle is what
+    // guarantees the worker has stopped pulling before the next messages
+    // are published, so they can only be claimed by the restarted worker.
+    let _ = first.await;
 
     publish(&ctx, DurableWorker::SUBJECT, u32_payload(22)).await;
     publish(&ctx, DurableWorker::SUBJECT, u32_payload(33)).await;
@@ -609,9 +613,9 @@ fn delete_event(key: &str) -> Handled {
 
 /// Puts a fresh canary revision every 200ms until the worker observes one.
 /// This is the only way to know the worker's watch is open: `watch_all()`
-/// under async-nats 0.38 delivers only entries written after the watch was
-/// established (deliver-policy New), and the executor exposes no
-/// watch-established signal.
+/// is deliver-policy New, so it delivers only entries written after the
+/// watch was established, and the executor exposes no watch-established
+/// signal.
 async fn wait_watch_open(ctx: &TestCtx, store: &jetstream::kv::Store) {
     let start = Instant::now();
     while start.elapsed() < DEADLINE {
@@ -630,8 +634,8 @@ async fn wait_watch_open(ctx: &TestCtx, store: &jetstream::kv::Store) {
 /// A running KV worker receives live puts, updates, deletes, and purges —
 /// delete and purge both arriving as `on_delete`. Entries written before
 /// the watch opened are never delivered (`watch_all()` is deliver-policy
-/// New in async-nats 0.38), so there is no boot replay of existing state;
-/// the seeded key pins that. Driven through the `register_kv_worker!`
+/// New), so there is no boot replay of existing state; the seeded key
+/// pins that. Driven through the `register_kv_worker!`
 /// `WorkerInfo` entry so the macro glue is part of the path under test.
 #[tokio::test]
 #[ignore]
