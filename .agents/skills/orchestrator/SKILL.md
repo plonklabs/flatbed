@@ -85,10 +85,14 @@ per-seat NATS brokers mean there is **no serialized test bench**.
     calls correctly.
   - **Task** — the delegation contract is literally the `/implement` skill:
     the dispatch tells the worker to run
-    `/implement <issue-or-epic> <extra instructions>`. The assignment ends
-    when `/implement` ends: the issue is CLOSED. "PR delivered" is a phase,
-    not the end — the worker stays on the hook through review rounds, merge,
-    and close-out.
+    `/implement <issue-or-epic> <extra instructions>`, and the worker owns
+    the **full** loop end-to-end — implementation, review rounds, gates,
+    merge, close-out. The orchestrator is relay-only: it never feeds the
+    loop's phases as separate instructions, never checkpoints the worker
+    between phases, and never runs a phase itself (see the role's "Relay,
+    don't drive"). The assignment ends when `/implement` ends: the issue is
+    CLOSED. "PR delivered" is a phase, not the end — the worker stays on
+    the hook through review rounds, merge, and close-out.
   - **Guardrails** — the task-specific lines not to cross (scope limits,
     surfaces not to touch, "report, don't fix" for adjacent problems).
     Guardrails are constraints, not puzzles.
@@ -196,7 +200,13 @@ periodic full reconcile — `fleet board sync` — on `/orchestrator` start
    `/implement`. From here the issue + PR carry the truth.
 5. **Monitor.** Arm the orchestrator's own monitor on the PR's checks and
    review body (`/monitor-ci --pr <n>`), so the orchestrator learns when the
-   worker blocks or finishes — never rely on the worker's self-poll.
+   worker blocks or finishes — never rely on the worker's self-poll. A
+   terminal result is relayed to the worker to act on, not acted on here.
+   Only two signals turn the orchestrator into an investigator: a
+   `state:🛑blocked` report, or a detected loop (the same finding recurring
+   across review rounds, the same failure re-run without the shape of the
+   error changing). Then look directly — the PR, the logs, the threads —
+   and re-brief the worker with the diagnosis; don't take over the branch.
 6. **Close the loop.** On merge + issue close: `fleet pop`, strip labels,
    `fleet board sync`, dispatch the next queued item.
 
@@ -313,6 +323,9 @@ Run once on `/orchestrator` (every step is idempotent):
 - **GitHub is the source of truth.** On any doubt, run Re-sync.
 - **Never write product code in the main tree.** The orchestrator delegates;
   workers implement, each confined to its own worktree.
+- **Relay, don't drive.** The worker owns the full `/implement` loop; the
+  orchestrator steps in only on a blocked report or a detected fix-loop,
+  and then by investigating and re-briefing — never by taking over.
 - **Reuse, don't reinvent.** Epic curation follows `/spec`; worker
   implementation follows `/implement`.
 - **Settle direction before writing it into an issue.**
