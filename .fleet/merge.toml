@@ -1,0 +1,15 @@
+# flatbed's `fleet merge` policy. Fleet enforces the generic built-ins
+# (not-draft, required checks completed SUCCESS at the pinned head SHA);
+# these gates add flatbed's project policy.
+#
+# The branch ruleset only requires fmt/clippy/test, so the built-ins alone
+# would let a red nats-integration or codec-compat job merge — the ci-green
+# gate closes that by requiring the whole CI workflow green at head.
+
+[[gate]]
+name = "ci-green"
+run = "scripts/merge-gates/ci-green"
+
+[[gate]]
+name = "review-body-clean"
+run = "scripts/merge-gates/review-body"

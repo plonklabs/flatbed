@@ -1,0 +1,5 @@
+# Fleet workspace registry config: seats are the `worktrees/flatbed<N>`
+# checkouts, so `fleet workspace sync` discovers them and the board's
+# ownership labels render as `worker:🤖flatbed<N>`.
+[workspace]
+prefix = "flatbed"

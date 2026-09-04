@@ -1,3 +1,8 @@
+---
+name: next
+description: Reset the session to start fresh without losing board state.
+---
+
 # /next — Reset Session to Start Fresh
 
 ## Description

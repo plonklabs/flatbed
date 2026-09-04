@@ -1,3 +1,8 @@
+---
+name: topr
+description: Rebase a stacked PR onto the current main after its base was squash-merged.
+---
+
 # /topr — Rebase a Stacked PR onto origin/main
 
 ## Description

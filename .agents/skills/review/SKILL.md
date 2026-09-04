@@ -1,3 +1,8 @@
+---
+name: review
+description: Self-review a draft PR or address bot review comments.
+---
+
 # /review — Self-review a draft PR or address bot review comments
 
 ## Description
@@ -45,7 +50,7 @@ gh pr view "$PR_NUMBER" --json isDraft,state,headRefOid,headRefName
 
 4. **Print findings in the chat**, grouped by file and severity:
    - **Blocking** — real correctness bugs, security issues, broken tests
-   - **Quality** — CLAUDE.md violations, duplication, doc/code drift, missing edge-case coverage
+   - **Quality** — AGENTS.md violations, duplication, doc/code drift, missing edge-case coverage
    - **Nits** — style, naming, comment phrasing
 
    For each finding: file path, line range, the issue, and a concrete suggestion. Use the same tone as a thorough human reviewer.
@@ -145,7 +150,7 @@ gh api graphql --paginate -f query='
       }
     }
   }' \
-  -f owner=plonklabs -f repo=plonk -F pr="$PR_NUMBER" \
+  -f owner=plonklabs -f repo=flatbed -F pr="$PR_NUMBER" \
   --jq '.data.repository.pullRequest.reviewThreads.nodes[]
         | select(.isResolved == false
                  and .comments.nodes[0].author.__typename == "Bot"
@@ -191,7 +196,8 @@ For each batch of fix-bound threads on the **same file**:
    - `cargo fmt --all` (apply formatting; AI-written code often needs normalisation, and `cargo fmt --all -- --check` would just fail rather than fix)
    - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
    - `cargo test -p <affected-package> --bins` (or workspace tests if the change is wide)
-   - For changes touching the operator runtime: `make e2e-full` per CLAUDE.md
+   - `bash scripts/check-generated.sh` when schemas or codegen changed
+   - For changes touching the `nats`/`kv` worker layer: the broker-backed suite against this checkout's own broker (`scripts/nats-broker.sh up`, then `NATS_URL=$(scripts/nats-broker.sh url) cargo test -p flatbed --features nats,openapi --test nats_broker -- --ignored`)
 
    **If any check fails, stop. Surface the output to the user, do not push, and do not paper over the failure with hand-edits that don't address the underlying cause.** A failed `cargo test` means the fix introduced a regression; a failed `clippy` means the fix introduced new style debt; both are blockers for the SHA-in-reply flow because the SHA being referenced wouldn't pass CI on `main`. Iterate on the fix until verifications pass, then push.
 6. **Push.** Then reply on each addressed inline thread with the commit SHA:
@@ -265,58 +271,58 @@ ROUND=$((ROUND + 1))
 4. **User interrupts.** Any out-of-band user message during the loop. Pause the loop, address the user, and ask whether to resume.
 5. **Recurrence.** If the same file region (file path + 5-line window around the anchor line) is flagged in two consecutive rounds despite an applied fix, break the loop. The autonomous mode's "every finding is fix-bound" stance assumes the assistant can satisfy the bot in finite rounds; a recurrence means either the fix misreads the finding or the bot's expectation is unattainable. Post a summary of what was tried on the recurring region and ask the user whether to decline the finding (with reasoning), take a different approach, or accept the current state. The `cargo test` / clippy guards catch fixes that break CI but not fixes that pass CI while still mismatching the bot's intent — recurrence is the complementary signal for that case.
 
-6. **Speculative-fix saturation.** If three consecutive rounds produce **real correctness findings** (not nits) AND the fixes you applied to earlier rounds were based on guessed semantics rather than docs or repo precedent, break out of speculation mode for one round. Do not push another patch. Instead: re-audit the **entire diff** against the official docs of whatever semantic system is at play (GitHub Actions expressions, language coercion, the foreign API's spec), walk every input case through documented rules, and write down the expected result for each before editing. Ship one careful commit that covers everything the audit surfaces, *with the comparison reasoning in the commit message so a future re-reader can verify it*. PR #377 ran 4 rounds before this — a doc-grounded re-audit on round 5 found two bugs the loop had been preserving (a wrong K8s resource type and a broken expression coercion) and closed the loop clean. The signal "the bot keeps finding real bugs in semantics-adjacent fixes" means you don't yet know the semantics; reading the spec is faster than guessing again. See Quality checklist item 15 and [[verify-dont-guess-semantics]].
+6. **Speculative-fix saturation.** If three consecutive rounds produce **real correctness findings** (not nits) AND the fixes you applied to earlier rounds were based on guessed semantics rather than docs or repo precedent, break out of speculation mode for one round. Do not push another patch. Instead: re-audit the **entire diff** against the official docs of whatever semantic system is at play (GitHub Actions expressions, language coercion, the foreign API's spec), walk every input case through documented rules, and write down the expected result for each before editing. Ship one careful commit that covers everything the audit surfaces, *with the comparison reasoning in the commit message so a future re-reader can verify it*. The signal "the bot keeps finding real bugs in semantics-adjacent fixes" means you don't yet know the semantics; reading the spec is faster than guessing again. See Quality checklist item 15.
 
-**Diff-vs-main drift check at the top of every round.** Before fetching unresolved threads, run `git fetch origin main && git log --oneline HEAD..origin/main` — if main has advanced, rebase the branch onto current main, run `git push --force-with-lease`, then `HEAD_SHA=$(git rev-parse HEAD)` and **re-enter Phase 2a** (not Phase 2b) — the push re-triggers the bot workflow on the new HEAD and Phase 2b must not run until that new run completes, or it would fetch threads produced against the pre-rebase HEAD. A long-running autonomous loop is the exact scenario where a stale base silently reverts merges that landed on main mid-loop (per [[feedback_rebase_against_latest_main]]).
+**Diff-vs-main drift check at the top of every round.** Before fetching unresolved threads, run `git fetch origin main && git log --oneline HEAD..origin/main` — if main has advanced, rebase the branch onto current main, run `git push --force-with-lease`, then `HEAD_SHA=$(git rev-parse HEAD)` and **re-enter Phase 2a** (not Phase 2b) — the push re-triggers the bot workflow on the new HEAD and Phase 2b must not run until that new run completes, or it would fetch threads produced against the pre-rebase HEAD. A long-running autonomous loop is the exact scenario where a stale base silently reverts merges that landed on main mid-loop.
 
 **If the rebase produces conflicts, break the loop immediately.** Do not push. Surface the conflict to the user (show `git status` and the conflicting file list) and ask whether to (a) abort the rebase (`git rebase --abort`) and continue from the pre-rebase HEAD, (b) resolve conflicts manually before resuming, or (c) abandon the round. Same close-out flow as exit condition 2 (bot run failed): automation hit a hard stop, surface, don't auto-retry.
 
 **Constraints that hold across the loop:**
 
-- **Never auto-mark-ready, never auto-merge.** This rule survives autonomous mode unchanged. The loop fixes findings; the user decides when to merge.
+- **Never auto-mark-ready, never auto-merge.** This rule survives autonomous mode unchanged. The loop fixes findings; the caller (`/implement` on an authorized run, or the user) decides when to merge — and a merge always goes through `fleet merge <n>` (never bare `gh pr merge`), whose gates re-check the review body at the pinned head SHA.
 - **Stop on test or clippy failure.** Per Phase 2d step 5 — a failed verification breaks the loop. Surface the failure to the user instead of pushing a broken SHA into the next round.
 - **Skip Phase 2c each round.** No per-thread triage; every bot finding is fix-bound.
 - **Class-level sweep applies every round.** The bot's findings narrow over time but the diff grows; rerun the full Quality-checklist sweep across every changed file each round, not just the file the new threads anchor to.
 
 ## Quality checklist
 
-The substantive content the assistant works through in both modes. Each item is a category of issue that's bitten this codebase before — see `feedback_*.md` memories for the recurring patterns.
+The substantive content the assistant works through in both modes. Each item is a category of issue that recurs on AI-assisted changes.
 
-1. **Slice / PR / issue references in source comments.** Saved feedback: "Don't reference slice/PR/issue numbers in code comments; they rot. Planning context belongs in the PR description and epic body." Grep changes for `slice \w+`, `PR #\d+`, `issue #\d+`, bare `#\d+`, and URLs to GitHub issues inside `///` or `//` comments.
+1. **Slice / PR / issue references in source comments.** Don't reference PR/issue numbers in code comments; they rot. Planning context belongs in the PR description and epic body. Grep changes for `PR #\d+`, `issue #\d+`, bare `#\d+`, and URLs to GitHub issues inside `///` or `//` comments.
 
 2. **Doc/code drift.** Module-level and function-level docs that reference values now made configurable, parameter names that moved, or behavioural claims invalidated by recent changes. Common shape: a function is refactored to take a new parameter, but the doc-comment still describes the old hardcoded value.
 
-3. **Duplicated constants across modules.** If a string literal appears in N places (`"plonk.tools"`, `"trust-anchor.crt"`, namespace label keys, port numbers, etc.) there should be one `pub` or `pub(super)` constant and the rest should `use` it. Without this, a rename silently drifts.
+3. **Duplicated constants across modules.** If a string literal appears in N places (content types like `application/x-flatbuffers`, header names, route paths, endpoint paths like `/openapi.json` / `/schema.bfbs`, port numbers) there should be one `pub` or `pub(super)` constant and the rest should `use` it. Without this, a rename silently drifts.
 
-4. **Hardcoded values that should be configurable.** Network addresses, DNS suffixes, ports, intervals, lifetimes — anything a real-world deployment might reasonably override should thread through `OperatorConfig` with an env var, default, and validation. The `.svc.cluster.local` regression on the mesh-config distributor is the canonical example of a silent breakage on clusters with custom `--cluster-domain`.
+4. **Hardcoded values that should be configurable.** Bind addresses, ports, broker URLs, intervals, retry counts — anything a real deployment might reasonably override should thread through the service's config type with an env var, default, and validation, not sit inline where only a rebuild changes it.
 
-5. **Error type quality.** `Result<_, String>` blocks `?` propagation and forces `.map_err(|e| format!(...))` chains throughout the call site. The codebase convention is a small `thiserror` enum (mirrors `TrustAnchorError`, `TokenError`, `ReconcileError`).
+5. **Error type quality.** `Result<_, String>` blocks `?` propagation and forces `.map_err(|e| format!(...))` chains throughout the call site. The codebase convention is a small `thiserror` enum per failure surface (the pattern the framework's own error types follow).
 
-6. **Observability gaps.** Spans wrapping infinite loops never close — instrument each iteration, not the loop. Important state transitions logged at INFO when they need WARN (production log pipelines filter INFO). Discarded return values that carry production signal (`distribute_to_namespaces` returns a count for a reason).
+6. **Observability gaps.** Spans wrapping infinite loops never close — instrument each iteration, not the loop. Important state transitions logged at INFO when they need WARN (production log pipelines filter INFO). Discarded return values that carry production signal.
 
 7. **Wire format / shared interface drift.** Field names that appear as literals in producer + consumer + test should be `pub(super) const`s referenced from all three. A rename in one place that doesn't update the others is silent breakage at runtime.
 
-8. **Test gaps for boundary conditions.** Empty input, max input, error paths, and the implicit-success branch of conditionals. The `attempted == 0` no-op-cycle pin in `mesh_config_distributor` is canonical: a refactor to `applied == 0` alone would WARN on every empty cluster, but no test would have caught it without an explicit pin.
+8. **Test gaps for boundary conditions.** Empty input, max input, error paths, and the implicit-success branch of conditionals. The dangerous refactor is the one that changes a boundary's behaviour (a `== 0` no-op case, an empty-collection early return) without any test pinning the old contract — pin the boundary explicitly so the next refactor can't move it silently.
 
-9. **Comments that explain WHAT instead of WHY.** CLAUDE.md is explicit: "Don't explain WHAT the code does, since well-named identifiers already do that." Comments should explain non-obvious decisions, hidden constraints, surprising behaviour, or workarounds for specific bugs.
+9. **Comments that explain WHAT instead of WHY.** AGENTS.md is explicit: "Don't explain WHAT the code does, since well-named identifiers already do that." Comments should explain non-obvious decisions, hidden constraints, surprising behaviour, or workarounds for specific bugs.
 
-10. **Reactive vs comprehensive.** When fixing any one comment, sweep every file in the change set, not just the file the comment is anchored to. The issue the reviewer flagged usually has siblings — and they often live in a different file the reviewer didn't pin a comment on. `feedback_class_level_fixes.md` captures this for both regression fixes ("grep siblings with the same wire shape") and review-comment fixes ("PR #215 round on `7d081c5` fixed the bot's 'not yet landed' phrase in `tests/e2e/identity.rs:13` but missed `services/trust_anchor.rs:58` ('not yet built') in the same diff because the sweep stayed within-file"). Within-file sweeps are the failure mode this checklist exists to break.
+10. **Reactive vs comprehensive.** When fixing any one comment, sweep every file in the change set, not just the file the comment is anchored to. The issue the reviewer flagged usually has siblings — and they often live in a different file the reviewer didn't pin a comment on: grep the change set for the same phrase, the same wire shape, the same pattern. Within-file sweeps are the failure mode this checklist exists to break.
 
 11. **Forward-looking / speculative claims in comments.** Phrases like "future X tooling will...", "slice 6b's injector needs...". These rot. Describe the *property* (single source of truth, contract, invariant) without naming speculative consumers.
 
-12. **Rust API hygiene.** Idiomatic Rust hardening that lives outside CLAUDE.md but that the `claude[bot]` reviewer catches reliably. Self-review should walk these too:
+12. **Rust API hygiene.** Idiomatic Rust hardening that lives outside AGENTS.md but that the `claude[bot]` reviewer catches reliably. Self-review should walk these too:
     - **`#[must_use]` on return values that drive control flow.** Versions, cursors, `RequestOutcome`-like enums, nonces — anything whose discarding leaves the caller without a signal it was supposed to consume. Without the attribute, `let _ = f();` is silent; with it, a missed binding fails the build.
-    - **Visibility scoping — lowest that compiles wins.** A struct with a private container (e.g. `WorldState::by_type` is private) doesn't need `pub` fields; `pub(super)` keeps the push loop's access while preventing a future accessor from leaking internals as crate-wide stable API.
+    - **Visibility scoping — lowest that compiles wins.** A struct whose container is already private doesn't need `pub` fields; `pub(super)` keeps the internal caller's access while preventing a future accessor from leaking internals as crate-wide stable API — which matters double in a published library, where `pub` is a semver commitment.
     - **Intra-doc link syntax.** `[`name`]` resolves against free functions / modules in scope; method links must be explicit: `[`Type::method`]` or `[`name`](Self::name)`. Bare method names render as plain text and rustdoc warns "unresolved link."
     - **`#[tokio::test]` flavor.** The default is single-threaded — `tokio::join!` cooperates rather than parallelises. Tests claiming to exercise concurrency need `flavor = "multi_thread", worker_threads = N` AND `tokio::spawn` per future so they actually land on separate threads.
     - **`JoinHandle` error handling.** `let _ = tokio::join!(a, b)` silently drops `JoinError`s, including panics. Use `let (res_a, res_b) = tokio::join!(a, b); res_a.expect(...); res_b.expect(...)` so a panicking spawned task surfaces as a test failure.
     - **`HashMap::entry().or_default()` side effects.** Calling `.entry(k).or_default()` *before* an early return inserts a phantom entry. Functional accessors may still behave correctly, but `contains_key` is no longer a reliable proxy for "subscribed." Use `get_mut` on early-return paths; reserve `entry().or_default()` for create-on-write semantics.
 
-13. **Symmetric-branch sweep.** When fixing one match arm or one direction of a paired API, audit the others for the same behaviour. The xDS NACK path not updating `subscribed_names` while the ACK path did was a real protocol correctness bug; `remove_cluster_does_not_cascade_to_endpoints` needed the EDS-side mirror. Always ask "if branch X does this, should branch Y also?"
+13. **Symmetric-branch sweep.** When fixing one match arm or one direction of a paired API, audit the others for the same behaviour. flatbed's canonical pairs: the JSON and FlatBuffer codec paths of the same route, serialize/deserialize of the same message, the Rust server side and the TS client side of one wire contract, `/healthz` vs `/readyz` handling. A fix that lands on one side of a pair and not the other is a silent wire bug. Always ask "if branch X does this, should branch Y also?"
 
 14. **Re-read the diff after applying any fix.** AI-assisted patches commonly introduce drift adjacent to the fix — a doc-comment edit that adds a forward-looking phrase while removing one, an unused import left after a rewrite, a comment field name that drifted from the new code, a `let _ = ` site that the new `#[must_use]` exposes. `git diff` (not just the new file contents) before push, walking the *changed* lines with the checklist in mind, catches them.
 
-15. **Doc-grounded verification for unfamiliar semantics.** When a fix involves an expression operator (type coercion, `==`/`!=`, logical operators on possibly-null inputs), a context variable (`github.event_name`, `inputs.X`, `needs.X` across invocation modes), an external resource shape (k8s `Deployment` vs `StatefulSet` condition types, Docker manifest formats, OCI image index vs schema-v2), or any other behaviour whose rules aren't visible in the code being changed: **stop and read the official docs before writing the fix**. Walk every input case (typically boolean true / boolean false / null / string / missing) through the documented rules and write down the expected result for each before committing to an expression. The cost is one doc-fetch round; the alternative is a multi-round review loop where each speculative fix introduces or preserves the same shape of bug because the underlying assumption was never validated. PR #377 ran four review rounds because the round-1 fix to a notify-suppression bug used `inputs.X != 'false'`, which under documented GitHub Actions coercion (`boolean → number`, `string → NaN`) evaluates as `0 != NaN` → `true` on the orchestrator-suppress case (i.e. the exact bug round 1 was supposed to fix). The doc-grounded re-audit on round 5 — fetching the GH expression-operator docs and walking every case — produced a `!inputs.suppress_X` form that worked unambiguously, closing the loop. The recipe is: when a fix touches semantics rather than logic, the docs come BEFORE the keyboard. See [[verify-dont-guess-semantics]].
+15. **Doc-grounded verification for unfamiliar semantics.** When a fix involves an expression operator (type coercion, `==`/`!=`, logical operators on possibly-null inputs), a context variable (`github.event_name`, `inputs.X`, `needs.X` across invocation modes), an external resource shape (k8s `Deployment` vs `StatefulSet` condition types, Docker manifest formats, OCI image index vs schema-v2), or any other behaviour whose rules aren't visible in the code being changed: **stop and read the official docs before writing the fix**. Walk every input case (typically boolean true / boolean false / null / string / missing) through the documented rules and write down the expected result for each before committing to an expression. The cost is one doc-fetch round; the alternative is a multi-round review loop where each speculative fix introduces or preserves the same shape of bug because the underlying assumption was never validated. A worked illustration of the trap: `inputs.X != 'false'` under documented GitHub Actions coercion (`boolean → number`, `string → NaN`) evaluates as `0 != NaN` → `true` on the very case it was meant to exclude — the fix that survives is the one derived by walking the documented rules (`!inputs.X`), not the one that pattern-matched. When a fix touches semantics rather than logic, the docs come before the keyboard.
 
 ## Rules
 
@@ -324,9 +330,9 @@ The substantive content the assistant works through in both modes. Each item is 
 - **Reply on inline threads with the commit SHA** that actually contains the fix. The SHA-in-reply is what makes a fix verifiable end-to-end.
 - **Resolve every thread you reply to** (Phase 2d step 7 / Phase 2e step 3). The next round's "unresolved bot threads" GraphQL query IS the working set — leaving threads open re-introduces the timestamp/pagination filter-drift class of bugs that have caused post-merge misses in prior rounds. SHA-reply without resolution is half a fix.
 - **One comprehensive commit per file or logical unit** — not one commit per inline thread. The point of the holistic read is that fixes group naturally; the commit should reflect that grouping.
-- **Run `cargo fmt`, `cargo clippy`, and the relevant `cargo test`** before pushing. CLAUDE.md is non-negotiable on these.
-- **For changes touching the operator runtime, run `make e2e-full`** before declaring done. CLAUDE.md is also non-negotiable on this.
-- **Never auto-merge or auto-mark-ready** even if every thread is addressed, even in `--auto` mode. The user does that.
+- **Run `cargo fmt`, `cargo clippy`, and the relevant `cargo test`** before pushing. AGENTS.md is non-negotiable on these.
+- **For changes touching the `nats`/`kv` worker layer, run the broker-backed suite** before declaring done — the plain workspace run is broker-free by design and cannot exercise those paths.
+- **Never auto-merge or auto-mark-ready** even if every thread is addressed, even in `--auto` mode. The caller decides; merges go through `fleet merge <n>`.
 - **Never skip a bot thread without explicit user direction.** A finding the assistant disagrees with should be declined with reasoning (Phase 2e), not silently dropped. Phase 2c is the dedicated triage step where the user picks fix vs decline per thread. **Invocation with `--auto` is itself the explicit user direction** to treat every bot finding as fix-bound — that mode skips Phase 2c by design, but the assistant still posts a reply (with the SHA) on every addressed thread, so nothing is silently dropped from the bot's perspective.
 - **Autonomous loop: treat ambiguous as red; exit only on clearly green.** If the latest round's verdict is ambiguous ("LGTM but consider X", "minor nit", "optional"), apply the suggestion and run another round rather than declaring the loop done. The loop ends on a clearly green review or on user direction.
 - **Re-read the `git diff` after every fix** before pushing, walking the changed lines through the checklist again. AI-assisted patches reliably introduce adjacent drift (an "if a future…" phrase added while removing another, a stale import, a comment field name that drifted) — one pass of `git diff` catches them and saves a re-review round.

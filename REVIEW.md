@@ -135,3 +135,32 @@ one round.
 
 Only post GitHub comments — don't submit review text as
 messages.
+
+## Verdict marker (mandatory)
+
+Every top-level verdict comment you post MUST end with a
+machine-readable verdict line, alone on its own final line,
+in exactly one of these two forms:
+
+```
+Verdict: clean
+```
+
+when nothing in the diff blocks the merge, or
+
+```
+Verdict: findings
+```
+
+when you have enumerated one or more findings that the
+author must address or acknowledge. Emit `Verdict: findings`
+whenever your comment lists any `Finding N`; emit `Verdict:
+clean` only when the round introduces no blocking finding.
+
+This line is consumed verbatim by the merge gate
+(`scripts/merge-gates/review-body`), which reads it before
+any prose heuristic. Phrasing the clearance a hundred
+different ways is fine for the human reader — the marker is
+what the gate keys on, so it is not optional and its exact
+spelling (`Verdict: clean` / `Verdict: findings`) must not
+drift.

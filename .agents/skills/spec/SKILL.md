@@ -1,3 +1,8 @@
+---
+name: spec
+description: Create a feature spec with a GitHub epic and a Steps implementation plan.
+---
+
 # /spec — Create a Feature Spec with GitHub Issues
 
 ## Description

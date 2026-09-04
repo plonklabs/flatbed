@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# flatbed's `fleet merge` ci-green gate.
+#
+# The branch ruleset only requires fmt/clippy/test, so fleet's built-ins
+# alone would merge over a red nats-integration, check-generated, examples,
+# flatbed-client, codec-compat, or flatbed-client-e2e job. This gate requires
+# the whole CI workflow to have a completed-successful run at the pinned head
+# SHA.
+#
+# Contract (fleet's executable-gate seam):
+#   stdin  : PR-context JSON `{pr, head_sha, base, repo, acks: [..]}`.
+#   stdout : a human-readable reason, printed verbatim into the merge audit.
+#   exit   : 0 = pass, nonzero = refuse. Fail closed on anything ambiguous.
+set -euo pipefail
+
+context="$(cat)"
+repo="$(jq -r '.repo' <<<"$context")"
+head_sha="$(jq -r '.head_sha' <<<"$context")"
+
+runs="$(gh run list --repo "$repo" --commit "$head_sha" --workflow CI \
+    --json status,conclusion --limit 20)"
+
+total="$(jq 'length' <<<"$runs")"
+if [ "$total" -eq 0 ]; then
+    echo "no CI workflow run found at head SHA $head_sha"
+    exit 1
+fi
+
+# A re-run leaves the failed attempt in the list; any completed-successful
+# run at this exact SHA is the signal. An in-flight run with no success yet
+# is a wait, not a clearance.
+success="$(jq '[.[] | select(.status == "completed" and .conclusion == "success")] | length' <<<"$runs")"
+pending="$(jq '[.[] | select(.status != "completed")] | length' <<<"$runs")"
+
+if [ "$success" -gt 0 ]; then
+    echo "CI workflow completed success at head ($success of $total run(s))"
+    exit 0
+fi
+if [ "$pending" -gt 0 ]; then
+    echo "CI workflow still running at head ($pending in flight, none successful yet)"
+    exit 1
+fi
+echo "CI workflow red at head: $total run(s), none concluded success"
+exit 1
