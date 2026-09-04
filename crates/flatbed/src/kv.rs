@@ -12,11 +12,12 @@
 //!
 //! ## Subscription semantics
 //!
-//! `async-nats`'s `kv::Store::watch_all()` (0.38+) emits **every
-//! current entry first** (a key-inventory replay), then live `Put` /
-//! `Delete` / `Purge` events. That's how every-pod boot rehydration
-//! works for free — a freshly-started pod sees the same state as one
-//! that's been running for hours.
+//! `kv::Store::watch_all()` watches with deliver-policy *new*: only
+//! `Put` / `Delete` / `Purge` events occurring after the watch is
+//! established are delivered. Entries written earlier are **not**
+//! replayed, so a pod starts with an empty local view and converges
+//! only as keys are rewritten. A worker that needs the bucket's
+//! existing contents at startup must read them itself.
 //!
 //! ## Error handling
 //!
