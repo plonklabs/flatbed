@@ -113,6 +113,7 @@ per-seat NATS brokers mean there is **no serialized test bench**.
   | `heavy`      | `claude-opus-5`             | `opus`                      |
   | `light`      | `claude-sonnet-5`           | `sonnet`                    |
   | `mechanical` | `claude-haiku-4-5-20251001` | `haiku`                     |
+  | `analysis`   | `claude-fable-5`            | `fable`                     |
 
   The Agent tool's `model` parameter only knows family aliases, so the
   version pin is enforced by the round trip, not by the spawn: the push
@@ -134,6 +135,10 @@ per-seat NATS brokers mean there is **no serialized test bench**.
     clear edges.
   - `mechanical` — purely mechanical chores with zero judgment (verbatim
     transcriptions, bulk label churn), rarely worth a worker.
+  - `analysis` — a read-and-report dispatch (`--kind research` or `audit`)
+    that produces findings rather than a branch. An `/implement` dispatch
+    never uses this tier; a seat that is delivering a PR is on one of the
+    three above.
 
   When in doubt between two tiers, take the cheaper one — the blocked
   protocol catches a worker that's out of its depth, and re-dispatching one
