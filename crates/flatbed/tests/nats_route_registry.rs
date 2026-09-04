@@ -62,8 +62,7 @@ fn token_segments_register_as_wildcards_with_their_capture_indexes() {
 }
 
 /// Each responder also registers as a worker, which is what makes
-/// `Flatbed::run` spawn it — registration without this would compile and
-/// then answer nothing.
+/// `Flatbed::run` spawn it.
 #[test]
 fn each_responder_registers_a_worker_that_runs_it() {
     let names: Vec<&str> = flatbed::get_workers().iter().map(|w| w.name).collect();

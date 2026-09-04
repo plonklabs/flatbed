@@ -82,8 +82,8 @@ fn parse_subject(pattern: &str) -> Result<SubjectPattern, String> {
                      whole '{{token}}' segment at '{token}'"
                 ));
             }
-            // The broker rejects these at subscribe time, which would surface
-            // as a worker failure and a restart loop instead of a build error.
+            // The broker rejects a subject carrying whitespace at subscribe
+            // time.
             if token.chars().any(|c| c.is_whitespace() || c.is_control()) {
                 return Err(format!(
                     "subject '{pattern}' token '{token}' contains whitespace"
@@ -156,8 +156,8 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 
     // The wrapper calls the handler with no turbofish and exactly one
-    // argument, so a generic or multi-parameter signature would fail to
-    // compile with the error spanned at generated code.
+    // argument, so any other signature fails to compile with its error
+    // spanned at generated code rather than at the declaration.
     if !fn_sig.generics.params.is_empty() || fn_sig.generics.where_clause.is_some() {
         return syn::Error::new_spanned(&fn_sig.generics, "nats_route handler must not be generic")
             .to_compile_error()
@@ -242,8 +242,8 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let response_type_str = &response_info.body_type_str;
 
     let wrapper_name = syn::Ident::new(&format!("__nats_handler_{fn_name}"), fn_name.span());
-    // Derived from the handler's name verbatim: uppercasing it would collide
-    // for two handlers whose names differ only in case.
+    // The handler's name is used verbatim: uppercasing it collides for two
+    // handlers in one module whose names differ only in case.
     let route_const = syn::Ident::new(&format!("__NATS_ROUTE_{fn_name}"), fn_name.span());
 
     let wire_subject = pattern.wire;

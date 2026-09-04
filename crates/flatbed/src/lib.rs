@@ -35,7 +35,6 @@ pub mod nats;
 #[cfg(feature = "nats")]
 pub use nats::{run_stream_worker, HasJetStream, HasNatsClient, NatsResult, StreamWorker};
 
-// Core-NATS request-reply responders (enabled with "nats" feature)
 #[cfg(feature = "nats")]
 pub mod nats_route;
 #[cfg(feature = "nats")]

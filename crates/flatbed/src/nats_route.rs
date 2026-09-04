@@ -329,9 +329,9 @@ fn copy_headers(source: &HeaderMap) -> HeaderMap {
     headers
 }
 
-/// A header value may not carry a control character, so an error message
-/// quoting a multi-line payload would otherwise be dropped from the reply
-/// rather than carried in a mangled form.
+/// `http` rejects a header value containing a control character, so values
+/// are flattened to stay carryable — an error message quoting a multi-line
+/// payload is one.
 fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
     let flattened: String = value
         .chars()
@@ -716,8 +716,7 @@ mod tests {
     }
 
     /// A header value cannot carry a control character, so a multi-line error
-    /// message has to be flattened rather than dropped — a reply missing
-    /// `x-error-message` would leave the requester without the reason.
+    /// message reaches the requester flattened rather than not at all.
     #[test]
     fn a_multi_line_error_message_is_flattened_onto_the_header() {
         let err = FlatbedRouteError::bad_request("line one\nline two\r\tend").code("BAD");

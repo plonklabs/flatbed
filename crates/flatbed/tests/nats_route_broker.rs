@@ -572,8 +572,7 @@ async fn slow(
 const HANDLER_DELAY: Duration = Duration::from_millis(500);
 
 /// Each message is dispatched on its own task, so a slow handler holds up only
-/// its own reply. Serialized dispatch would take at least `n * HANDLER_DELAY`
-/// for `n` in-flight requests.
+/// its own reply.
 #[tokio::test]
 #[ignore]
 async fn a_slow_handler_does_not_stall_the_subscription() {
