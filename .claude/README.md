@@ -15,7 +15,8 @@ This directory contains only Claude-native mechanics:
 - `skills/` provides tracked symlinks for slash-command discovery; authored
   workflows live in `.agents/skills/`.
 - `agents/` defines the FleetView-selectable persistent worker sessions
-  (`worker-flatbed1..3`), including native frontmatter and Claude model pins.
+  (`worker-flatbed1..3`), including native frontmatter; they carry no model
+  pin, since the model is chosen per dispatch by the fleet tier schedule.
 - `settings.json` is checked in and team-wide: the auto-compact keys and
   three hooks whose scripts live in `hooks/`. The `PreCompact` hook injects
   the orchestrator skill's Session-economy contract into the compaction

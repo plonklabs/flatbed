@@ -25,17 +25,6 @@ than treating the issue as a mechanical checklist.
   conventions, invariants, and the agreed design.
 - Make bounded local implementation decisions when they do not change the
   material architecture or intended outcome.
-- Deliver what the issue asked for, at the scope it intended. If you conclude
-  the ask is mistaken or a better approach exists, say so in the status
-  report and keep going with the task as asked — don't quietly narrow,
-  widen, or transform it. Report completion only when the whole task is
-  done; if something genuinely can't be finished, do the rest and state
-  plainly what's missing and why.
-- Delegate to subagents rarely: each one re-establishes context, re-explores,
-  and reports back, so the payoff must clearly exceed that overhead. A wide
-  independent multi-file investigation qualifies; a few reads, a small edit
-  batch, or verifying your own work does not — verification belongs in your
-  main loop.
 - Keep the pull-request description and verification evidence truthful as
   the implementation evolves.
 - Own test adequacy for the change shape: bugs need a pre-fix reproducer;
@@ -56,6 +45,64 @@ Every seat tests in parallel with the others — there is no shared bench:
   `NATS_URL=$(scripts/nats-broker.sh url)`. Never point a worktree at another
   seat's broker or the shared default port — the tests use fixed stream
   names, so a shared broker cross-contaminates.
+
+## Working style
+
+The assignment sets the scope, and the scope is the deliverable: do not
+quietly narrow, widen, or swap it. Make routine judgment calls yourself and
+check in only when different readings would lead to materially different
+work. A pre-existing bug, a performance concern, or behavior the task does
+not mention is a follow-up to report in the close-out, not a change to make
+in this PR, unless the requested behavior cannot work without it. Commit
+tests only where the task asks for them or the repository already keeps
+tests for this kind of change, sized like the neighboring test files;
+scratch checks are not turned into permanent test files.
+
+Verify your work however you like as you go. Do not add separate
+verification passes, re-check steps, or verifier subagents on top of that:
+the gates (`cargo fmt`, `cargo clippy`, `cargo test --workspace`,
+`scripts/check-generated.sh` where the schema surface moved, the
+broker-backed NATS suite, the review bot) are the verification this
+repository trusts, and extra passes cost tokens without adding signal.
+
+Delegate to a subagent only for a large, genuinely independent track of work
+such as a wide multi-file investigation. Never delegate work you can finish
+in a handful of tool calls, and never use subagents to verify your own work.
+If one subagent can do it, use one.
+
+Edit files surgically rather than rewriting them when the end result is the
+same; whole-file rewrites cost output tokens and hide the real change in the
+diff.
+
+Communicate in this shape: before the first tool call, one line on what you
+are about to do; while working, a brief update only when you find something
+important or change direction; at the end, lead with the outcome. The
+close-out report answers what happened, where it lives (branch, PR, SHA),
+and what is required next, in a few short paragraphs. Match the length of PR
+descriptions and issue comments to what the reader needs: the substance,
+without filler sections, restated context, or boilerplate.
+
+## Model notes
+
+The prompts in this repository are tuned per model version. Apply the
+subsection for the model you are running as; if it is not listed here, say
+so in your first status report instead of guessing which notes apply.
+
+### Claude Opus 5
+
+You verify and self-correct as you work; the working-style section already
+rules out extra verification passes. Only correct an earlier statement when
+the error would change the reviewer's code, conclusions, or decisions; state
+such corrections plainly and briefly, then continue. Keep each turn's
+user-facing text to the cadence the working-style section describes.
+
+### Claude Sonnet 5
+
+You apply instructions literally and at their stated scope, which is what
+the dispatch relies on: a dispatch names what is in scope, what is out, and
+whether a rule applies to every instance of a pattern. When a dispatch is
+silent on scope and two readings would produce materially different work,
+that is the escalation case below, not a guess.
 
 ## Escalation boundary
 

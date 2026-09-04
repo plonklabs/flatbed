@@ -46,7 +46,7 @@ gh pr view "$PR_NUMBER" --json isDraft,state,headRefOid,headRefName
 
 2. **Read the FULL files involved**, not just the diff hunks. The "read just the diff" pattern produces pinpoint comments and misses class-level issues. For each file the diff touches, open it end to end.
 
-3. **Walk the [Quality checklist](#quality-checklist)** against the changes. For every item, ask: does this PR introduce or worsen this category of issue?
+3. **Walk the [Quality checklist](#quality-checklist)** against the changes. For every item, ask: does this PR introduce or worsen this category of issue? Report every issue you find, including ones you are uncertain about or consider low-severity; do not filter for importance or confidence at this stage. The severity grouping below is the ranking step, and it is better to surface a finding the developer discards than to silently drop a real bug. Attach a confidence level to each finding.
 
 4. **Print findings in the chat**, grouped by file and severity:
    - **Blocking** — real correctness bugs, security issues, broken tests
