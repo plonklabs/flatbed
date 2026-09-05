@@ -729,6 +729,128 @@ async fn test_boot_lifecycle_probes() {
     server_handle.abort();
 }
 
+/// A readiness gate drives the probes for the rest of the process's life,
+/// after the one-shot boot latch has stopped moving:
+/// - During boot: the latch is what readiness waits on, so a registered gate
+///   does not rename the answer.
+/// - After boot, gate closed: /readyz → 503 naming it, user routes → 503
+///   `NOT_READY`.
+/// - Gate open → 200; closed again → 503, without a second boot.
+#[tokio::test]
+async fn test_readiness_gate_probes() {
+    use flatbed::{Flatbed, FlatbedConfig, Readiness};
+    use tokio::sync::oneshot;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let readiness = Readiness::new();
+    let gate = readiness.gate("broker");
+
+    let telemetry: Arc<dyn flatbed::TelemetryService> = Arc::new(StubTelemetryService);
+    let config = FlatbedConfig::new("Test API")
+        .host("127.0.0.1")
+        .port(port)
+        .readiness(readiness)
+        .with_telemetry(telemetry);
+
+    let (boot_tx, boot_rx) = oneshot::channel::<()>();
+    let server_handle = tokio::spawn(async move {
+        Flatbed::run(config, |_config| async move {
+            let _ = boot_rx.await;
+            Ok(())
+        })
+        .await
+    });
+
+    let base = format!("http://127.0.0.1:{}", port);
+    let client = reqwest::Client::new();
+
+    for _ in 0..100 {
+        if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+            .await
+            .is_ok()
+        {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    }
+
+    let readyz = |client: reqwest::Client, base: String| async move {
+        let resp = client.get(format!("{}/readyz", base)).send().await.unwrap();
+        (resp.status().as_u16(), resp.text().await.unwrap())
+    };
+    let ping = |client: reqwest::Client, base: String| async move {
+        let resp = client
+            .post(format!("{}/api/ping", base))
+            .header("content-type", "application/json")
+            .body(r#"{"message":"gate","value":1}"#)
+            .send()
+            .await
+            .unwrap();
+        (resp.status().as_u16(), resp.text().await.unwrap())
+    };
+
+    // A gate registered before boot must not make an unfinished boot look
+    // like a lost dependency.
+    let (status, body) = readyz(client.clone(), base.clone()).await;
+    assert_eq!(status, 503, "/readyz is 503 during boot");
+    assert_eq!(
+        body, "Not Ready",
+        "the boot latch, not a gate, holds it down"
+    );
+
+    let (status, body) = ping(client.clone(), base.clone()).await;
+    assert_eq!(status, 503, "user routes are 503 during boot");
+    assert!(
+        body.contains("BOOTING"),
+        "an unfinished boot reports BOOTING, got {body}"
+    );
+
+    boot_tx.send(()).unwrap();
+
+    // Booted with the gate still closed: the gate is now the whole answer.
+    let mut named = false;
+    for _ in 0..100 {
+        if readyz(client.clone(), base.clone()).await.1 == "Not Ready: broker" {
+            named = true;
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    }
+    assert!(named, "/readyz should name the gate holding it down");
+
+    let (status, body) = ping(client.clone(), base.clone()).await;
+    assert_eq!(status, 503, "user routes are 503 behind a closed gate");
+    assert!(
+        body.contains("NOT_READY") && body.contains("broker"),
+        "a closed gate reports NOT_READY and names itself, got {body}"
+    );
+
+    gate.set_ready(true);
+    assert_eq!(
+        readyz(client.clone(), base.clone()).await,
+        (200, "Ready".to_string()),
+        "an open gate on a booted server is ready"
+    );
+    assert_eq!(
+        ping(client.clone(), base.clone()).await.0,
+        200,
+        "user routes serve once the gate opens"
+    );
+
+    // The gate is not one-shot: it closes again without a second boot.
+    gate.set_ready(false);
+    assert_eq!(
+        readyz(client.clone(), base.clone()).await,
+        (503, "Not Ready: broker".to_string()),
+        "a gate that closes again takes readiness with it"
+    );
+
+    server_handle.abort();
+}
+
 /// HEAD requests to built-in endpoints (splash, healthz/readyz, openapi.json,
 /// schema.bfbs) put the same `Content-Length` header on the wire as GET but
 /// no body bytes, over both HTTP/1.1 and HTTP/2.

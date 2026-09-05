@@ -284,6 +284,54 @@ unreachable subject to `502` and a silent one to `504`. Nothing subscribed is
 `NoResponders`, distinct from the `Timeout` a responder that never answers
 produces.
 
+## Holding the NATS connection (optional)
+
+`Connector` owns the connection lifecycle a boot function would otherwise
+hand-roll, and reports the connection's state into readiness.
+
+```rust
+Flatbed::run(config, |cfg| async move {
+    let nats = flatbed::nats::Connector::new("nats://broker:4222")
+        .credentials_file("/etc/nats/user.creds")
+        .readiness(cfg.readiness.gate("nats"))
+        .connect_with_retry()
+        .await?;
+
+    Ok(AppContext { nats })
+})
+.await
+```
+
+The first connect is retried with a capped, jittered backoff under a bounded
+budget, so a broker that has not started yet is waited out while a
+misconfigured address still fails the boot instead of hanging forever. A
+credentials file is read at connect time, so a missing secret mount is a
+connect error rather than a panic at startup.
+
+Readiness is two things: the one-shot boot latch, and any number of *gates*.
+A gate is a named dependency that can come and go for the life of the process
+— `/readyz` returns 200 only when the boot latch is set and every gate is
+ready, and names the blocking gates in its 503 body.
+
+A closed gate 503s the whole HTTP surface, not just `/readyz`: declared
+routes and static files alike, the way they already do during boot, so
+readiness stays one notion rather than two that can disagree. Size a gate
+accordingly — gating on NATS takes the SPA and every unrelated route down
+with it, which is right for a service that cannot do its job without the
+broker and wrong for one that can. Workers are the exception: they keep
+running behind a closed gate, since the worker re-establishing a dependency
+would otherwise be gated on itself.
+
+The connector opens the gate it is given while connected and closes it while
+disconnected, draining, or closed, so a dropped broker connection takes the
+pod out of its Service endpoints for the interval it is down. A link that
+closes its socket is noticed at once; one that dies silently — a partition, a
+dropped conntrack entry — is noticed a few ping intervals later, so budget
+tens of seconds there rather than none. Reconnection is unbounded: a broker
+that is away for an hour is waited out rather than giving up on the pod.
+Nothing registers a gate on your behalf — a service with no gates behaves
+exactly as before.
+
 ## Crates
 
 | Crate | Purpose |

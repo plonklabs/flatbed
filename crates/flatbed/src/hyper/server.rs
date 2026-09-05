@@ -85,19 +85,20 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             let _ = shutdown_tx_clone.send(true);
         });
 
-        // Spawn worker launcher that waits for ready signal
-        let mut ready_rx = self.service_ctx.ready_rx.clone();
+        // Workers start on the boot latch alone: a worker whose job is to
+        // establish a gated dependency would never start if it waited on the
+        // gates.
+        let mut booted_rx = self.service_ctx.booted_rx.clone();
         let context = Arc::clone(&self.service_ctx.context);
         let healthz_tx = self.healthz_tx.clone();
         let shutdown_tx_for_workers = shutdown_tx.clone();
 
         tokio::spawn(async move {
-            // Wait for ready signal
             loop {
-                if *ready_rx.borrow() {
+                if *booted_rx.borrow() {
                     break;
                 }
-                if ready_rx.changed().await.is_err() {
+                if booted_rx.changed().await.is_err() {
                     return; // Channel closed, server shutting down
                 }
             }

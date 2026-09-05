@@ -32,8 +32,9 @@ pub struct ServiceContext<C> {
     pub router: Arc<Router>,
     /// Health probe receiver (true = healthy)
     pub healthz_rx: watch::Receiver<bool>,
-    /// Ready probe receiver (true = ready)
-    pub ready_rx: watch::Receiver<bool>,
+    /// Boot latch receiver (true once the boot function has returned a
+    /// context). Readiness is this and every gate in `config.readiness`.
+    pub booted_rx: watch::Receiver<bool>,
     /// User-provided application context (None until boot completes)
     pub context: Arc<RwLock<Option<Arc<C>>>>,
     /// Flatbed configuration
@@ -48,9 +49,36 @@ impl<C> ServiceContext<C> {
         *self.healthz_rx.borrow()
     }
 
-    /// Check if the server is ready to accept requests
+    /// Check if the boot function has completed and the context is stored.
+    ///
+    /// This is the one-shot half of readiness: it never returns to `false`.
+    pub fn is_booted(&self) -> bool {
+        *self.booted_rx.borrow()
+    }
+
+    /// Check if the server is ready to accept requests: booted, and with
+    /// every registered readiness gate reporting its dependency usable.
     pub fn is_ready(&self) -> bool {
-        *self.ready_rx.borrow()
+        self.is_booted() && self.config.readiness.is_ready()
+    }
+
+    /// The gates holding readiness down as a comma-separated list, so a probe
+    /// or an error can tell a lost dependency from a boot that has not
+    /// finished.
+    ///
+    /// `None` covers both halves of the latter: a boot still running is
+    /// waiting on itself, whatever gates it has registered along the way.
+    fn blocked_gates(&self) -> Option<String> {
+        if !self.is_booted() {
+            return None;
+        }
+
+        let blocked = self.config.readiness.blocked_on();
+        if blocked.is_empty() {
+            return None;
+        }
+
+        Some(blocked.join(", "))
     }
 }
 
@@ -59,7 +87,7 @@ impl<C> Clone for ServiceContext<C> {
         Self {
             router: Arc::clone(&self.router),
             healthz_rx: self.healthz_rx.clone(),
-            ready_rx: self.ready_rx.clone(),
+            booted_rx: self.booted_rx.clone(),
             context: Arc::clone(&self.context),
             config: self.config.clone(),
             static_routes: Arc::clone(&self.static_routes),
@@ -167,13 +195,15 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         return response;
     }
 
-    // Return 503 for user routes until server is ready
     if !ctx.is_ready() {
-        return build_error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "BOOTING",
-            "Server is starting up, please retry shortly",
-        );
+        let (code, message) = match ctx.blocked_gates() {
+            Some(gates) => ("NOT_READY", format!("Waiting on {gates}")),
+            None => (
+                "BOOTING",
+                "Server is starting up, please retry shortly".to_string(),
+            ),
+        };
+        return build_error_response(StatusCode::SERVICE_UNAVAILABLE, code, &message);
     }
 
     // Try to match a user-defined route
@@ -347,10 +377,11 @@ fn handle_telemetry_endpoint<C>(
             if ctx.is_ready() {
                 Some(build_text_response(StatusCode::OK, "Ready"))
             } else {
-                Some(build_text_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Not Ready",
-                ))
+                let body = match ctx.blocked_gates() {
+                    Some(gates) => format!("Not Ready: {gates}"),
+                    None => "Not Ready".to_string(),
+                };
+                Some(build_text_response(StatusCode::SERVICE_UNAVAILABLE, &body))
             }
         }
         "/metrics" => match telemetry.get_feed() {
