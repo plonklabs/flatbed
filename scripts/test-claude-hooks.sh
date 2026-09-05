@@ -52,7 +52,9 @@ expect allow "$watch_split"
 expect allow 'gh run list --workflow=claude-review.yml --limit 12 --json databaseId,headSha,conclusion'
 
 # Quoted prose and heredoc bodies merely mentioning a forbidden subcommand
-# are not command position.
+# are not command position. Every guard is checked, not just the GraphQL
+# group: a guard reading the raw command falsely denies a script that writes
+# the forbidden form as text.
 expect allow 'echo "reminder: never run gh pr view or gh issue list here"'
 expect allow 'fleet brief --issue 12 --extra "avoid gh pr view and gh issue list"'
 heredoc_cmd='cat <<EOF
@@ -60,6 +62,22 @@ Remember not to use gh pr view or gh issue list.
 EOF'
 expect allow "$heredoc_cmd"
 expect allow "gh api repos/plonklabs/flatbed/pulls/12 --jq '.title' # not gh issue list"
+expect allow 'echo "always: gh pr create --draft, never a bare gh pr create"'
+expect allow 'fleet brief --issue 12 --extra "do not run gh pr merge 12 --squash"'
+expect allow 'echo "rebase; never git merge origin/main or git pull origin main"'
+release_doc='cat <<EOF
+Release steps:
+  gh pr create --title "release" --body "notes"
+  gh pr merge 12 --squash
+  git merge origin/main
+EOF'
+expect allow "$release_doc"
+
+# Stripping must not let a quoted flag excuse a real command: the flag and the
+# subcommand it qualifies are read from the same stripped text.
+expect deny  'gh pr create --title "uses --draft in the title"'
+expect deny  'gh pr merge 12 --squash --subject "--admin --match-head-commit"'
+expect deny  'git pull origin main # --rebase would have been right'
 
 run 'gh pr view 12' | jq -e '.hookSpecificOutput.permissionDecisionReason | test("pulls/\\{n\\}")' >/dev/null || fail "pr view denial carries no REST form"
 run 'gh pr merge 1' | jq -e '.hookSpecificOutput.permissionDecisionReason | test("fleet merge")' >/dev/null || fail "merge denial carries no reason"
