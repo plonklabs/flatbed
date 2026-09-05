@@ -41,7 +41,8 @@ Once the spec is complete:
 ### Phase 3: Review & Create
 
 1. Present the **full epic issue** for final review
-2. Only after the user explicitly approves, create it using `gh issue create`
+2. Only after the user explicitly approves, create it over REST:
+   `gh api repos/plonklabs/flatbed/issues -f title='<title>' -F body=@<body-file>`
 3. Apply the `📦 epic` label and any relevant component labels
 
 ### Issue Format

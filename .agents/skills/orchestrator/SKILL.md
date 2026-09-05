@@ -31,16 +31,30 @@ project responsibilities. Harness adapters supply native tool names; see
 the shared ledger. If my model and the board disagree, the board wins and I
 re-sync from it (see "Re-sync").
 
-Every session first runs the Bootstrap below. `PLONK_AGENT_ID` and
-`FLEET_AGENT_NAME` are required (fleet's identity env names; loaded from
-`.env`), and this orchestrator manages only tickets carrying its exact
-`orchestrator:<PLONK_AGENT_ID>` label. Missing identity is a stop condition,
-not something to infer.
+Every session first runs the Bootstrap below. `PLONK_AGENT_ID`,
+`FLEET_AGENT_NAME`, and `PLONK_GITHUB_REPOSITORY` are required (fleet's env
+names; loaded from `.env`), and this orchestrator manages only tickets
+carrying its exact `orchestrator:<PLONK_AGENT_ID>` label. Missing identity is
+a stop condition, not something to infer.
 
 The orchestrator stays clean: its tools are `gh`, `fleet`, **read-only** `git`
 inspection, file reading, spawning/messaging worker agents, and monitors. It
 never edits code, commits, or pushes — all of that lives in the worker
 worktrees, never in the main tree.
+
+Every GitHub read or write goes over REST (`gh api repos/{owner}/{repo}/...`);
+the only non-REST calls allowed anywhere in this repo are `gh pr ready` (once
+per PR) and the authorized `gh pr merge <n> --squash --admin
+--match-head-commit <sha>` that step two of the sanctioned merge path issues —
+neither of which the orchestrator ever runs. Named REST forms: `pulls/{n}`
+(state, head, draft, merged), `commits/{sha}/check-runs` (check names `fmt`,
+`clippy`, `test`, `check-generated`, `codec-compat`, `review / review`),
+`issues/{n}/comments` and `pulls/{n}/comments` (review bodies),
+`actions/runs/{id}`. Forbidden: `gh pr view`, `gh pr checks`, `gh pr list`,
+`gh issue list`, `gh issue create`, `gh run view --json`, `gh repo view`, any
+`--watch` — every one wraps GraphQL, and seats polling them in parallel
+tripped the shared user's GraphQL secondary rate limit and sat merges for the
+better part of an hour. This is a load-bearing rule, not a style preference.
 
 ## The workers
 
@@ -73,76 +87,75 @@ per-seat NATS brokers mean there is **no serialized test bench**.
   applies `worker:🤖flatbedN` + `state:🔨active`, and reconciles the ledger
   and board.
 
-**Spawn payload** (Agent tool, when first dispatching to seat N):
+**Dispatch payloads are rendered, never written.** `fleet brief` owns the
+wording of both the spawn dispatch and every re-wake; the orchestrator
+supplies only the per-task facts and sends the rendered text verbatim:
 
-- subagent_type: `worker-flatbedN` — the per-seat definitions in
-  `.claude/agents/` carry the standing contract (worktree pinning, broker
-  isolation, draft-PR workflow).
-- The dispatch message carries the per-task part, always in four sections —
-  a worker should never receive bare steps:
-  - **Goal** — why this work exists and what outcome the user actually
-    wants. The goal is what lets the worker make small in-scope judgment
-    calls correctly.
-  - **Task** — the delegation contract is literally the `/implement` skill:
-    the dispatch tells the worker to run
-    `/implement <issue-or-epic> <extra instructions>`, and the worker owns
-    the **full** loop end-to-end — implementation, review rounds, gates,
-    merge, close-out. The orchestrator is relay-only: it never feeds the
-    loop's phases as separate instructions, never checkpoints the worker
-    between phases, and never runs a phase itself (see the role's "Relay,
-    don't drive"). The assignment ends when `/implement` ends: the issue is
-    CLOSED. "PR delivered" is a phase, not the end — the worker stays on
-    the hook through review rounds, merge, and close-out.
-  - **Guardrails** — the task-specific lines not to cross (scope limits,
-    surfaces not to touch, "report, don't fix" for adjacent problems).
-    Guardrails are constraints, not puzzles.
-  - **Blocked protocol** — on a wall a guardrail or judgment can't resolve:
-    stop, flip the issue to `state:🛑blocked`, and end the turn stating what
-    it hit and what it needs. A stuck worker that stops early is cheap; one
-    that guesses is expensive.
-  - The merge-authority mode for this dispatch (see "Merge authority").
-- **Model selection** — the model is a property of the task, not of the
-  seat. A seat definition (`worker-flatbedN`) pins a worktree and a NATS
-  broker, which is what lets the seats test in parallel; it carries no
-  model. The exact model version is pinned in the fleet provider schedule
-  (`fleet providers list`), and the model notes in the worker role are tuned
-  to those versions:
+```bash
+fleet brief --issue N --capability <heavy|light|mechanical|analysis> \
+  --goal "<why this work exists and the outcome the user wants>" \
+  [--guardrail "<one limit not to cross>"]... \
+  [--scope-in "<...>"] [--scope-out "<...>"] \
+  [--override stop-at-green|skip-lane-b|branch-from=<pr>] \
+  [--extra "<free text appended to the /implement invocation>"]
 
-  | capability   | schedule pins               | Agent tool `model` at spawn |
-  |--------------|-----------------------------|-----------------------------|
-  | `heavy`      | `claude-opus-5`             | `opus`                      |
-  | `light`      | `claude-sonnet-5`           | `sonnet`                    |
-  | `mechanical` | `claude-haiku-4-5-20251001` | `haiku`                     |
-  | `analysis`   | `claude-fable-5`            | `fable`                     |
+fleet brief --rewake --issue N --signal "<what was observed, with SHA / run id / URL>"
+```
 
-  The Agent tool's `model` parameter only knows family aliases, so the
-  version pin is enforced by the round trip, not by the spawn: the push
-  resolves and records the exact version, the spawn passes the alias for
-  that tier, the worker states the model it is running as in its first
-  status line, and `fleet assign --model <exact>` records it and refuses a
-  mismatch against the schedule. A mismatch (an alias that started resolving
-  to a newer version) is the signal to re-tune the model notes before
-  dispatching again, not to carry on.
+The standing contract — that the assignment is `/implement <issue>`, that the
+worker owns the loop through merge and close-out, that "PR delivered" is a
+phase rather than the end, the blocked protocol, the heartbeat cadence — is a
+template constant, so restating it in the message is drift, not emphasis. A
+deviation is expressed as an `--override`; anything not on that list is a
+template change, not a dispatch. A hand-composed dispatch is never correct:
+it either restates the constants (and drifts from them on the next edit) or
+omits one the worker needed.
 
-  Never omit `model` on a spawn: an omitted model inherits the
-  orchestrator's own, the most expensive seat there is.
-  - `heavy` — epics, cross-cutting refactors, the framework runtime, the
-    macro crate, codegen and wire-format surfaces, anything where the
-    mechanism is unknown, the blast radius is large, or design judgment is
-    the actual work.
-  - `light` — well-scoped single-issue work: docs fixes, small CLI bugs with
-    a known mechanism, review-finding cleanups, mechanical refactors with
-    clear edges.
-  - `mechanical` — purely mechanical chores with zero judgment (verbatim
-    transcriptions, bulk label churn), rarely worth a worker.
-  - `analysis` — a read-and-report dispatch (`--kind research` or `audit`)
-    that produces findings rather than a branch. An `/implement` dispatch
-    never uses this tier; a seat that is delivering a PR is on one of the
-    three above.
+The seat definitions in `.claude/agents/worker-flatbed{1..3}.md` carry the
+harness-side contract (worktree pinning, broker isolation, draft-PR workflow);
+the Agent tool's `subagent_type` selects the seat and `model` its tier.
 
-  When in doubt between two tiers, take the cheaper one — the blocked
-  protocol catches a worker that's out of its depth, and re-dispatching one
-  task upward is cheaper than running everything on the top tier.
+### Model selection
+
+The model is a property of the task, not of the seat. A seat definition
+(`worker-flatbedN`) pins a worktree and a NATS broker, which is what lets the
+seats test in parallel; it carries no model. The exact model version is pinned
+in the fleet provider schedule (`fleet providers list`), and the model notes in
+the worker role are tuned to those versions:
+
+| capability   | schedule pins               | Agent tool `model` at spawn |
+|--------------|-----------------------------|-----------------------------|
+| `heavy`      | `claude-opus-5`             | `opus`                      |
+| `light`      | `claude-sonnet-5`           | `sonnet`                    |
+| `mechanical` | `claude-haiku-4-5-20251001` | `haiku`                     |
+| `analysis`   | `claude-fable-5`            | `fable`                     |
+
+The Agent tool's `model` parameter only knows family aliases, so the version
+pin is enforced by the round trip, not by the spawn: the push resolves and
+records the exact version, the spawn passes the alias for that tier, the worker
+states the model it is running as in its first status line, and `fleet assign
+--model <exact>` records it and refuses a mismatch against the schedule. A
+mismatch (an alias that started resolving to a newer version) is the signal to
+re-tune the model notes before dispatching again, not to carry on.
+
+Never omit `model` on a spawn: an omitted model inherits the orchestrator's
+own, the most expensive seat there is.
+
+- `heavy` — epics, cross-cutting refactors, the framework runtime, the macro
+  crate, codegen and wire-format surfaces, anything where the mechanism is
+  unknown, the blast radius is large, or design judgment is the actual work.
+- `light` — well-scoped single-issue work: docs fixes, small CLI bugs with a
+  known mechanism, review-finding cleanups, mechanical refactors with clear
+  edges.
+- `mechanical` — purely mechanical chores with zero judgment (verbatim
+  transcriptions, bulk label churn), rarely worth a worker.
+- `analysis` — a read-and-report dispatch (`--kind research` or `audit`) that
+  produces findings rather than a branch. An `/implement` dispatch never uses
+  this tier; a seat that is delivering a PR is on one of the three above.
+
+When in doubt between two tiers, take the cheaper one — the blocked protocol
+catches a worker that's out of its depth, and re-dispatching one task upward is
+cheaper than running everything on the top tier.
 
 ## The fleet ledger
 
@@ -231,48 +244,74 @@ periodic full reconcile — `fleet board sync` — on `/orchestrator` start
    feature branch (catches unreconciled user interjections). If all are
    busy, apply `state:⏳queued` only — no worker label — and arm a monitor on
    each busy seat's terminal state so the queue drains without user prompts.
-2. **Claim it.** Confirm the orchestrator label, `fleet push` the work task
-   with the `--capability` tier the work needs (the push resolves and
-   records the exact model version), then apply `worker:🤖flatbedN` and
-   `state:⏳queued`.
-3. **Spawn or message.** Spawn `worker-flatbedN` if it isn't alive (payload
-   above) with `model` set to the alias for that tier, otherwise message the
-   live worker — its model is the one it was spawned with, so a task needing
-   a different tier waits for a seat or gets a fresh spawn once the current
-   assignment closes. When the worker's first status line arrives, `fleet
-   assign --issue N --address <agent-id> --provider claude --model <the
-   model it reported>`. State the scope explicitly in every dispatch: what
-   is in, what is out, and whether a rule applies to every instance of a
-   pattern or only the named one. The worker applies the dispatch literally,
-   and an unstated scope becomes either an escalation or a guess.
+2. **Claim it.** Confirm the orchestrator label, `fleet push --stack work
+   --kind implement --issue N --provider claude --capability <tier>` (the
+   push resolves and records the exact model version), then apply
+   `worker:🤖flatbedN` and `state:⏳queued`.
+3. **Brief, spawn, assign.** `fleet brief --issue N --capability <tier>
+   --goal "<...>" [--guardrail "<...>"]... [--scope-in "<...>"] [--scope-out
+   "<...>"] [--override ...] [--extra "<...>"]` renders the dispatch. Spawn
+   `worker-flatbedN` with that payload **verbatim** and the tier's `model`
+   alias if the seat has no live instance, otherwise message the live one —
+   its model is the one it was spawned with, so a task needing a different
+   tier waits for a seat or gets a fresh spawn once the current assignment
+   closes. Scope belongs in `--scope-in` / `--scope-out`, not in prose the
+   orchestrator adds: the worker applies the dispatch literally, and an
+   unstated scope becomes either an escalation or a guess. On the worker's
+   first status line: `fleet assign --issue N --address <agent-id>
+   --provider claude --model <the model it reported>`.
 4. **Hand off.** The worker flips `state:🔨active`, opens its branch, runs
    `/implement`. From here the issue + PR carry the truth.
 5. **Monitor.** Arm the orchestrator's own monitor on the PR's checks and
    review body (`/monitor-ci --pr <n>`), so the orchestrator learns when the
-   worker blocks or finishes — never rely on the worker's self-poll. A
-   terminal result is relayed to the worker to act on, not acted on here.
-   Only two signals turn the orchestrator into an investigator: a
-   `state:🛑blocked` report, or a detected loop (the same finding recurring
-   across review rounds, the same failure re-run without the shape of the
-   error changing). Then look directly — the PR, the logs, the threads —
-   and re-brief the worker with the diagnosis; don't take over the branch.
+   worker blocks or finishes — never rely on the worker's self-poll. What a
+   monitor produces is a re-wake and nothing else (see "Ownership
+   invariant").
 6. **Close the loop.** On merge + issue close: `fleet pop`, strip labels,
    `fleet board sync`, dispatch the next queued item.
 
+## Ownership invariant
+
+Toward a worker's PR the orchestrator's job is exactly two things: relay
+signals, or think through what a relayed signal can't resolve and unblock it.
+The worker owns `/implement` through the merge and close-out until the issue is
+closed; the orchestrator relays, unblocks, and reclaims dead seats — never
+merges, rebases, updates a branch, or reads a review body on a worker's behalf.
+
+- **Relay, not driver.** A monitor exists only because a worker seat can't
+  wait (its turn yields and its own background monitor dies with it). The
+  orchestrator arms one on the worker's behalf and its only output is a
+  re-wake — `fleet brief --rewake --issue N --signal "<observed, with SHA /
+  run id / URL>"`, sent verbatim — never a review-body read, rebase, merge,
+  fix, or seat pop.
+- **Unblock.** A signal that comes back `state:🛑blocked`, or a detected loop
+  (the same finding recurring across review rounds, the same failure re-run
+  without the shape of the error changing), gets the orchestrator's own
+  thinking: read the evidence, research the mechanism if needed, decide or
+  take it to the user, then re-wake with the resolution as a new signal —
+  still never touching the branch, PR, review body, or merge.
+- **Reclaim.** A dead seat (no heartbeat, no live instance) is re-spawned with
+  a fresh `fleet brief` first; only once that yields no live instance does the
+  orchestrator reclaim the seat — never before the PR merges or the user
+  abandons it.
+
 ## Merge authority
 
-**The user's approval of a plan, epic, or settled design is the merge
-authorization for the PRs that implement it.** A dispatch implementing
-agreed work carries merge authority through the full `/implement` loop —
-ready → checks → review body read → `fleet merge` — without a per-PR
-approval stop.
-
-**Stop-at-green** (stop after the draft is pushed and gates are green,
-surface for the user's merge decision) is the **exception**, used only for
-work whose direction the user has not settled, as an explicit per-dispatch
-override. Gates remain absolute on every path: `fleet merge`'s built-ins
-plus the `ci-green` and `review-body-clean` gates. Autonomy waives the
+`fleet brief` defaults to full merge authority through `/implement` without a
+per-PR stop — the user's approval of a plan, epic, or settled design is that
+authorization, carried into the brief and exercised by the worker, never by
+the orchestrator. `--override stop-at-green` is the exception for work whose
+direction the user has not settled; `--override skip-lane-b` waives the smoke
+for a pure-cleanup PR. Gates stay absolute on every path: `fleet merge
+--no-merge`'s built-ins plus the `ci-green` and `review-body-clean` gates, with
+the bot's body read and every finding applied or declined. Autonomy waives the
 per-PR approval ask, never the gates.
+
+Branch protection requires an up-to-date head, so every merge puts the other
+open PRs behind `main`. Each comes back by **rebase only**, done by the owning
+worker in its own worktree and force-pushed with lease after a re-wake — never
+GitHub's "update branch" and never `git merge`, both of which add a merge
+commit.
 
 ## Talking to the user
 
@@ -318,9 +357,11 @@ Keep exactly one persistent watchdog armed:
 Triggered after the user steered a worker directly, after a context reset,
 or on demand. Rebuild purely from GitHub + the worktrees:
 
-1. Per seat N: `gh issue list --state open --label
-   "orchestrator:$PLONK_AGENT_ID" --label "worker:🤖flatbedN"` → expect ≤1
-   non-blocked issue. No label ⇒ seat idle.
+1. Per seat N: `gh api repos/plonklabs/flatbed/issues -X GET -f state=open -f
+   labels="orchestrator:$PLONK_AGENT_ID,worker:🤖flatbedN"` → expect ≤1
+   non-blocked issue. No label ⇒ seat idle. The label filter goes through
+   `-f`, not a literal query string: these labels carry emoji and spaces, and
+   an unencoded one returns an HTML error page, not an empty list.
 2. Find the issue's PR and read its `state:*` label → the phase.
 3. `git -C worktrees/flatbedN branch --show-current` cross-checked against
    the PR's head branch. On mismatch, message the worker: "what issue/PR are
@@ -355,9 +396,12 @@ labels and board synced, ledger current. A summary then only needs
 
 Run once on `/orchestrator` (every step is idempotent):
 
-1. **Identity** — `PLONK_AGENT_ID` and `FLEET_AGENT_NAME` from `.env`
-   (seed from `.env.tpl`). Missing or invalid ⇒ ask the user and stop
-   before any mutation.
+1. **Identity** — `PLONK_AGENT_ID`, `FLEET_AGENT_NAME`, and
+   `PLONK_GITHUB_REPOSITORY` from `.env` (seed from `.env.tpl`). Missing or
+   invalid ⇒ ask the user and stop before any mutation. The repository
+   variable is not cosmetic: fleet defaults to `plonklabs/plonk`, so without
+   it a board sync reports "in sync" after projecting nothing and a merge
+   check dies on a 404 for a PR number that means something else there.
 2. **Fleet health** — `fleet upgrade && fleet doctor`. A non-zero doctor is
    a stop condition.
 3. **Worktrees** — `scripts/worktree-setup.sh` (creates missing seats,
@@ -375,11 +419,15 @@ Run once on `/orchestrator` (every step is idempotent):
 - **Relay, don't drive.** The worker owns the full `/implement` loop; the
   orchestrator steps in only on a blocked report or a detected fix-loop,
   and then by investigating and re-briefing — never by taking over.
+- **Dispatch through `fleet brief`.** Spawn and re-wake payloads are
+  rendered and sent verbatim; hand-composed dispatch prose is never written.
+- **Every GitHub read and write over REST.** The forbidden `gh` porcelain
+  wraps GraphQL and takes the whole fleet down with it.
 - **Reuse, don't reinvent.** Epic curation follows `/spec`; worker
   implementation follows `/implement`.
 - **Settle direction before writing it into an issue.**
 - **One worker, one issue at a time.** Enforce the ≤1 invariant on every
   dispatch.
 - **Merge by plan approval.** Stop-at-green is an explicit per-dispatch
-  override, not the default. Gates (`fleet merge` built-ins + `ci-green` +
-  `review-body-clean`) are absolute on all paths.
+  override, not the default. Gates (`fleet merge --no-merge` built-ins +
+  `ci-green` + `review-body-clean`) are absolute on all paths.

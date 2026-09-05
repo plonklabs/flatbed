@@ -18,7 +18,13 @@ This directory contains only Claude-native mechanics:
   (`worker-flatbed1..3`), including native frontmatter; they carry no model
   pin, since the model is chosen per dispatch by the fleet tier schedule.
 - `settings.json` is checked in and team-wide: the auto-compact keys and
-  three hooks whose scripts live in `hooks/`. The `PreCompact` hook injects
+  four hooks whose scripts live in `hooks/`. The `PreToolUse` hook (matching
+  `Bash`) denies the command shapes the repository policy forbids outright —
+  a non-draft `gh pr create`, a merge that skips the head pin, the
+  GraphQL-backed `gh` porcelain, a `git merge`/`git pull` that would add a
+  merge commit, a commit on `main` — so those rules are enforced rather than
+  restated in every skill; `scripts/test-claude-hooks.sh` holds its
+  fixtures. The `PreCompact` hook injects
   the orchestrator skill's Session-economy contract into the compaction
   summarizer. The `SessionStart` hook (matching `startup`, `compact`)
   injects `fleet resume --hook` output — the ledger-derived seat frontiers

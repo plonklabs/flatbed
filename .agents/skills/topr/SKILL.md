@@ -19,10 +19,10 @@ When the user runs `/topr <PR>`, execute the following steps:
 
 1. **Get PR metadata:**
    ```bash
-   gh pr view <PR> --json headRefName,title,state,commits --jq '.'
+   gh api repos/plonklabs/flatbed/pulls/<PR> --jq '{title, state, head_ref: .head.ref, commits}'
    ```
-   If the PR is not open, warn the user and stop.
-   Note the number of commits reported by the PR — this is the count of commits unique to this PR.
+   If `state` is not `open`, warn the user and stop.
+   Note the `commits` count the PR reports — this is the count of commits unique to this PR.
 
 2. **Fetch latest main and the PR branch:**
    ```bash

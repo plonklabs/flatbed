@@ -13,9 +13,11 @@ user. Safe to run at any time, including mid-dispatch — it mutates nothing.
 
 ## Data sources (in precedence order)
 
-1. **GitHub labels + PRs** — the source of truth. `gh issue list` filtered
-   by `worker:🤖flatbedN` / `state:*` / `✅ ready`; `gh pr list` +
-   `statusCheckRollup` for check states.
+1. **GitHub labels + PRs** — the source of truth, read over REST
+   (`gh api repos/{owner}/{repo}/...`; the `gh issue`/`gh pr` porcelain wraps
+   GraphQL and is forbidden repo-wide). Issues filtered by
+   `worker:🤖flatbedN` / `state:*` / `✅ ready`; open pulls plus
+   `commits/{sha}/check-runs` for check states.
 2. **The `fleet` ledger** (`fleet ls`) — seat occupancy, holds, and queues.
    If it disagrees with GitHub, GitHub wins for work state; note the drift
    in the output. Live agent handles come from the harness live agent
@@ -27,19 +29,30 @@ user. Safe to run at any time, including mid-dispatch — it mutates nothing.
 
 ```bash
 # per seat: owned issues and their states — scoped to this orchestrator
-gh issue list --state open --label "orchestrator:$PLONK_AGENT_ID" \
-  --label "worker:🤖flatbedN" --json number,title,labels,url
-# in-flight PRs with check status
-gh pr list --state open --search "label:orchestrator:$PLONK_AGENT_ID" \
-  --json number,title,url,isDraft,statusCheckRollup
+gh api repos/plonklabs/flatbed/issues -X GET \
+  -f state=open -f labels="orchestrator:$PLONK_AGENT_ID,worker:🤖flatbedN" \
+  --jq '.[] | {number, title, url: .html_url, labels: [.labels[].name]}'
 # dispatch-ready backlog
-gh issue list --state open --label "orchestrator:$PLONK_AGENT_ID" \
-  --label "✅ ready" --json number,title,url
+gh api repos/plonklabs/flatbed/issues -X GET \
+  -f state=open -f labels="orchestrator:$PLONK_AGENT_ID,✅ ready" \
+  --jq '.[] | {number, title, url: .html_url}'
+# in-flight PRs, then their check states at head
+gh api "repos/plonklabs/flatbed/pulls?state=open" \
+  --jq '.[] | {number, title, url: .html_url, draft, head: .head.sha}'
+gh api "repos/plonklabs/flatbed/commits/<head-sha>/check-runs" \
+  --jq '.check_runs[] | "\(.name) \(.status) \(.conclusion // "")"'
 # seat occupancy and queues
 fleet ls
 # drift findings
 fleet doctor || true
 ```
+
+Two properties of these endpoints bite silently. Label filters go through
+`-X GET -f`, never a literal `?labels=...` query string: this repo's labels
+carry emoji and spaces, and an unencoded query string comes back as an HTML
+error page (`invalid character '<'`) rather than an empty list. And the issues
+endpoint returns pull requests as issues too — drop any entry carrying a
+`pull_request` key before counting the backlog.
 
 ## Rendering
 

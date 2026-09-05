@@ -78,6 +78,11 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Verify committed FlatBuffer codegen matches the `.fbs` schemas
 bash scripts/check-generated.sh
+
+# Agent-harness gates (skill wiring, Bash guard hook, merge-gate contracts)
+bash scripts/validate-agent-skills.sh
+bash scripts/test-claude-hooks.sh
+bash scripts/test-merge-gate-contracts.sh
 ```
 
 The `flatc` binary must be installed and on `PATH` at the version
@@ -116,9 +121,12 @@ Concurrent issue delivery runs through an orchestrator/worker fleet — see
   test bench.
 - The **`fleet` ledger** (SQLite at `.plonk/local/fleet.db`, config in
   `.fleet/`) owns seat occupancy, holds, heartbeats, watches, and the
-  precondition-checked merge path. `fleet merge <n>` is the only sanctioned
-  merge for orchestrated PRs; its repo gates (`.fleet/merge.toml`) are
-  `ci-green` and `review-body-clean`.
+  precondition-checked merge path. An orchestrated PR lands in two steps and
+  no other way: `fleet merge <n> --no-merge` evaluates every built-in and
+  every repo gate (`.fleet/merge.toml` declares `ci-green` and
+  `review-body-clean`) at the pinned head SHA, and only its exit 0 authorizes
+  the `gh pr merge <n> --squash --admin --match-head-commit <sha>` that
+  follows.
 - GitHub issues and labels stay the durable work truth; the board and the
   ledger are subordinate views.
 

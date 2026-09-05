@@ -20,7 +20,8 @@ When the user runs `/review`, `/review <pr-number>`, or `/review <pr-number> --a
 ### Phase 0: Detect PR state and parse flags
 
 ```bash
-PR_NUMBER=${1:-$(gh pr view --json number --jq '.number')}
+BRANCH=$(git branch --show-current)
+PR_NUMBER=${1:-$(gh api "repos/plonklabs/flatbed/pulls?head=plonklabs:$BRANCH" --jq '.[0].number')}
 AUTONOMOUS=false
 ROUND=1   # incremented at the end of each pass (Phase 2g), after posting the round summary
 for arg in "$@"; do
@@ -28,20 +29,25 @@ for arg in "$@"; do
         --auto|--autonomous) AUTONOMOUS=true ;;
     esac
 done
-gh pr view "$PR_NUMBER" --json isDraft,state,headRefOid,headRefName
+gh api "repos/plonklabs/flatbed/pulls/$PR_NUMBER" \
+    --jq '{draft, state, head_sha: .head.sha, head_ref: .head.ref}'
 ```
 
-- If `isDraft == true` → **Phase 1** (draft mode). `--auto` is a no-op in draft mode (the bot doesn't run on drafts); proceed with Phase 1 as normal and tell the user that `--auto` takes effect once they flip to ready.
-- If `isDraft == false && state == "OPEN"` → **Phase 2** (ready mode). If `AUTONOMOUS=true`, Phase 2c is skipped and Phase 2g re-arms the loop after each round.
-- If `state` is `MERGED` or `CLOSED`, ask the user whether they want to review historical comments anyway, then go to Phase 2 (skipping the wait sub-phase). `--auto` has no effect on merged/closed PRs since there's nothing to re-trigger.
+Every GitHub read and write in this skill goes over REST. Forbidden: `gh pr view`, `gh pr checks`, `gh pr list`, `gh issue list`, `gh run view --json`, `gh repo view`, any `--watch` — they wrap GraphQL, and parallel seats polling them tripped the shared user's GraphQL secondary rate limit. `gh api graphql` for the review-thread queries below is the exception: review threads have no REST representation, and those calls are one-shot rather than a poll.
+
+REST spells these differently from the porcelain: `draft` is the boolean, `state` is lowercase `open`/`closed`, and a merged PR is `closed` with `merged: true` — there is no `MERGED` state to match on.
+
+- If `draft == true` → **Phase 1** (draft mode). `--auto` is a no-op in draft mode (the bot doesn't run on drafts); proceed with Phase 1 as normal and tell the user that `--auto` takes effect once they flip to ready.
+- If `draft == false && state == "open"` → **Phase 2** (ready mode). If `AUTONOMOUS=true`, Phase 2c is skipped and Phase 2g re-arms the loop after each round.
+- If `state == "closed"` (merged or not), ask the user whether they want to review historical comments anyway, then go to Phase 2 (skipping the wait sub-phase). `--auto` has no effect on closed PRs since there's nothing to re-trigger.
 
 ### Phase 1: Draft mode — local self-review
 
 1. **Read the diff and the commit list via the GitHub API** (works whether or not the PR branch is checked out locally):
    ```bash
-   gh pr diff "$PR_NUMBER"
-   gh pr view "$PR_NUMBER" --json commits \
-       --jq '.commits[] | "\(.oid[0:7]) \(.messageHeadline)"'
+   gh api "repos/plonklabs/flatbed/pulls/$PR_NUMBER" -H 'Accept: application/vnd.github.diff'
+   gh api --paginate "repos/plonklabs/flatbed/pulls/$PR_NUMBER/commits" \
+       --jq '.[] | "\(.sha[0:7]) \(.commit.message | split("\n")[0])"'
    ```
 
 2. **Read the FULL files involved**, not just the diff hunks. The "read just the diff" pattern produces pinpoint comments and misses class-level issues. For each file the diff touches, open it end to end.
@@ -68,9 +74,9 @@ comment); a watcher keyed on "a fresh review object at head" never sees a
 clean round land and hangs on an already-merge-ready PR. This is the same
 check-run signal `scripts/merge-gates/review-body` keys on (its
 `REVIEW_CHECK_NAME`), so the live loop and the merge gate agree on what
-"done" means. Poll the check run via REST — `gh pr view`/`gh api graphql`
-are GraphQL-backed and go dark together during a GraphQL outage, while
-check-runs and issue comments (both REST) stay reachable:
+"done" means. Poll the check run via REST: the GraphQL-backed porcelain shares
+one rate limit and one outage with every other GraphQL caller, while check-runs
+and issue comments stay reachable:
 
 ```bash
 HEAD_SHA=$(gh api "repos/plonklabs/flatbed/pulls/$PR_NUMBER" --jq '.head.sha')
@@ -290,7 +296,7 @@ ROUND=$((ROUND + 1))
 
 **Constraints that hold across the loop:**
 
-- **Never auto-mark-ready, never auto-merge.** This rule survives autonomous mode unchanged. The loop fixes findings; the caller (`/implement` on an authorized run, or the user) decides when to merge — and a merge always goes through `fleet merge <n>` (never bare `gh pr merge`), whose gates re-check the review body at the pinned head SHA.
+- **Never auto-mark-ready, never auto-merge.** This rule survives autonomous mode unchanged. The loop fixes findings; the caller (`/implement` on an authorized run, or the user) decides when to merge — and a merge is authorized only by a passing `fleet merge <n> --no-merge`, whose gates re-check the review body at the pinned head SHA. The `gh pr merge --admin --match-head-commit` that follows is step two of that path, never a way around a refusal.
 - **Stop on test or clippy failure.** Per Phase 2d step 5 — a failed verification breaks the loop. Surface the failure to the user instead of pushing a broken SHA into the next round.
 - **Skip Phase 2c each round.** No per-thread triage; every bot finding is fix-bound.
 - **Class-level sweep applies every round.** The bot's findings narrow over time but the diff grows; rerun the full Quality-checklist sweep across every changed file each round, not just the file the new threads anchor to.
@@ -343,7 +349,7 @@ The substantive content the assistant works through in both modes. Each item is 
 - **One comprehensive commit per file or logical unit** — not one commit per inline thread. The point of the holistic read is that fixes group naturally; the commit should reflect that grouping.
 - **Run `cargo fmt`, `cargo clippy`, and the relevant `cargo test`** before pushing. AGENTS.md is non-negotiable on these.
 - **For changes touching the `nats`/`kv` worker layer, run the broker-backed suite** before declaring done — the plain workspace run is broker-free by design and cannot exercise those paths.
-- **Never auto-merge or auto-mark-ready** even if every thread is addressed, even in `--auto` mode. The caller decides; merges go through `fleet merge <n>`.
+- **Never auto-merge or auto-mark-ready** even if every thread is addressed, even in `--auto` mode. The caller decides, and only a passing `fleet merge <n> --no-merge` authorizes the merge that follows.
 - **Never skip a bot thread without explicit user direction.** A finding the assistant disagrees with should be declined with reasoning (Phase 2e), not silently dropped. Phase 2c is the dedicated triage step where the user picks fix vs decline per thread. **Invocation with `--auto` is itself the explicit user direction** to treat every bot finding as fix-bound — that mode skips Phase 2c by design, but the assistant still posts a reply (with the SHA) on every addressed thread, so nothing is silently dropped from the bot's perspective.
 - **Autonomous loop: treat ambiguous as red; exit only on clearly green.** If the latest round's verdict is ambiguous ("LGTM but consider X", "minor nit", "optional"), apply the suggestion and run another round rather than declaring the loop done. The loop ends on a clearly green review or on user direction.
 - **Re-read the `git diff` after every fix** before pushing, walking the changed lines through the checklist again. AI-assisted patches reliably introduce adjacent drift (an "if a future…" phrase added while removing another, a stale import, a comment field name that drifted) — one pass of `git diff` catches them and saves a re-review round.

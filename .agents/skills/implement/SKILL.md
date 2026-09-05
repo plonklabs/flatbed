@@ -11,6 +11,8 @@ Fires after a design discussion has settled an ordered list of PRs to ship. For 
 
 flatbed is a library + codegen repo (three crates — `flatbed`, `flatbed_macros`, `flatbed_build`), not a deployed service. There is no cluster: the gates are Cargo's, the codegen check, and running the affected artifact. The `flatc` pinned in `.flatc-version` must be on `PATH` for any build that triggers codegen.
 
+Every GitHub read or write goes over REST (`gh api repos/{owner}/{repo}/...`); the only non-REST calls allowed anywhere in this repo are `gh pr ready` (once per PR) and the authorized `gh pr merge <n> --squash --admin --match-head-commit <sha>` that step two of the sanctioned merge path issues. Named REST forms: `pulls/{n}` (state, head, draft, merged), `commits/{sha}/check-runs` (check names `fmt`, `clippy`, `test`, `check-generated`, `codec-compat`, `review / review`), `issues/{n}/comments` and `pulls/{n}/comments` (review bodies), `actions/runs/{id}`. Forbidden: `gh pr view`, `gh pr checks`, `gh pr list`, `gh issue list`, `gh issue create`, `gh run view --json`, `gh repo view`, any `--watch` — every one wraps GraphQL, and seats polling them in parallel tripped the shared user's GraphQL secondary rate limit and sat merges for the better part of an hour. This is a load-bearing rule, not a style preference.
+
 ## Arguments
 - `$ARGUMENTS` — optional GitHub epic issue number (e.g. `/implement 614`). If given, the skill reads that epic's `## Steps` checklist (the format produced by `/spec`) as a starting hint. If both are present, the **chat conversation is the source of truth**; the epic is only consulted when the chat list is implicit.
 
@@ -22,7 +24,7 @@ When the user runs `/implement` or `/implement <epic>`, execute the following ph
 
 1. **If `$ARGUMENTS` was passed**, fetch the epic body:
    ```bash
-   gh issue view <n> --json body --jq '.body'
+   gh api repos/plonklabs/flatbed/issues/<n> --jq '.body'
    ```
    Extract unchecked `- [ ]` items under the `## Steps` section. These are the candidate PRs.
 
@@ -148,7 +150,7 @@ Refusals are actionable, not obstacles to route around: an in-progress check mea
 When this skill runs as a dispatched worker (a `worker-flatbedN` session under the orchestrator):
 
 1. **The orchestrator owns PR-check monitoring.** Do not self-poll your own checks — an in-turn sleep-loop burns the bounded hold, and a background monitor dies the instant the turn yields, leaving the PR to land or wedge unobserved. After the ready flip (or any push), report the state and end the turn; the orchestrator's monitor re-wakes you on a terminal result.
-2. **`fleet heartbeat` at every turn boundary** — start of turn and before ending one. The orchestrator's `fleet doctor` sweep ages every seat against its last heartbeat; a seat that goes quiet reads as a dead worker.
+2. **`fleet heartbeat --issue <n>` at every turn boundary** — start of turn and before ending one. The orchestrator's `fleet doctor` sweep ages every seat against its last heartbeat; a seat that goes quiet reads as a dead worker. When a wait has a known horizon, promise it with `--deadline-secs <n>` so the doctor flags overdue against that promise rather than the global idle ceiling.
 3. **Report within 40 minutes, always.** Any wait sends the orchestrator at least one line of state within 40 minutes, terminal or not — a quiet hold looks identical to a crash from the outside.
 
 ### Phase 3: Final report
