@@ -61,6 +61,18 @@ impl<C> ServiceContext<C> {
     pub fn is_ready(&self) -> bool {
         self.is_booted() && self.config.readiness.is_ready()
     }
+
+    /// The gates holding readiness down as a comma-separated list, or `None`
+    /// when no gate is, so a probe or an error can tell a slow boot from a
+    /// lost dependency.
+    fn blocked_on(&self) -> Option<String> {
+        let blocked = self.config.readiness.blocked_on();
+        if blocked.is_empty() {
+            return None;
+        }
+
+        Some(blocked.join(", "))
+    }
 }
 
 impl<C> Clone for ServiceContext<C> {
@@ -178,19 +190,12 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
 
     // Return 503 for user routes until server is ready
     if !ctx.is_ready() {
-        let (code, message) = if ctx.is_booted() {
-            (
-                "NOT_READY",
-                format!(
-                    "Waiting on {}",
-                    ctx.config.readiness.blocked_on().join(", ")
-                ),
-            )
-        } else {
-            (
+        let (code, message) = match ctx.blocked_on() {
+            Some(gates) => ("NOT_READY", format!("Waiting on {gates}")),
+            None => (
                 "BOOTING",
                 "Server is starting up, please retry shortly".to_string(),
-            )
+            ),
         };
         return build_error_response(StatusCode::SERVICE_UNAVAILABLE, code, &message);
     }
@@ -338,18 +343,6 @@ fn handle_splash_endpoint(
     )
 }
 
-/// The `/readyz` body when the server is not ready, naming the gates that are
-/// holding it down so an operator can tell a slow boot from a lost dependency.
-#[cfg(feature = "telemetry")]
-fn not_ready_body<C>(ctx: &ServiceContext<C>) -> String {
-    let blocked = ctx.config.readiness.blocked_on();
-    if blocked.is_empty() {
-        return "Not Ready".to_string();
-    }
-
-    format!("Not Ready: {}", blocked.join(", "))
-}
-
 /// Handle telemetry endpoints (/healthz, /readyz, /metrics)
 #[cfg(feature = "telemetry")]
 fn handle_telemetry_endpoint<C>(
@@ -378,10 +371,11 @@ fn handle_telemetry_endpoint<C>(
             if ctx.is_ready() {
                 Some(build_text_response(StatusCode::OK, "Ready"))
             } else {
-                Some(build_text_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    &not_ready_body(ctx),
-                ))
+                let body = match ctx.blocked_on() {
+                    Some(gates) => format!("Not Ready: {gates}"),
+                    None => "Not Ready".to_string(),
+                };
+                Some(build_text_response(StatusCode::SERVICE_UNAVAILABLE, &body))
             }
         }
         "/metrics" => match telemetry.get_feed() {
