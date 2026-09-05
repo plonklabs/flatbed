@@ -11,6 +11,8 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ### Added
 
+- `flatbed --version` on the `flatbed_build` CLI binary, reporting the
+  installed crate version — previously an unrecognized-argument error.
 - `#[nats_route]` (feature `nats`): core-NATS request-reply responders, the
   subject-transport sibling of `#[route]`. Handlers take the same
   `Request<T, Arc<C>>` and return the same `Result<Response<U>,
