@@ -120,16 +120,16 @@ fi
 task_kind="${FLEET_TASK_KIND:-}"
 if [ "$task_kind" != "release" ]; then
   if grep -Eq '(^|[;&|[:space:]])git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?push([[:space:]]|$)' <<<"$stripped" \
-     && grep -Eq 'refs/tags|[[:space:]][^[:space:]]*\*:refs/tags' <<<"$stripped"; then
-    deny "Tag refs are never pushed outside the release task (kind: release); the release ticket (#48) is the only authorized path."
+     && grep -Eq 'refs/tags|--tags|--follow-tags' <<<"$stripped"; then
+    deny "Tag refs are never pushed outside the release task (kind: release); tags and releases are only part of the release task."
   fi
 
   if grep -Eq '(^|[;&|[:space:]])gh[[:space:]]+release[[:space:]]+create([[:space:]]|$)' <<<"$stripped"; then
-    deny "gh release create is restricted to the release task (kind: release); the release ticket (#48) is the only authorized path."
+    deny "gh release create is restricted to the release task (kind: release); tags and releases are only part of the release task."
   fi
 
   if grep -Eq '(^|[;&|[:space:]])gh[[:space:]]+release[[:space:]]+delete([[:space:]]|$)' <<<"$stripped"; then
-    deny "gh release delete is restricted to the release task (kind: release); the release ticket (#48) is the only authorized path."
+    deny "gh release delete is restricted to the release task (kind: release); tags and releases are only part of the release task."
   fi
 fi
 

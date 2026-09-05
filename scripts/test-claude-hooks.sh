@@ -120,10 +120,14 @@ expect_with_task_kind() { # <task_kind> <deny|allow> <command>
 expect deny  'git push origin refs/tags/flatbed-v0.0.3'
 expect deny  'git push --force-with-lease origin refs/tags/v1.0'
 expect deny  'git push origin :refs/tags/flatbed-v0.0.2'
+expect deny  'git push origin --tags'
+expect deny  'git push --follow-tags origin main'
 expect allow 'git push origin feature/myfeature'
 expect allow 'git push origin main'
 expect_with_task_kind release allow 'git push origin refs/tags/flatbed-v0.0.3'
 expect_with_task_kind release allow 'git push --force-with-lease origin refs/tags/v1.0'
+expect_with_task_kind release allow 'git push origin --tags'
+expect_with_task_kind release allow 'git push --follow-tags origin main'
 expect_with_task_kind implement deny 'git push origin refs/tags/flatbed-v0.0.3'
 
 # gh release create denied unless task kind is release
