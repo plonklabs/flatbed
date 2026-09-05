@@ -16,7 +16,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "flatbed", about = "FlatBuffer codegen helper")]
+#[command(name = "flatbed", version, about = "FlatBuffer codegen helper")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
