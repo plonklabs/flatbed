@@ -114,4 +114,23 @@ if grep -Eq 'pulls/[^/[:space:]]+/update-branch' <<<"$stripped"; then
   deny "GitHub update-branch merges main into the PR; rebase the branch and push --force-with-lease instead."
 fi
 
+# Tags and releases are never part of implement/audit/docs close-out; the
+# release ticket (kind: release) is the only path. Deny pushing tag refs and
+# release operations unless the seat's task kind is release.
+task_kind="${FLEET_TASK_KIND:-}"
+if [ "$task_kind" != "release" ]; then
+  if grep -Eq '(^|[;&|[:space:]])git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?push([[:space:]]|$)' <<<"$stripped" \
+     && grep -Eq 'refs/tags|[[:space:]][^[:space:]]*\*:refs/tags' <<<"$stripped"; then
+    deny "Tag refs are never pushed outside the release task (kind: release); the release ticket (#48) is the only authorized path."
+  fi
+
+  if grep -Eq '(^|[;&|[:space:]])gh[[:space:]]+release[[:space:]]+create([[:space:]]|$)' <<<"$stripped"; then
+    deny "gh release create is restricted to the release task (kind: release); the release ticket (#48) is the only authorized path."
+  fi
+
+  if grep -Eq '(^|[;&|[:space:]])gh[[:space:]]+release[[:space:]]+delete([[:space:]]|$)' <<<"$stripped"; then
+    deny "gh release delete is restricted to the release task (kind: release); the release ticket (#48) is the only authorized path."
+  fi
+fi
+
 exit 0

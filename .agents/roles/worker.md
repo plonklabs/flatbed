@@ -133,6 +133,8 @@ On close-out, clean the seat: `cargo clean` in the worktree and
 
 **Always open PRs as drafts.** Every `gh pr create` call includes `--draft`.
 
+**Tags and releases are never part of implement, audit, or docs close-out.** The release task (`kind: release`) is the only authorized path for pushing tags and creating releases.
+
 **Dispatch-authorized merges run autonomously.** When work arrives via
 `/implement` on an agreed plan or epic, plan approval is the merge
 authorization — the worker runs the full ready → review-bot loop →
