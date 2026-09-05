@@ -214,8 +214,7 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         }
     }
 
-    // Build request parts ahead of the body read, so the before_request guard
-    // (and an early rejection) never pays for consuming the body.
+    // Built ahead of the body read so an early rejection skips consuming it.
     let mut request_parts = RequestParts::new(
         Method::from_bytes(method.as_bytes()).unwrap_or(Method::POST),
         path.clone(),
@@ -449,10 +448,6 @@ fn build_unsupported_media_type() -> Response<Full<Bytes>> {
         .unwrap()
 }
 
-/// Build the HTTP response for a `before_request` guard rejection, mirroring
-/// the error-response shape the `#[route]` macro builds for a handler error:
-/// JSON body with `code`/`message` for JSON requests, `x-error-code` /
-/// `x-error-message` headers with an empty body for FlatBuffer requests.
 fn build_route_error_response(
     err: &FlatbedRouteError,
     is_flatbuffer: bool,

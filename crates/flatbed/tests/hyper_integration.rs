@@ -868,8 +868,6 @@ async fn test_before_request_guard_rejects_before_handler_runs() {
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["code"], "UNAUTHORIZED");
     assert_eq!(body["message"], "missing or invalid bearer token");
-    // The ping handler always returns a `value`; its absence here shows the
-    // handler never ran.
     assert!(body.get("value").is_none());
 
     // Same rejection over FlatBuffers: code/message travel in headers with an
