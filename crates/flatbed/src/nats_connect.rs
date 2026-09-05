@@ -40,8 +40,8 @@ const DEFAULT_CONNECT_DEADLINE: Duration = Duration::from_secs(60);
 /// A link that dies without closing the socket — a partition, a dropped
 /// conntrack entry — is only noticed when pings go unanswered, so the ping
 /// interval is the resolution at which the readiness gate can detect it. The
-/// client tolerates two outstanding pings, putting detection at roughly three
-/// times this.
+/// client tolerates a few unanswered pings before giving up on the link, so
+/// detection costs a small multiple of this rather than one interval.
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Keeps the backoff shift inside the width of the type. The ramp reaches its
@@ -381,8 +381,7 @@ fn spread(span: Duration) -> Duration {
 /// Entropy has to be independent per process, so it cannot come from the
 /// clock: replicas that lost the same broker read the same clock to within
 /// their sync accuracy, which is exactly the correlation the spread exists to
-/// break. Each hasher is seeded from the process's random state and a counter
-/// that advances per call.
+/// break.
 fn entropy() -> u64 {
     RandomState::new().build_hasher().finish()
 }

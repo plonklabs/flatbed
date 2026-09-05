@@ -99,7 +99,6 @@ pub use kube;
 // Hyper integration module
 pub mod hyper;
 
-// Runtime readiness gates behind /readyz
 pub mod readiness;
 pub use readiness::{Readiness, ReadinessGate};
 
