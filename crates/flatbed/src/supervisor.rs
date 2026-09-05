@@ -562,23 +562,28 @@ mod tests {
     fn jitter_differs_between_workers_backing_off_together() {
         let delay = Duration::from_secs(30);
         let draws: std::collections::BTreeSet<_> = (0..16)
-            .map(|i| jittered(delay, "same-instant", i))
+            .map(|i| jittered(delay, &format!("same-instant-{i}"), 0))
             .collect();
         assert!(draws.len() > 1, "every worker drew the same backoff");
+    }
+
+    #[test]
+    fn jitter_differs_between_attempts_of_one_worker() {
+        let delay = Duration::from_secs(30);
+        let draws: std::collections::BTreeSet<_> = (0..16)
+            .map(|i| jittered(delay, "retrying-worker", i))
+            .collect();
+        assert!(draws.len() > 1, "every attempt drew the same backoff");
     }
 
     /// The offset is a function of the key, not of the moment it is drawn —
     /// a per-call hasher seed would make the key dead.
     #[test]
-    fn jitter_is_keyed_by_worker_and_attempt() {
+    fn jitter_is_stable_for_one_key() {
         let delay = Duration::from_secs(30);
         assert_eq!(
             jittered(delay, "keyed-worker", 3),
             jittered(delay, "keyed-worker", 3)
-        );
-        assert_ne!(
-            jittered(delay, "keyed-worker", 3),
-            jittered(delay, "other-worker", 3)
         );
     }
 }
