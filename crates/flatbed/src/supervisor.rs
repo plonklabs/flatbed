@@ -66,21 +66,24 @@ const ALL_STATES: [WorkerState; 3] = [
 
 /// Opt-in restart policy for a registered worker.
 ///
-/// Attach one at registration to trade a pod restart for an in-process retry:
+/// Set a worker trait's `RESTART` const to trade a pod restart for an
+/// in-process retry:
 ///
 /// ```rust,ignore
-/// flatbed::register_worker!(
-///     ConnKeeper,
-///     AppContext,
-///     restart = flatbed::RestartPolicy::backoff(
-///         std::time::Duration::from_secs(1),
-///         std::time::Duration::from_secs(60),
-///     )
-/// );
+/// impl flatbed::Worker for ConnKeeper {
+///     const RESTART: Option<flatbed::RestartPolicy> = Some(
+///         flatbed::RestartPolicy::backoff(
+///             std::time::Duration::from_secs(1),
+///             std::time::Duration::from_secs(60),
+///         ),
+///     );
+///     // ...
+/// }
 /// ```
 ///
-/// Without one, a worker that ends is terminal — the default flatbed
-/// behaviour of crashing the pod visibly rather than retrying in place.
+/// Leaving it at its `None` default makes a worker that ends terminal — the
+/// default flatbed behaviour of crashing the pod visibly rather than
+/// retrying in place.
 #[derive(Clone, Copy, Debug)]
 pub struct RestartPolicy {
     min_backoff: Duration,

@@ -260,6 +260,23 @@ pub trait KubeReconciler: Send + Sync + 'static {
     /// Optional description of what this reconciler does.
     const DESCRIPTION: Option<&'static str> = None;
 
+    /// Opt-in in-process restart policy. `None` — the default — makes the
+    /// worker's first exit terminal, leaving Kubernetes to restart the pod.
+    /// Registration puts this in a `static` initializer, so the expression
+    /// has to be const-evaluatable; the [`RestartPolicy`](crate::RestartPolicy)
+    /// builders are
+    /// `const fn`.
+    ///
+    /// ```rust,ignore
+    /// const RESTART: Option<flatbed::RestartPolicy> = Some(
+    ///     flatbed::RestartPolicy::backoff(
+    ///         std::time::Duration::from_secs(1),
+    ///         std::time::Duration::from_secs(60),
+    ///     ),
+    /// );
+    /// ```
+    const RESTART: ::core::option::Option<crate::RestartPolicy> = ::core::option::Option::None;
+
     /// JetStream stream name to create or reuse.
     const STREAM: &'static str;
 
@@ -649,6 +666,23 @@ pub trait KubeNativeReconciler: Send + Sync + 'static {
     /// Optional description of what this reconciler does.
     const DESCRIPTION: Option<&'static str> = None;
 
+    /// Opt-in in-process restart policy. `None` — the default — makes the
+    /// worker's first exit terminal, leaving Kubernetes to restart the pod.
+    /// Registration puts this in a `static` initializer, so the expression
+    /// has to be const-evaluatable; the [`RestartPolicy`](crate::RestartPolicy)
+    /// builders are
+    /// `const fn`.
+    ///
+    /// ```rust,ignore
+    /// const RESTART: Option<flatbed::RestartPolicy> = Some(
+    ///     flatbed::RestartPolicy::backoff(
+    ///         std::time::Duration::from_secs(1),
+    ///         std::time::Duration::from_secs(60),
+    ///     ),
+    /// );
+    /// ```
+    const RESTART: ::core::option::Option<crate::RestartPolicy> = ::core::option::Option::None;
+
     /// Optional finalizer string. When set, the runtime adds/removes
     /// it and calls [`cleanup`](KubeNativeReconciler::cleanup) on deletion.
     const FINALIZER: Option<&'static str> = None;
@@ -930,6 +964,23 @@ pub trait KubeWatcher: Send + Sync + 'static {
 
     /// Optional description of what this reconciler does.
     const DESCRIPTION: Option<&'static str> = None;
+
+    /// Opt-in in-process restart policy. `None` — the default — makes the
+    /// worker's first exit terminal, leaving Kubernetes to restart the pod.
+    /// Registration puts this in a `static` initializer, so the expression
+    /// has to be const-evaluatable; the [`RestartPolicy`](crate::RestartPolicy)
+    /// builders are
+    /// `const fn`.
+    ///
+    /// ```rust,ignore
+    /// const RESTART: Option<flatbed::RestartPolicy> = Some(
+    ///     flatbed::RestartPolicy::backoff(
+    ///         std::time::Duration::from_secs(1),
+    ///         std::time::Duration::from_secs(60),
+    ///     ),
+    /// );
+    /// ```
+    const RESTART: ::core::option::Option<crate::RestartPolicy> = ::core::option::Option::None;
 
     /// Fired for `Event::Apply`: a resource was added or updated
     /// outside an init burst.

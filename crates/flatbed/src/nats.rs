@@ -173,6 +173,23 @@ pub trait StreamWorker: Send + Sync + 'static {
     /// Optional description of what this worker does.
     const DESCRIPTION: Option<&'static str> = None;
 
+    /// Opt-in in-process restart policy. `None` — the default — makes the
+    /// worker's first exit terminal, leaving Kubernetes to restart the pod.
+    /// Registration puts this in a `static` initializer, so the expression
+    /// has to be const-evaluatable; the [`RestartPolicy`](crate::RestartPolicy)
+    /// builders are
+    /// `const fn`.
+    ///
+    /// ```rust,ignore
+    /// const RESTART: Option<flatbed::RestartPolicy> = Some(
+    ///     flatbed::RestartPolicy::backoff(
+    ///         std::time::Duration::from_secs(1),
+    ///         std::time::Duration::from_secs(60),
+    ///     ),
+    /// );
+    /// ```
+    const RESTART: ::core::option::Option<crate::RestartPolicy> = ::core::option::Option::None;
+
     /// JetStream stream name to consume from.
     const STREAM: &'static str;
 

@@ -1702,6 +1702,22 @@ pub trait Worker: Send + Sync + 'static {
     /// Optional description of what this worker does.
     const DESCRIPTION: Option<&'static str> = None;
 
+    /// Opt-in in-process restart policy. `None` — the default — makes the
+    /// worker's first exit terminal, leaving Kubernetes to restart the pod.
+    /// Registration puts this in a `static` initializer, so the expression
+    /// has to be const-evaluatable; the [`RestartPolicy`] builders are
+    /// `const fn`.
+    ///
+    /// ```rust,ignore
+    /// const RESTART: Option<flatbed::RestartPolicy> = Some(
+    ///     flatbed::RestartPolicy::backoff(
+    ///         std::time::Duration::from_secs(1),
+    ///         std::time::Duration::from_secs(60),
+    ///     ),
+    /// );
+    /// ```
+    const RESTART: ::core::option::Option<RestartPolicy> = ::core::option::Option::None;
+
     /// Run the worker. Called once after the server is ready, and expected to
     /// keep running for the life of the process — returning `Ok(())` marks the
     /// process unhealthy, and returning `Err` or panicking additionally starts
@@ -1772,28 +1788,17 @@ where
 /// flatbed::register_kube_reconciler!(MyReconciler, AppContext);
 /// ```
 ///
-/// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
-/// policy expression has to be const-evaluatable.
+/// The worker's `RESTART` associated const decides whether it is restarted
+/// in place; the macro takes no configuration of its own.
 #[cfg(all(feature = "nats", feature = "k8s"))]
 #[macro_export]
 macro_rules! register_kube_reconciler {
     ($reconciler:ty, $context:ty) => {
-        $crate::register_kube_reconciler!(
-            @build $reconciler, $context, ::core::option::Option::None
-        );
-    };
-    ($reconciler:ty, $context:ty, restart = $policy:expr) => {
-        $crate::register_kube_reconciler!(
-            @build $reconciler, $context, ::core::option::Option::Some($policy)
-        );
-    };
-    (@build $reconciler:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$reconciler as $crate::k8s::KubeReconciler>::NAME,
                 description: <$reconciler as $crate::k8s::KubeReconciler>::DESCRIPTION,
-                restart: $restart,
+                restart: <$reconciler as $crate::k8s::KubeReconciler>::RESTART,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -1843,9 +1848,8 @@ macro_rules! register_kube_reconciler {
 /// flatbed::register_kube_native_reconciler!(MyReconciler, AppContext);
 /// ```
 ///
-/// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
-/// policy expression has to be const-evaluatable.
+/// The worker's `RESTART` associated const decides whether it is restarted
+/// in place; the macro takes no configuration of its own.
 ///
 /// [`KubeNativeReconciler`]: crate::k8s::KubeNativeReconciler
 /// [`run_kube_native_reconciler`]: crate::k8s::run_kube_native_reconciler
@@ -1853,21 +1857,11 @@ macro_rules! register_kube_reconciler {
 #[macro_export]
 macro_rules! register_kube_native_reconciler {
     ($reconciler:ty, $context:ty) => {
-        $crate::register_kube_native_reconciler!(
-            @build $reconciler, $context, ::core::option::Option::None
-        );
-    };
-    ($reconciler:ty, $context:ty, restart = $policy:expr) => {
-        $crate::register_kube_native_reconciler!(
-            @build $reconciler, $context, ::core::option::Option::Some($policy)
-        );
-    };
-    (@build $reconciler:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$reconciler as $crate::k8s::KubeNativeReconciler>::NAME,
                 description: <$reconciler as $crate::k8s::KubeNativeReconciler>::DESCRIPTION,
-                restart: $restart,
+                restart: <$reconciler as $crate::k8s::KubeNativeReconciler>::RESTART,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -1922,30 +1916,19 @@ macro_rules! register_kube_native_reconciler {
 /// flatbed::register_kube_watcher!(EndpointWatcher, AppContext);
 /// ```
 ///
-/// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
-/// policy expression has to be const-evaluatable.
+/// The worker's `RESTART` associated const decides whether it is restarted
+/// in place; the macro takes no configuration of its own.
 ///
 /// [`KubeWatcher`]: crate::k8s::KubeWatcher
 #[cfg(feature = "k8s")]
 #[macro_export]
 macro_rules! register_kube_watcher {
     ($watcher:ty, $context:ty) => {
-        $crate::register_kube_watcher!(
-            @build $watcher, $context, ::core::option::Option::None
-        );
-    };
-    ($watcher:ty, $context:ty, restart = $policy:expr) => {
-        $crate::register_kube_watcher!(
-            @build $watcher, $context, ::core::option::Option::Some($policy)
-        );
-    };
-    (@build $watcher:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$watcher as $crate::k8s::KubeWatcher>::NAME,
                 description: <$watcher as $crate::k8s::KubeWatcher>::DESCRIPTION,
-                restart: $restart,
+                restart: <$watcher as $crate::k8s::KubeWatcher>::RESTART,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -1991,20 +1974,8 @@ macro_rules! register_kube_watcher {
 /// flatbed::register_stream_worker!(MyWorker, AppContext);
 /// ```
 ///
-/// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
-/// policy expression has to be const-evaluatable:
-///
-/// ```rust,ignore
-/// flatbed::register_stream_worker!(
-///     MyWorker,
-///     AppContext,
-///     restart = flatbed::RestartPolicy::backoff(
-///         std::time::Duration::from_secs(1),
-///         std::time::Duration::from_secs(60),
-///     )
-/// );
-/// ```
+/// The worker's `RESTART` associated const decides whether it is restarted
+/// in place; the macro takes no configuration of its own.
 ///
 /// [`StreamWorker`]: crate::nats::StreamWorker
 /// [`run_stream_worker`]: crate::nats::run_stream_worker
@@ -2012,21 +1983,11 @@ macro_rules! register_kube_watcher {
 #[macro_export]
 macro_rules! register_stream_worker {
     ($stream_worker:ty, $context:ty) => {
-        $crate::register_stream_worker!(
-            @build $stream_worker, $context, ::core::option::Option::None
-        );
-    };
-    ($stream_worker:ty, $context:ty, restart = $policy:expr) => {
-        $crate::register_stream_worker!(
-            @build $stream_worker, $context, ::core::option::Option::Some($policy)
-        );
-    };
-    (@build $stream_worker:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$stream_worker as $crate::nats::StreamWorker>::NAME,
                 description: <$stream_worker as $crate::nats::StreamWorker>::DESCRIPTION,
-                restart: $restart,
+                restart: <$stream_worker as $crate::nats::StreamWorker>::RESTART,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -2079,9 +2040,8 @@ macro_rules! register_stream_worker {
 /// flatbed::register_kv_worker!(CacheSubscriber, AppContext);
 /// ```
 ///
-/// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
-/// policy expression has to be const-evaluatable.
+/// The worker's `RESTART` associated const decides whether it is restarted
+/// in place; the macro takes no configuration of its own.
 ///
 /// [`KvWorker`]: crate::kv::KvWorker
 /// [`run_kv_worker`]: crate::kv::run_kv_worker
@@ -2089,21 +2049,11 @@ macro_rules! register_stream_worker {
 #[macro_export]
 macro_rules! register_kv_worker {
     ($kv_worker:ty, $context:ty) => {
-        $crate::register_kv_worker!(
-            @build $kv_worker, $context, ::core::option::Option::None
-        );
-    };
-    ($kv_worker:ty, $context:ty, restart = $policy:expr) => {
-        $crate::register_kv_worker!(
-            @build $kv_worker, $context, ::core::option::Option::Some($policy)
-        );
-    };
-    (@build $kv_worker:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$kv_worker as $crate::kv::KvWorker>::NAME,
                 description: <$kv_worker as $crate::kv::KvWorker>::DESCRIPTION,
-                restart: $restart,
+                restart: <$kv_worker as $crate::kv::KvWorker>::RESTART,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -2149,39 +2099,17 @@ macro_rules! register_kv_worker {
 /// flatbed::register_worker!(HealthChecker, AppContext);
 /// ```
 ///
-/// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`], trading a pod restart for an in-process retry with
-/// capped, jittered backoff. Registration expands to a `static` initializer,
-/// so the policy expression has to be const-evaluatable:
-///
-/// ```rust,ignore
-/// flatbed::register_worker!(
-///     ConnKeeper,
-///     AppContext,
-///     restart = flatbed::RestartPolicy::backoff(
-///         std::time::Duration::from_secs(1),
-///         std::time::Duration::from_secs(60),
-///     )
-/// );
-/// ```
+/// Set the worker's [`RESTART`](Worker::RESTART) associated const to trade a
+/// pod restart for an in-process retry with capped, jittered backoff; the
+/// macro takes no configuration of its own.
 #[macro_export]
 macro_rules! register_worker {
     ($worker_type:ty, $context:ty) => {
-        $crate::register_worker!(
-            @build $worker_type, $context, ::core::option::Option::None
-        );
-    };
-    ($worker_type:ty, $context:ty, restart = $policy:expr) => {
-        $crate::register_worker!(
-            @build $worker_type, $context, ::core::option::Option::Some($policy)
-        );
-    };
-    (@build $worker_type:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$worker_type as $crate::Worker>::NAME,
                 description: <$worker_type as $crate::Worker>::DESCRIPTION,
-                restart: $restart,
+                restart: <$worker_type as $crate::Worker>::RESTART,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,

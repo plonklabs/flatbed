@@ -342,19 +342,26 @@ is a job that stopped being done. One-shot initialisation belongs in the boot
 function passed to `Flatbed::run`, which already runs before traffic arrives.
 
 Kubernetes stays the outer supervisor. Where a pod restart per blip is too
-blunt — a WAN connection holder riding out a broker outage — attach a restart
-policy and the worker is re-run in place instead:
+blunt — a WAN connection holder riding out a broker outage — set the worker's
+`RESTART` const and it is re-run in place instead:
 
 ```rust
-flatbed::register_worker!(
-    ConnKeeper,
-    AppContext,
-    restart = flatbed::RestartPolicy::backoff(
-        Duration::from_secs(1),
-        Duration::from_secs(60),
-    )
-);
+impl flatbed::Worker for ConnKeeper {
+    const NAME: &'static str = "conn-keeper";
+    const RESTART: Option<flatbed::RestartPolicy> = Some(
+        flatbed::RestartPolicy::backoff(
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+        ),
+    );
+
+    // ...
+}
 ```
+
+Every worker trait carries it, defaulting to `None`, so opting in is one line
+in the impl block and the `register_*!` macros stay pure `(Type, Context)`
+registration.
 
 Backoff doubles from the floor to the cap, jittered so replicas that saw the
 same outage do not reconnect in lockstep, and a run that lasts at least the cap

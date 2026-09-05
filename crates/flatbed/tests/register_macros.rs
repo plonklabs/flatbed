@@ -68,6 +68,10 @@ impl KubeNativeReconciler for NativeRec {
     type Context = Ctx;
     type Error = ReconcileError;
     const NAME: &'static str = "macros-native";
+    const RESTART: Option<flatbed::RestartPolicy> = Some(flatbed::RestartPolicy::backoff(
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+    ));
     fn reconcile(
         &self,
         _ctx: Arc<Ctx>,
@@ -77,11 +81,7 @@ impl KubeNativeReconciler for NativeRec {
     }
 }
 
-flatbed::register_kube_native_reconciler!(
-    NativeRec,
-    Ctx,
-    restart = flatbed::RestartPolicy::backoff(Duration::from_secs(1), Duration::from_secs(2))
-);
+flatbed::register_kube_native_reconciler!(NativeRec, Ctx);
 
 #[derive(Default)]
 struct Watch;
@@ -113,6 +113,10 @@ impl StreamWorker for Stream {
     const NAME: &'static str = "macros-stream";
     const STREAM: &'static str = "MACROS";
     const SUBJECT: &'static str = "macros.stream";
+    const RESTART: Option<flatbed::RestartPolicy> = Some(flatbed::RestartPolicy::backoff(
+        Duration::from_secs(1),
+        Duration::from_secs(2),
+    ));
     fn handle(
         &self,
         _ctx: Arc<Ctx>,
@@ -125,11 +129,7 @@ impl StreamWorker for Stream {
     }
 }
 
-flatbed::register_stream_worker!(
-    Stream,
-    Ctx,
-    restart = flatbed::RestartPolicy::backoff(Duration::from_secs(1), Duration::from_secs(2))
-);
+flatbed::register_stream_worker!(Stream, Ctx);
 
 #[derive(Default)]
 struct Kv;

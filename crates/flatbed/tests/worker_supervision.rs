@@ -20,6 +20,10 @@ impl Worker for FlakyWorker {
 
     const NAME: &'static str = "flaky-conn";
     const DESCRIPTION: Option<&'static str> = Some("fails twice, then holds");
+    const RESTART: Option<RestartPolicy> = Some(RestartPolicy::backoff(
+        Duration::from_millis(50),
+        Duration::from_millis(200),
+    ));
 
     fn run(&self, _ctx: Arc<()>) -> flatbed::BoxFuture<Result<(), FlatbedWorkerError>> {
         Box::pin(async {
@@ -32,11 +36,7 @@ impl Worker for FlakyWorker {
     }
 }
 
-flatbed::register_worker!(
-    FlakyWorker,
-    (),
-    restart = RestartPolicy::backoff(Duration::from_millis(50), Duration::from_millis(200))
-);
+flatbed::register_worker!(FlakyWorker, ());
 
 fn state_series(metrics: &str, state: &str) -> Option<String> {
     metrics
