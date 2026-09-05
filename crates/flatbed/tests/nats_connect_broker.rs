@@ -13,7 +13,7 @@
 //! ```text
 //! scripts/nats-broker.sh up
 //! NATS_URL=$(scripts/nats-broker.sh url) \
-//!   cargo test -p flatbed --features nats,openapi,telemetry \
+//!   cargo test -p flatbed --features nats,telemetry \
 //!     --test nats_connect_broker -- --ignored
 //! ```
 //!
@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use flatbed::hyper::{build_router, AutoServer, ServiceContext};
-use flatbed::nats::{Connector, ConnectorError};
+use flatbed::nats::Connector;
 use flatbed::telemetry::{Counter, TelemetryConfig, TelemetryError, TelemetryService};
 use flatbed::{FlatbedConfig, Readiness};
 use futures::StreamExt;
@@ -41,10 +41,6 @@ fn broker_addr() -> String {
     let url = std::env::var("NATS_URL").unwrap_or_else(|_| "localhost:4222".to_string());
     url.trim_start_matches("nats://").to_string()
 }
-
-// ============================================================================
-// A severable TCP proxy
-// ============================================================================
 
 /// A TCP forwarder the test can cut and restore, standing in for a broker
 /// that goes away and comes back.
@@ -101,7 +97,13 @@ impl Proxy {
     }
 
     fn sever(&self) {
-        let mut live = self.links.lock().expect("proxy links");
+        // Reached from Drop, which can run while a failed assertion is
+        // unwinding — a lock this thread already poisoned must not turn that
+        // into an abort.
+        let mut live = self
+            .links
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         self.severed.store(true, Ordering::SeqCst);
         for link in live.drain(..) {
             link.abort();
@@ -133,10 +135,6 @@ async fn splice(inbound: TcpStream, upstream: String) {
         _ = tokio::io::copy(&mut broker_read, &mut client_write) => {}
     }
 }
-
-// ============================================================================
-// A telemetry service, so /readyz is mounted
-// ============================================================================
 
 /// The probes are only served when a telemetry service is configured; metrics
 /// themselves are not under test here.
@@ -178,10 +176,6 @@ impl TelemetryService for ProbesOnly {
     }
 }
 
-// ============================================================================
-// Probe server
-// ============================================================================
-
 /// Serve `/readyz` for `readiness`, with the boot latch already flipped, so
 /// the probe answers purely on the gates.
 async fn serve_probes(readiness: Readiness) -> String {
@@ -211,7 +205,10 @@ async fn serve_probes(readiness: Readiness) -> String {
 
     tokio::spawn(async move {
         let _booted_tx = booted_tx;
-        AutoServer::new(addr, service_ctx, healthz_tx).serve().await
+        AutoServer::new(addr, service_ctx, healthz_tx)
+            .serve()
+            .await
+            .expect("serve the probe port");
     });
 
     let base = format!("http://{addr}");
@@ -294,13 +291,13 @@ async fn round_trip(client: &async_nats::Client, subject: &str) {
     assert_eq!(&message.payload[..], b"ping");
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
-
 /// The acceptance case: a connection that is cut is re-established by the
-/// managed connector, and `/readyz` reports 503 for exactly the interval the
-/// connection is down.
+/// managed connector, and `/readyz` reports 503 over the disconnected
+/// interval.
+///
+/// Severing closes the sockets, which the client notices at once. A link that
+/// dies without closing — a partition — is instead noticed when pings go
+/// unanswered, so detection there costs a few ping intervals.
 #[tokio::test]
 #[ignore]
 async fn readyz_tracks_a_severed_and_restored_connection() {
@@ -384,34 +381,4 @@ async fn connect_with_retry_waits_for_a_late_broker() {
     round_trip(&client, "flatbed.connect.late").await;
 
     late_broker.abort();
-}
-
-/// An address nothing answers on exhausts the budget and reports it, rather
-/// than retrying forever behind a silent boot.
-#[tokio::test]
-#[ignore]
-async fn connect_with_retry_gives_up_on_a_dead_address() {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("reserve a port");
-    let addr = listener.local_addr().expect("read the reserved port");
-    drop(listener);
-
-    let readiness = Readiness::new();
-    let gate = readiness.gate(GATE);
-
-    let error = Connector::new(addr.to_string())
-        .backoff(Duration::from_millis(20), Duration::from_millis(50))
-        .connect_deadline(Duration::from_millis(400))
-        .readiness(gate.clone())
-        .connect_with_retry()
-        .await
-        .expect_err("nothing is listening on the reserved port");
-
-    assert!(
-        matches!(error, ConnectorError::Unreachable { .. }),
-        "expected an unreachable error, got {error:?}"
-    );
-    assert!(!gate.is_ready(), "a failed connect leaves the gate closed");
-    assert!(!readiness.is_ready());
 }

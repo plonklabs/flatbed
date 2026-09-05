@@ -76,7 +76,7 @@ required-features = ["nats", "openapi"]
 
 [[test]]
 name = "nats_connect_broker"
-required-features = ["nats", "openapi", "telemetry"]
+required-features = ["nats", "telemetry"]
 
 [[test]]
 name = "nats_route_registry"

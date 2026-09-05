@@ -25,8 +25,9 @@
 //! connection drops and comes back.
 
 use std::fmt;
+use std::hash::{BuildHasher, Hasher, RandomState};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use tracing::{debug, info, warn};
 
@@ -36,8 +37,15 @@ const DEFAULT_MIN_BACKOFF: Duration = Duration::from_millis(250);
 const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(10);
 const DEFAULT_CONNECT_DEADLINE: Duration = Duration::from_secs(60);
 
-/// Shifting by the width of the type is undefined, and the ramp is capped
-/// well before this many attempts anyway.
+/// A link that dies without closing the socket — a partition, a dropped
+/// conntrack entry — is only noticed when pings go unanswered, so the ping
+/// interval is the resolution at which the readiness gate can detect it. The
+/// client tolerates two outstanding pings, putting detection at roughly three
+/// times this.
+const PING_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Keeps the backoff shift inside the width of the type. The ramp reaches its
+/// ceiling long before this many attempts.
 const MAX_BACKOFF_SHIFT: u32 = 16;
 
 enum Credentials {
@@ -68,8 +76,9 @@ pub enum ConnectorError {
         attempts: u32,
         /// How long those attempts took in total.
         elapsed: Duration,
-        /// The failure reported by the last attempt.
-        source: async_nats::ConnectError,
+        /// The failure reported by the last attempt to finish, absent when
+        /// the budget ran out while an attempt was still in flight.
+        source: Option<async_nats::ConnectError>,
     },
 }
 
@@ -91,10 +100,16 @@ impl fmt::Display for ConnectorError {
                 attempts,
                 elapsed,
                 source,
-            } => write!(
-                f,
-                "NATS at {url} unreachable after {attempts} attempts over {elapsed:.1?}: {source}"
-            ),
+            } => {
+                write!(
+                    f,
+                    "NATS at {url} unreachable after {attempts} attempts over {elapsed:.1?}"
+                )?;
+                match source {
+                    Some(source) => write!(f, ": {source}"),
+                    None => write!(f, ": no attempt finished within the budget"),
+                }
+            }
         }
     }
 }
@@ -104,7 +119,9 @@ impl std::error::Error for ConnectorError {
         match self {
             Self::CredentialsUnreadable { source, .. } => Some(source),
             Self::CredentialsInvalid { source } => Some(source),
-            Self::Unreachable { source, .. } => Some(source),
+            Self::Unreachable { source, .. } => source
+                .as_ref()
+                .map(|source| source as &dyn std::error::Error),
         }
     }
 }
@@ -179,16 +196,19 @@ impl Connector {
         self
     }
 
-    /// Bound the total time [`connect_with_retry`](Self::connect_with_retry)
-    /// spends before giving up. One attempt is always made, however small the
-    /// budget.
+    /// Bound the wall time [`connect_with_retry`](Self::connect_with_retry)
+    /// spends before giving up. The bound is hard: an attempt still in flight
+    /// when the budget runs out is abandoned, so a URL that resolves to many
+    /// addresses cannot overrun it by dialling each in turn.
     pub fn connect_deadline(mut self, deadline: Duration) -> Self {
         self.deadline = deadline;
         self
     }
 
     /// Connect, retrying with a capped, jittered backoff until the connect
-    /// deadline passes.
+    /// deadline passes. Once it returns, the client reconnects on its own for
+    /// the rest of its life; the gate keeps tracking it through the callbacks
+    /// installed here.
     ///
     /// A credentials problem is a configuration error, not a transient one,
     /// and fails immediately without consuming the retry budget.
@@ -201,17 +221,25 @@ impl Connector {
         let credentials = self.read_credentials()?;
         let started = Instant::now();
         let mut attempts: u32 = 0;
+        let mut last_error = None;
 
         loop {
+            let remaining = self.deadline.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(self.unreachable(attempts, started.elapsed(), last_error));
+            }
+
             let options = self.options(credentials.as_deref())?;
             attempts += 1;
 
-            let source = match options.connect(&self.url).await {
+            let Ok(attempt) = tokio::time::timeout(remaining, options.connect(&self.url)).await
+            else {
+                return Err(self.unreachable(attempts, started.elapsed(), last_error));
+            };
+
+            let source = match attempt {
                 Ok(client) => {
-                    if let Some(gate) = &self.readiness {
-                        gate.set_ready(true);
-                    }
-                    info!(url = %self.url, attempts, "connected to NATS");
+                    self.mark_connected(attempts);
                     return Ok(client);
                 }
                 Err(source) => source,
@@ -220,12 +248,7 @@ impl Connector {
             let elapsed = started.elapsed();
             let delay = backoff(self.min_backoff, self.max_backoff, attempts);
             if elapsed + delay >= self.deadline {
-                return Err(ConnectorError::Unreachable {
-                    url: self.url.clone(),
-                    attempts,
-                    elapsed,
-                    source,
-                });
+                return Err(self.unreachable(attempts, elapsed, Some(source)));
             }
 
             warn!(
@@ -235,7 +258,29 @@ impl Connector {
                 error = %source,
                 "NATS connect failed, retrying"
             );
+            last_error = Some(source);
             tokio::time::sleep(delay).await;
+        }
+    }
+
+    fn mark_connected(&self, attempts: u32) {
+        if let Some(gate) = &self.readiness {
+            gate.set_ready(true);
+        }
+        info!(url = %self.url, attempts, "connected to NATS");
+    }
+
+    fn unreachable(
+        &self,
+        attempts: u32,
+        elapsed: Duration,
+        source: Option<async_nats::ConnectError>,
+    ) -> ConnectorError {
+        ConnectorError::Unreachable {
+            url: self.url.clone(),
+            attempts,
+            elapsed,
+            source,
         }
     }
 
@@ -264,9 +309,16 @@ impl Connector {
         }
 
         let (min, max) = (self.min_backoff, self.max_backoff);
-        options = options.reconnect_delay_callback(move |attempts| {
-            backoff(min, max, u32::try_from(attempts).unwrap_or(u32::MAX))
-        });
+        // The client counts the dial it is about to make, so it asks for the
+        // delay before the first one too, and resets the count on every
+        // success. Sleeping there would put the backoff in front of every
+        // connect and every recovery rather than only between retries.
+        options = options
+            .ping_interval(PING_INTERVAL)
+            .reconnect_delay_callback(move |attempts| match attempts {
+                0 | 1 => Duration::ZERO,
+                retry => backoff(min, max, u32::try_from(retry - 1).unwrap_or(u32::MAX)),
+            });
 
         let gate = self.readiness.clone();
         Ok(options.event_callback(move |event| {
@@ -308,8 +360,8 @@ fn on_event(event: &async_nats::Event, gate: Option<&ReadinessGate>) {
 }
 
 /// Half of an exponential ramp from `min` to `max`, plus a spread over the
-/// other half taken from the wall clock's nanosecond component, so replicas
-/// that lost the same broker at the same moment do not retry in lockstep.
+/// other half, so replicas that lost the same broker at the same moment do
+/// not retry in lockstep.
 fn backoff(min: Duration, max: Duration, attempt: u32) -> Duration {
     let step = attempt.saturating_sub(1).min(MAX_BACKOFF_SHIFT);
     let capped = min.saturating_mul(1u32 << step).min(max);
@@ -323,12 +375,16 @@ fn spread(span: Duration) -> Duration {
         return Duration::ZERO;
     }
 
-    let entropy = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|since_epoch| u64::from(since_epoch.subsec_nanos()))
-        .unwrap_or(0);
+    Duration::from_nanos(entropy() % nanos)
+}
 
-    Duration::from_nanos(entropy % nanos)
+/// Entropy has to be independent per process, so it cannot come from the
+/// clock: replicas that lost the same broker read the same clock to within
+/// their sync accuracy, which is exactly the correlation the spread exists to
+/// break. Each hasher is seeded from the process's random state and a counter
+/// that advances per call.
+fn entropy() -> u64 {
+    RandomState::new().build_hasher().finish()
 }
 
 #[cfg(test)]
@@ -336,6 +392,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{backoff, Connector, ConnectorError};
+    use crate::readiness::Readiness;
 
     const MIN: Duration = Duration::from_millis(100);
     const MAX: Duration = Duration::from_millis(800);
@@ -366,9 +423,13 @@ mod tests {
 
     #[tokio::test]
     async fn an_unreachable_broker_reports_the_attempts_it_made() {
+        let readiness = Readiness::new();
+        let gate = readiness.gate("nats");
+
         let error = Connector::new("127.0.0.1:1")
             .backoff(Duration::from_millis(10), Duration::from_millis(20))
             .connect_deadline(Duration::from_millis(200))
+            .readiness(gate)
             .connect_with_retry()
             .await
             .expect_err("nothing listens on port 1");
@@ -378,6 +439,29 @@ mod tests {
         };
         assert_eq!(url, "127.0.0.1:1");
         assert!(attempts >= 1, "expected at least one attempt");
+        assert!(
+            !readiness.is_ready(),
+            "a failed connect must not open the gate"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_connect_deadline_bounds_the_wait() {
+        let budget = Duration::from_millis(300);
+        let started = Instant::now();
+
+        Connector::new("127.0.0.1:1")
+            .backoff(Duration::from_millis(10), Duration::from_millis(20))
+            .connect_deadline(budget)
+            .connect_with_retry()
+            .await
+            .expect_err("nothing listens on port 1");
+
+        assert!(
+            started.elapsed() < budget * 4,
+            "overran the budget: {:?}",
+            started.elapsed()
+        );
     }
 
     /// A retry budget far longer than the test could tolerate, so a
