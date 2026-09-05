@@ -83,6 +83,10 @@ name = "flatbuffer_enum"
 required-features = ["openapi"]
 
 [[test]]
+name = "flatbuffer_traits"
+required-features = ["openapi"]
+
+[[test]]
 name = "flatbuffer_table_vector"
 required-features = ["openapi"]
 

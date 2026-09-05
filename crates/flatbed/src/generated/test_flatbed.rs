@@ -271,8 +271,7 @@ pub mod test {
         fn from_flatbuffer(
             bytes: &[u8],
         ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
-            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::TestRequest>(&bytes)?;
-            Ok(Self::from_fb(&fb))
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -365,8 +364,7 @@ pub mod test {
         fn from_flatbuffer(
             bytes: &[u8],
         ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
-            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::TestResponse>(&bytes)?;
-            Ok(Self::from_fb(&fb))
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -461,8 +459,7 @@ pub mod test {
         fn from_flatbuffer(
             bytes: &[u8],
         ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
-            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::Address>(&bytes)?;
-            Ok(Self::from_fb(&fb))
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -557,8 +554,7 @@ pub mod test {
         fn from_flatbuffer(
             bytes: &[u8],
         ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
-            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::UserRequest>(&bytes)?;
-            Ok(Self::from_fb(&fb))
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -660,8 +656,7 @@ pub mod test {
         fn from_flatbuffer(
             bytes: &[u8],
         ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
-            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::UserResponse>(&bytes)?;
-            Ok(Self::from_fb(&fb))
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -771,8 +766,7 @@ pub mod test {
         fn from_flatbuffer(
             bytes: &[u8],
         ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
-            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::AddressBook>(&bytes)?;
-            Ok(Self::from_fb(&fb))
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -867,8 +861,7 @@ pub mod test {
         fn from_flatbuffer(
             bytes: &[u8],
         ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
-            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::LogEvent>(&bytes)?;
-            Ok(Self::from_fb(&fb))
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -979,8 +972,7 @@ pub mod test {
         fn from_flatbuffer(
             bytes: &[u8],
         ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
-            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::Defaulted>(&bytes)?;
-            Ok(Self::from_fb(&fb))
+            Self::from_flatbuffer(bytes)
         }
     }
 

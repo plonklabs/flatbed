@@ -9,7 +9,7 @@
 //!
 //! let status: SatelliteStatus = ctx.nats
 //!     .typed_request("plonk.satellite.x07.call.status", &StatusQuery::default())
-//!     .timeout(Duration::from_secs(5))
+//!     .timeout(Duration::from_secs(2))
 //!     .await?;
 //! ```
 //!
@@ -90,8 +90,8 @@ pub enum NatsRequestError {
         /// Subject that answered.
         subject: String,
         /// The rejection, rebuilt from the reply's error headers. Its
-        /// `headers` are the reply's, so anything else the handler set on
-        /// its error reaches the caller too.
+        /// `headers` are what the handler set on its own error, with the
+        /// headers describing the hop itself consumed.
         error: FlatbedRouteError<()>,
     },
     /// A reply arrived but does not decode as the response type.
@@ -137,29 +137,19 @@ impl std::error::Error for NatsRequestError {}
 /// (or a gateway timeout) from the caller's own caller's point of view.
 impl From<NatsRequestError> for FlatbedRouteError<()> {
     fn from(err: NatsRequestError) -> Self {
-        let message = err.to_string();
-        match err {
-            NatsRequestError::Reply { error, .. } => error,
+        let (status, code) = match &err {
+            NatsRequestError::Reply { error, .. } => return error.clone(),
             NatsRequestError::Encode { .. } => {
-                FlatbedRouteError::internal(message).code("NATS_ENCODE_ERROR")
+                (StatusCode::INTERNAL_SERVER_ERROR, "NATS_ENCODE_ERROR")
             }
             NatsRequestError::NoResponders { .. } => {
-                FlatbedRouteError::with_status(StatusCode::BAD_GATEWAY, message)
-                    .code("NATS_NO_RESPONDERS")
+                (StatusCode::BAD_GATEWAY, "NATS_NO_RESPONDERS")
             }
-            NatsRequestError::Timeout { .. } => {
-                FlatbedRouteError::with_status(StatusCode::GATEWAY_TIMEOUT, message)
-                    .code("NATS_TIMEOUT")
-            }
-            NatsRequestError::Transport { .. } => {
-                FlatbedRouteError::with_status(StatusCode::BAD_GATEWAY, message)
-                    .code("NATS_TRANSPORT_ERROR")
-            }
-            NatsRequestError::Decode { .. } => {
-                FlatbedRouteError::with_status(StatusCode::BAD_GATEWAY, message)
-                    .code("NATS_DECODE_ERROR")
-            }
-        }
+            NatsRequestError::Timeout { .. } => (StatusCode::GATEWAY_TIMEOUT, "NATS_TIMEOUT"),
+            NatsRequestError::Transport { .. } => (StatusCode::BAD_GATEWAY, "NATS_TRANSPORT_ERROR"),
+            NatsRequestError::Decode { .. } => (StatusCode::BAD_GATEWAY, "NATS_DECODE_ERROR"),
+        };
+        FlatbedRouteError::with_status(status, err.to_string()).code(code)
     }
 }
 
@@ -219,7 +209,7 @@ where
             encoding,
             timeout,
             mut headers,
-            ..
+            response: _,
         } = self;
 
         let payload = encode(encoding, body).map_err(|message| NatsRequestError::Encode {
@@ -227,14 +217,7 @@ where
             message,
         });
 
-        if header_value(&headers, REQUEST_ID_HEADER).is_none() {
-            set_header(
-                &mut headers,
-                REQUEST_ID_HEADER,
-                &uuid::Uuid::new_v4().to_string(),
-            );
-        }
-        set_header(&mut headers, CONTENT_TYPE_HEADER, encoding.content_type());
+        request_headers(encoding, &mut headers);
 
         let client = client.clone();
         Box::pin(async move {
@@ -264,8 +247,9 @@ where
 
 /// Sends a typed request on a core-NATS subject.
 ///
-/// Implemented for `async_nats::Client`, so any context handing out a client —
-/// [`HasNatsClient`](crate::HasNatsClient) among them — can ask on a subject.
+/// Implemented for `async_nats::Client`, so a context holding a connection
+/// asks through the client it holds — `ctx.nats_client().typed_request(..)`
+/// for one implementing [`HasNatsClient`](crate::HasNatsClient).
 pub trait NatsRequestExt {
     /// Build a request carrying `body` on `subject`.
     ///
@@ -293,6 +277,35 @@ impl NatsRequestExt for async_nats::Client {
             response: PhantomData,
         }
     }
+}
+
+/// The reply headers a responder sets on every reply, whatever the handler
+/// asked for. They describe the transport hop rather than the message, so
+/// they belong to neither end's own headers.
+const FRAMEWORK_HEADERS: [&str; 5] = [
+    CONTENT_TYPE_HEADER,
+    REQUEST_ID_HEADER,
+    ERROR_CODE_HEADER,
+    ERROR_MESSAGE_HEADER,
+    ERROR_STATUS_HEADER,
+];
+
+/// Finish the caller's headers into what goes on the wire.
+///
+/// The encoding owns `content-type`, so a caller-set one is replaced rather
+/// than honoured: a request announcing an encoding it did not use is answered
+/// in a form the reply decode cannot read. A caller-set `x-request-id` is
+/// kept, since correlating the hop with the caller's own trace is the reason
+/// to set one.
+fn request_headers(encoding: NatsEncoding, headers: &mut HeaderMap) {
+    if header_value(headers, REQUEST_ID_HEADER).is_none() {
+        set_header(
+            headers,
+            REQUEST_ID_HEADER,
+            &uuid::Uuid::new_v4().to_string(),
+        );
+    }
+    set_header(headers, CONTENT_TYPE_HEADER, encoding.content_type());
 }
 
 fn encode<Req: ToFlatBuffer>(encoding: NatsEncoding, body: &Req) -> Result<Vec<u8>, String> {
@@ -334,19 +347,29 @@ fn transport_error(
 
 /// Rebuild the error a responder returned from the headers it discriminates
 /// replies with.
-fn rejection(headers: HeaderMap) -> FlatbedRouteError<()> {
+///
+/// The framework's own reply headers are consumed rather than carried: an
+/// error propagated onto an HTTP response would otherwise announce the NATS
+/// hop's content type and request id as the HTTP response's own.
+fn rejection(mut headers: HeaderMap) -> FlatbedRouteError<()> {
     let status = header_value(&headers, ERROR_STATUS_HEADER)
         .and_then(|status| StatusCode::from_bytes(status.as_bytes()).ok())
         .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let code = header_value(&headers, ERROR_CODE_HEADER)
+        .unwrap_or("ERROR")
+        .to_string();
+    let message = header_value(&headers, ERROR_MESSAGE_HEADER)
+        .unwrap_or_default()
+        .to_string();
+
+    for name in FRAMEWORK_HEADERS {
+        headers.remove(name);
+    }
 
     FlatbedRouteError {
         status,
-        code: header_value(&headers, ERROR_CODE_HEADER)
-            .unwrap_or("ERROR")
-            .to_string(),
-        message: header_value(&headers, ERROR_MESSAGE_HEADER)
-            .unwrap_or_default()
-            .to_string(),
+        code,
+        message,
         headers,
         details: None,
     }
@@ -379,7 +402,59 @@ mod tests {
         assert_eq!(
             header_value(&error.headers, "x-trace"),
             Some("t-9"),
-            "the rest of the reply's headers reach the caller"
+            "the handler's own error headers reach the caller"
+        );
+    }
+
+    /// A rejection propagated onto an HTTP response contributes its headers to
+    /// that response, so the headers describing the NATS hop must not survive
+    /// as claims about the HTTP one.
+    #[test]
+    fn a_rejection_does_not_carry_the_hops_own_headers() {
+        let error = rejection(headers(&[
+            (CONTENT_TYPE_HEADER, "application/x-flatbuffers"),
+            (REQUEST_ID_HEADER, "inner-hop"),
+            (ERROR_CODE_HEADER, "NOT_FOUND"),
+            (ERROR_MESSAGE_HEADER, "gone"),
+            (ERROR_STATUS_HEADER, "404"),
+        ]));
+
+        assert_eq!(error.status, StatusCode::NOT_FOUND);
+        assert_eq!(error.code, "NOT_FOUND");
+        assert!(
+            error.headers.is_empty(),
+            "every header the framework sets on a reply describes the hop, not the error"
+        );
+    }
+
+    /// A request announcing an encoding it did not use is answered in a form
+    /// the reply decode cannot read, so the encoding wins over a caller-set
+    /// content type. A caller-set request id is kept, since correlating the
+    /// hop with the caller's trace is the reason to set one.
+    #[test]
+    fn the_encoding_owns_the_content_type_and_a_caller_owns_the_request_id() {
+        let mut supplied = headers(&[
+            (CONTENT_TYPE_HEADER, "text/plain"),
+            (REQUEST_ID_HEADER, "caller-1"),
+        ]);
+        request_headers(NatsEncoding::Json, &mut supplied);
+
+        assert_eq!(
+            header_value(&supplied, CONTENT_TYPE_HEADER),
+            Some("application/json")
+        );
+        assert_eq!(header_value(&supplied, REQUEST_ID_HEADER), Some("caller-1"));
+
+        let mut bare = HeaderMap::new();
+        request_headers(NatsEncoding::FlatBuffer, &mut bare);
+
+        assert_eq!(
+            header_value(&bare, CONTENT_TYPE_HEADER),
+            Some("application/x-flatbuffers")
+        );
+        assert!(
+            header_value(&bare, REQUEST_ID_HEADER).is_some_and(|id| !id.is_empty()),
+            "a request without a caller-set id still carries one"
         );
     }
 

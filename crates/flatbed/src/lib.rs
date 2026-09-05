@@ -608,6 +608,14 @@ pub trait FromFlatBuffer: Sized {
     fn from_flatbuffer(bytes: &[u8]) -> Result<Self, flatbuffers::InvalidFlatbuffer>;
 }
 
+/// The mirror of [`ToFlatBuffer`]'s unit implementation, so a body-less
+/// response is as decodable as it is encodable.
+impl FromFlatBuffer for () {
+    fn from_flatbuffer(_bytes: &[u8]) -> Result<Self, flatbuffers::InvalidFlatbuffer> {
+        Ok(())
+    }
+}
+
 /// Trait connecting FlatBuffer types to their plain struct companions
 ///
 /// This allows the `#[route]` macro to discover the plain struct type

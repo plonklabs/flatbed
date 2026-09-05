@@ -271,7 +271,7 @@ use flatbed::NatsRequestExt;
 
 let status: SatelliteStatus = ctx.nats
     .typed_request("plonk.satellite.x07.call.status", &StatusQuery::default())
-    .timeout(Duration::from_secs(5))
+    .timeout(Duration::from_secs(2))
     .await?;
 ```
 

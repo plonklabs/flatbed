@@ -235,7 +235,9 @@ fn find_conflict<'a>(
 /// content type; every other body goes through the encoding's serializer.
 /// The handler's own response headers ride along, except that the reply's
 /// `content-type` and `x-request-id` always describe what was actually
-/// published.
+/// published, and the error headers are dropped — their presence is what a
+/// requester reads a reply as a rejection by, so a success must not carry
+/// them whatever the handler set.
 #[must_use]
 pub fn reply_ok<T: ToFlatBuffer>(
     encoding: NatsEncoding,
@@ -262,6 +264,9 @@ pub fn reply_ok<T: ToFlatBuffer>(
     };
 
     let mut headers = copy_headers(&response.headers);
+    for name in [ERROR_CODE_HEADER, ERROR_MESSAGE_HEADER, ERROR_STATUS_HEADER] {
+        headers.remove(name);
+    }
     set_header(&mut headers, CONTENT_TYPE_HEADER, &content_type);
     set_header(&mut headers, REQUEST_ID_HEADER, request_id);
 
@@ -726,6 +731,20 @@ mod tests {
             header_value(&reply.headers, ERROR_MESSAGE_HEADER),
             Some("line one line two  end")
         );
+    }
+
+    /// A requester reads a reply as a rejection by the presence of
+    /// `x-error-code`, so a handler that puts one on a success must not be
+    /// able to make its own answer look like a failure.
+    #[test]
+    fn a_success_reply_never_carries_the_error_headers() {
+        let reply = reply_ok(
+            NatsEncoding::Json,
+            "req-6",
+            Response::ok(()).header("x-error-code", "NOT_FOUND"),
+        );
+
+        assert_eq!(header_value(&reply.headers, ERROR_CODE_HEADER), None);
     }
 
     #[test]

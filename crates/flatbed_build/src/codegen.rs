@@ -630,21 +630,13 @@ fn generate_flatbed_trait_impls(
     output.push_str("        }\n");
     output.push_str("    }\n\n");
 
-    // FromFlatBuffer trait implementation. The body is spelled out rather
-    // than delegating to the identically-named inherent method: which of the
-    // two a `Self::from_flatbuffer(..)` call resolves to is a resolution rule
-    // rather than something visible in the generated text, and resolving to
-    // the trait method is infinite recursion.
+    // FromFlatBuffer trait implementation (delegates to inherent impl)
     output.push_str(&format!(
         "    impl ::flatbed::FromFlatBuffer for {} {{\n",
         table.name
     ));
     output.push_str("        fn from_flatbuffer(bytes: &[u8]) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {\n");
-    output.push_str(&format!(
-        "            let fb = ::flatbed::flatbuffers::root::<super::__fb::{}::{}>(&bytes)?;\n",
-        namespace, table.name
-    ));
-    output.push_str("            Ok(Self::from_fb(&fb))\n");
+    output.push_str("            Self::from_flatbuffer(bytes)\n");
     output.push_str("        }\n");
     output.push_str("    }\n\n");
 

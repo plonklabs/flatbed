@@ -55,8 +55,9 @@ jobs:
       - run: cargo test --workspace --all-features
 
   # StreamWorker / KvWorker, #[nats_route], and typed-request integration
-  # tests against a real broker. GitHub service containers can't pass container args (the -js
-  # flag that enables JetStream), so the broker runs as a docker step.
+  # tests against a real broker. GitHub service containers can't pass
+  # container args (the -js flag that enables JetStream), so the broker runs
+  # as a docker step.
   nats-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30

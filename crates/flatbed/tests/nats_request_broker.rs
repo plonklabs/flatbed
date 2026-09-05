@@ -281,6 +281,41 @@ async fn a_handler_rejection_arrives_as_the_error_the_handler_returned() {
         Some("t-9"),
         "the handler's own error headers reach the caller"
     );
+    assert!(
+        error.headers.get("content-type").is_none() && error.headers.get("x-request-id").is_none(),
+        "an error propagated onto an HTTP response must not describe the NATS hop"
+    );
+
+    task.abort();
+}
+
+// ============================================================================
+// Body-less replies
+// ============================================================================
+
+#[nats_route("flatbed.tr.ack")]
+async fn ack(req: Request<TestRequest, Arc<TrCtx>>) -> Result<Response<()>, FlatbedRouteError> {
+    req.ctx.record(req.body.message.clone().unwrap_or_default());
+    Ok(Response::ok(()))
+}
+
+/// A subject that acknowledges without a body still has a type its caller can
+/// bind, so the ack-only shape needs no escape hatch.
+#[tokio::test]
+#[ignore]
+async fn a_body_less_reply_decodes_as_the_unit_type() {
+    let ctx = tr_ctx().await;
+    let task = spawn_route("flatbed.tr.ack", &ctx);
+    wait_route_ready(&ctx, "flatbed.tr.ack").await;
+
+    let reply: () = ctx
+        .nats
+        .typed_request("flatbed.tr.ack", &query(1, "noted"))
+        .await
+        .expect("the responder must answer");
+
+    assert_eq!(reply, ());
+    assert_eq!(ctx.snapshot(), vec!["noted".to_string()]);
 
     task.abort();
 }
