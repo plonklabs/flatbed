@@ -607,7 +607,7 @@ mod tests {
     use super::health_body;
 
     #[test]
-    fn health_body_is_the_bare_verdict_when_every_worker_runs() {
+    fn health_body_leads_with_the_verdict() {
         assert_eq!(health_body("OK").lines().next(), Some("OK"));
     }
 

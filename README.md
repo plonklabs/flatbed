@@ -360,8 +360,9 @@ Backoff doubles from the floor to the cap, jittered so replicas that saw the
 same outage do not reconnect in lockstep, and a run that lasts at least the cap
 counts as a recovery. Ten consecutive restarts (`.max_restarts(n)` to change
 it) escalate to the loud path. Every worker's state — `running`, `backing-off`,
-`failed` — is a `flatbed_worker_state` series in `/metrics` and a line in the
-`/healthz` body, so a failing probe names the worker behind it.
+`failed` — is a `flatbed_worker_state` series in `/metrics`, and any worker that
+is not running is also named on its own line in the `/healthz` body, so a
+failing probe names the worker behind it.
 
 Each `register_*!` macro also registers the worker trait's `drain`, which the
 shutdown path calls once the server stops accepting connections; it defaults to
@@ -372,7 +373,7 @@ a no-op.
 | Crate | Purpose |
 |---|---|
 | [`flatbed`](crates/flatbed) | HTTP server, route registry, optional telemetry / OpenAPI / NATS / Kubernetes feature gates |
-| [`flatbed_macros`](crates/flatbed_macros) | `#[route]`, `#[nats_route]`, `#[worker]`, and `#[flatbed::main]` procedural macros |
+| [`flatbed_macros`](crates/flatbed_macros) | `#[route]`, `#[nats_route]`, and `#[flatbed::main]` procedural macros |
 | [`flatbed_build`](crates/flatbed_build) | Build-time FlatBuffer codegen and the `flatbed` CLI tool (`cargo install flatbed_build` ships the binary) |
 
 ## License
