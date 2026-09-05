@@ -357,8 +357,11 @@ Keep exactly one persistent watchdog armed:
 Triggered after the user steered a worker directly, after a context reset,
 or on demand. Rebuild purely from GitHub + the worktrees:
 
-1. Per seat N: `gh api "repos/plonklabs/flatbed/issues?state=open&labels=orchestrator:$PLONK_AGENT_ID,worker:🤖flatbedN"`
-   → expect ≤1 non-blocked issue. No label ⇒ seat idle.
+1. Per seat N: `gh api repos/plonklabs/flatbed/issues -X GET -f state=open -f
+   labels="orchestrator:$PLONK_AGENT_ID,worker:🤖flatbedN"` → expect ≤1
+   non-blocked issue. No label ⇒ seat idle. The label filter goes through
+   `-f`, not a literal query string: these labels carry emoji and spaces, and
+   an unencoded one returns an HTML error page, not an empty list.
 2. Find the issue's PR and read its `state:*` label → the phase.
 3. `git -C worktrees/flatbedN branch --show-current` cross-checked against
    the PR's head branch. On mismatch, message the worker: "what issue/PR are

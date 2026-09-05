@@ -75,7 +75,7 @@ if grep -Eq '(^|[;&|[:space:]])gh[[:space:]]+pr[[:space:]]+list([[:space:]]|$)' 
   deny 'gh pr list wraps GraphQL; use gh api "repos/{owner}/{repo}/pulls?state=open" instead.'
 fi
 if grep -Eq '(^|[;&|[:space:]])gh[[:space:]]+issue[[:space:]]+(list|view)([[:space:]]|$)' <<<"$stripped"; then
-  deny 'gh issue list/view wraps GraphQL; use gh api "repos/{owner}/{repo}/issues?state=open&labels=..." or repos/{owner}/{repo}/issues/{n} instead.'
+  deny "gh issue list/view wraps GraphQL; use gh api repos/{owner}/{repo}/issues -X GET -f state=open -f labels=... (label filters need -f: emoji and spaces must be encoded) or repos/{owner}/{repo}/issues/{n} instead."
 fi
 if grep -Eq '(^|[;&|[:space:]])gh[[:space:]]+issue[[:space:]]+create([[:space:]]|$)' <<<"$stripped"; then
   deny "gh issue create wraps GraphQL; use gh api repos/{owner}/{repo}/issues -f title=... -F body=@file instead."

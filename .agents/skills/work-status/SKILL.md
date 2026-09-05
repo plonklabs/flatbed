@@ -29,10 +29,12 @@ user. Safe to run at any time, including mid-dispatch — it mutates nothing.
 
 ```bash
 # per seat: owned issues and their states — scoped to this orchestrator
-gh api "repos/plonklabs/flatbed/issues?state=open&labels=orchestrator:$PLONK_AGENT_ID,worker:🤖flatbedN" \
+gh api repos/plonklabs/flatbed/issues -X GET \
+  -f state=open -f labels="orchestrator:$PLONK_AGENT_ID,worker:🤖flatbedN" \
   --jq '.[] | {number, title, url: .html_url, labels: [.labels[].name]}'
 # dispatch-ready backlog
-gh api "repos/plonklabs/flatbed/issues?state=open&labels=orchestrator:$PLONK_AGENT_ID,✅ ready" \
+gh api repos/plonklabs/flatbed/issues -X GET \
+  -f state=open -f labels="orchestrator:$PLONK_AGENT_ID,✅ ready" \
   --jq '.[] | {number, title, url: .html_url}'
 # in-flight PRs, then their check states at head
 gh api "repos/plonklabs/flatbed/pulls?state=open" \
@@ -45,8 +47,12 @@ fleet ls
 fleet doctor || true
 ```
 
-The REST issues endpoint returns pull requests as issues too; drop any entry
-carrying a `pull_request` key before counting the backlog.
+Two properties of these endpoints bite silently. Label filters go through
+`-X GET -f`, never a literal `?labels=...` query string: this repo's labels
+carry emoji and spaces, and an unencoded query string comes back as an HTML
+error page (`invalid character '<'`) rather than an empty list. And the issues
+endpoint returns pull requests as issues too — drop any entry carrying a
+`pull_request` key before counting the backlog.
 
 ## Rendering
 
