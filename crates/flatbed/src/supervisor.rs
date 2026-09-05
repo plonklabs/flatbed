@@ -13,9 +13,9 @@
 //!
 //! With a [`RestartPolicy`] the worker is re-run after a capped, jittered
 //! backoff until it exceeds the policy's restart bound, at which point it
-//! takes the loud path. A run that lasts at least `max_backoff` is treated as
-//! a recovery and resets the count, so the bound only ever measures
-//! consecutive rapid failures.
+//! takes the loud path. A run that lasts at least the effective cap — the
+//! larger of the policy's two bounds — is treated as a recovery and resets
+//! the count, so the bound only ever measures consecutive rapid failures.
 //!
 //! Once graceful shutdown has begun a worker's exit is a consequence of it,
 //! so the supervisor logs the outcome and does nothing else.
@@ -331,16 +331,22 @@ fn fail(
     }
 }
 
-/// Spread the backoff over `[delay / 2, delay]`, drawing the offset from a
-/// per-process random hasher keyed by worker and attempt. Two replicas that
-/// saw the same outage, and two workers backing off within the same instant,
-/// therefore wait different amounts instead of retrying in lockstep.
+/// Seeded once per process, so the offset a worker draws is a function of the
+/// worker and attempt within a process but differs between replicas.
+static JITTER: std::sync::OnceLock<RandomState> = std::sync::OnceLock::new();
+
+/// Spread the backoff over `[delay / 2, delay]`, drawing the offset by hashing
+/// the worker and attempt. Two replicas that saw the same outage hash under
+/// different seeds, and two workers backing off within the same instant hash
+/// different keys, so neither retries in lockstep.
 fn jittered(delay: Duration, worker: &str, attempt: u32) -> Duration {
     let half = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX) / 2;
     if half == 0 {
         return delay;
     }
-    let offset = RandomState::new().hash_one((worker, attempt));
+    let offset = JITTER
+        .get_or_init(RandomState::new)
+        .hash_one((worker, attempt));
     Duration::from_millis(half + offset % (half + 1))
 }
 
@@ -556,5 +562,20 @@ mod tests {
             .map(|i| jittered(delay, "same-instant", i))
             .collect();
         assert!(draws.len() > 1, "every worker drew the same backoff");
+    }
+
+    /// The offset is a function of the key, not of the moment it is drawn —
+    /// a per-call hasher seed would make the key dead.
+    #[test]
+    fn jitter_is_keyed_by_worker_and_attempt() {
+        let delay = Duration::from_secs(30);
+        assert_eq!(
+            jittered(delay, "keyed-worker", 3),
+            jittered(delay, "keyed-worker", 3)
+        );
+        assert_ne!(
+            jittered(delay, "keyed-worker", 3),
+            jittered(delay, "other-worker", 3)
+        );
     }
 }
