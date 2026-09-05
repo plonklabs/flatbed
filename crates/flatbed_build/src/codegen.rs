@@ -630,6 +630,24 @@ fn generate_flatbed_trait_impls(
     output.push_str("        }\n");
     output.push_str("    }\n\n");
 
+    // FromFlatBuffer trait implementation. The body is spelled out rather
+    // than delegating to the identically-named inherent method: which of the
+    // two a `Self::from_flatbuffer(..)` call resolves to is a resolution rule
+    // rather than something visible in the generated text, and resolving to
+    // the trait method is infinite recursion.
+    output.push_str(&format!(
+        "    impl ::flatbed::FromFlatBuffer for {} {{\n",
+        table.name
+    ));
+    output.push_str("        fn from_flatbuffer(bytes: &[u8]) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {\n");
+    output.push_str(&format!(
+        "            let fb = ::flatbed::flatbuffers::root::<super::__fb::{}::{}>(&bytes)?;\n",
+        namespace, table.name
+    ));
+    output.push_str("            Ok(Self::from_fb(&fb))\n");
+    output.push_str("        }\n");
+    output.push_str("    }\n\n");
+
     // HasJsonCompanion trait implementation (plain struct IS the companion now)
     output.push_str(&format!(
         "    impl ::flatbed::HasJsonCompanion for super::__fb::{}::{}<'_> {{\n",
@@ -746,6 +764,7 @@ mod tests {
         // Check plain struct (no Json suffix)
         assert!(module.contains("pub struct TestType {"));
         assert!(module.contains("impl ::flatbed::ToFlatBuffer for TestType"));
+        assert!(module.contains("impl ::flatbed::FromFlatBuffer for TestType"));
         assert!(
             module.contains("impl ::flatbed::HasJsonCompanion for super::__fb::v_1::TestType<'_>")
         );

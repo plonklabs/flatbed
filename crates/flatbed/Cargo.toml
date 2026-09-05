@@ -71,6 +71,10 @@ name = "nats_route_broker"
 required-features = ["nats", "openapi"]
 
 [[test]]
+name = "nats_request_broker"
+required-features = ["nats", "openapi"]
+
+[[test]]
 name = "nats_route_registry"
 required-features = ["nats", "openapi"]
 

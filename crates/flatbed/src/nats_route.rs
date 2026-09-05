@@ -46,7 +46,7 @@ pub const ERROR_MESSAGE_HEADER: &str = "x-error-message";
 /// Reply header carrying the handler's numeric HTTP status (error replies only).
 pub const ERROR_STATUS_HEADER: &str = "x-error-status";
 
-const CONTENT_TYPE_HEADER: &str = "content-type";
+pub(crate) const CONTENT_TYPE_HEADER: &str = "content-type";
 const JSON_CONTENT_TYPE: &str = "application/json";
 const FLATBUFFER_CONTENT_TYPE: &str = "application/x-flatbuffers";
 
@@ -332,7 +332,7 @@ fn copy_headers(source: &HeaderMap) -> HeaderMap {
 /// `http` rejects a header value containing a control character, so values
 /// are flattened to stay carryable — an error message quoting a multi-line
 /// payload is one.
-fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
+pub(crate) fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
     let flattened: String = value
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
@@ -349,7 +349,7 @@ fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
 /// NATS header names are case-preserving byte strings; `http::HeaderName`
 /// parsing lowercases them, so a `X-Request-Id` sent by a requester is read
 /// back under its lowercase name.
-fn from_nats_headers(source: Option<&async_nats::HeaderMap>) -> HeaderMap {
+pub(crate) fn from_nats_headers(source: Option<&async_nats::HeaderMap>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     let Some(source) = source else {
         return headers;
@@ -368,7 +368,7 @@ fn from_nats_headers(source: Option<&async_nats::HeaderMap>) -> HeaderMap {
     headers
 }
 
-fn to_nats_headers(source: &HeaderMap) -> async_nats::HeaderMap {
+pub(crate) fn to_nats_headers(source: &HeaderMap) -> async_nats::HeaderMap {
     let mut headers = async_nats::HeaderMap::new();
     for (name, value) in source.iter() {
         let Ok(value) = value.to_str() else {
@@ -379,7 +379,7 @@ fn to_nats_headers(source: &HeaderMap) -> async_nats::HeaderMap {
     headers
 }
 
-fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+pub(crate) fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 

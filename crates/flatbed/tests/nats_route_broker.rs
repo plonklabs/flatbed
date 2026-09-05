@@ -9,7 +9,7 @@
 //! scripts/nats-broker.sh up
 //! NATS_URL=$(scripts/nats-broker.sh url) \
 //!   cargo test -p flatbed --features nats,openapi \
-//!     --test nats_broker --test nats_route_broker -- --ignored
+//!     --test nats_broker --test nats_route_broker --test nats_request_broker -- --ignored
 //! ```
 //!
 //! `NATS_URL` defaults to `localhost:4222`.
