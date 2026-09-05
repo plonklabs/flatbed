@@ -22,11 +22,10 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 EXPECTED="$(cat "$REPO_ROOT/.flatc-version" | tr -d '[:space:]')"
 
-# `worktree-setup.sh` caches the pinned flatc under the main checkout's
-# `.cache/flatc/<version>/`, keyed off the common .git dir so every worker
-# worktree resolves the same shared cache regardless of which checkout is
-# running this script. Prefer it on PATH before falling back to whatever
-# flatc the host happens to have installed.
+# Prepend the version-pinned flatc cache to PATH when present, so it takes
+# precedence over whatever flatc the host has installed. The cache lives
+# under the main checkout, keyed off the common .git dir so every worker
+# worktree resolves the same shared location.
 COMMON_GIT_DIR="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
 case "$COMMON_GIT_DIR" in
   /*) ;;

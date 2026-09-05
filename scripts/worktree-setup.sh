@@ -22,11 +22,9 @@ for n in 1 2 3 4; do
     echo "$dir created on $branch"
 done
 
-# Fetch the `.flatc-version`-pinned flatc binary into a cache under the main
-# checkout: seats otherwise skip scripts/check-generated.sh whenever the
-# host's own flatc has drifted from the pin. check-flatc-version.sh resolves
-# this same cache from any worktree (via the shared common .git dir) and
-# prefers it on PATH.
+# Cache the pinned flatc binary here so any worktree running the version
+# check can prefer it over whatever flatc the host has — otherwise a seat's
+# own drifted flatc means silently skipping the codegen-drift gate.
 flatc_version="$(tr -d '[:space:]' <.flatc-version)"
 cache_dir=".cache/flatc/$flatc_version"
 if [ -x "$cache_dir/flatc" ]; then
