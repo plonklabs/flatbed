@@ -104,4 +104,52 @@ git -C "$tmp" switch -q -c feature/x
 expect allow "git -C $tmp commit -m x"
 rm -rf "$tmp"
 
+# Release operations are restricted to release tasks.
+run_with_task_kind() { # <task_kind> <command>
+  jq -n --arg c "$2" '{tool_input: {command: $c}}' | CLAUDE_PROJECT_DIR="$repo_root" FLEET_TASK_KIND="$1" bash "$hook"
+}
+decision_with_task_kind() { # <task_kind> <command>
+  out="$(run_with_task_kind "$1" "$2")"; [ -z "$out" ] && { echo allow; return; }; jq -r '.hookSpecificOutput.permissionDecision // "allow"' <<<"$out"
+}
+expect_with_task_kind() { # <task_kind> <deny|allow> <command>
+  got="$(decision_with_task_kind "$1" "$3")"
+  [ "$got" = "$2" ] || fail "expected $2 for ($1): $3 (got $got)"
+}
+
+# git push of tag refs denied unless task kind is release
+expect deny  'git push origin refs/tags/flatbed-v0.0.3'
+expect deny  'git push --force-with-lease origin refs/tags/v1.0'
+expect deny  'git push origin :refs/tags/flatbed-v0.0.2'
+expect deny  'git push origin --tags'
+expect deny  'git push --follow-tags origin main'
+expect allow 'git push origin feature/myfeature'
+expect allow 'git push origin main'
+expect_with_task_kind release allow 'git push origin refs/tags/flatbed-v0.0.3'
+expect_with_task_kind release allow 'git push --force-with-lease origin refs/tags/v1.0'
+expect_with_task_kind release allow 'git push origin --tags'
+expect_with_task_kind release allow 'git push --follow-tags origin main'
+expect_with_task_kind implement deny 'git push origin refs/tags/flatbed-v0.0.3'
+
+# gh release create denied unless task kind is release
+expect deny  'gh release create v0.0.1 --notes "release notes"'
+expect deny  'gh release create flatbed-v0.0.3'
+expect_with_task_kind release allow 'gh release create v0.0.1 --notes "release notes"'
+expect_with_task_kind implement deny 'gh release create v0.0.1'
+
+# gh release delete denied unless task kind is release
+expect deny  'gh release delete v0.0.1'
+expect deny  'gh release delete flatbed-v0.0.3 --yes'
+expect_with_task_kind release allow 'gh release delete v0.0.1'
+expect_with_task_kind implement deny 'gh release delete v0.0.1'
+
+# Quoted prose and heredoc bodies mentioning release commands are allowed
+expect allow 'echo "do not run: gh release create v0.0.1"'
+expect allow 'fleet brief --issue 48 --extra "releases use git push origin refs/tags/..."'
+release_echo='cat <<EOF
+Release procedure:
+  git push origin refs/tags/flatbed-v0.0.3
+  gh release create flatbed-v0.0.3
+EOF'
+expect allow "$release_echo"
+
 echo "validated guard-bash hook fixtures"
