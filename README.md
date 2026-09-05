@@ -311,11 +311,16 @@ connect error rather than a panic at startup.
 Readiness is two things: the one-shot boot latch, and any number of *gates*.
 A gate is a named dependency that can come and go for the life of the process
 — `/readyz` returns 200 only when the boot latch is set and every gate is
-ready, and names the blocking gates in its 503 body. The connector holds the
-gate it is given open while connected and closes it while disconnected, so a
-dropped broker connection takes the pod out of its Service endpoints for
-exactly the interval the connection is down. Nothing registers a gate on your
-behalf: a service with no gates behaves exactly as before.
+ready, and names the blocking gates in its 503 body. Declared routes answer
+503 for the same interval, the way they already do during boot, so readiness
+stays one notion rather than two that can disagree.
+
+The connector opens the gate it is given while connected and closes it while
+disconnected, draining, or closed, so a dropped broker connection takes the
+pod out of its Service endpoints for exactly the interval the connection is
+down. Reconnection is unbounded: a broker that is away for an hour is waited
+out rather than giving up on the pod. Nothing registers a gate on your behalf
+— a service with no gates behaves exactly as before.
 
 ## Crates
 

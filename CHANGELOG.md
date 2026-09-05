@@ -36,7 +36,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   jitters the client's own reconnect delays, and drives a `ReadinessGate` from
   the connection's state — so a broker that drops takes `/readyz` to 503 for
   exactly the interval the connection is down, and restores it when the client
-  reconnects.
+  reconnects. Reconnection is unbounded; a long broker outage is waited out
+  rather than giving up on the process.
 
 ### Changed
 
