@@ -29,7 +29,6 @@ use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::LazyLock;
 
-// NATS JetStream support (enabled with "nats" feature)
 #[cfg(feature = "nats")]
 pub mod nats;
 #[cfg(feature = "nats")]
@@ -50,7 +49,6 @@ pub mod kv;
 #[cfg(feature = "nats")]
 pub use kv::{run_kv_worker, KvWorker};
 
-// Re-export async-nats for use in generated macro code
 #[cfg(feature = "nats")]
 #[doc(hidden)]
 pub use async_nats;
