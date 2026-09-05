@@ -814,6 +814,95 @@ async fn test_head_request_builtins_strip_body_keep_length() {
     server.abort();
 }
 
+/// A `before_request` guard rejects a request with its own status/code
+/// before the matched route handler runs, and lets a request through once it
+/// satisfies the guard.
+#[tokio::test]
+#[allow(clippy::result_large_err)]
+async fn test_before_request_guard_rejects_before_handler_runs() {
+    use flatbed::{Flatbed, FlatbedConfig};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let telemetry: Arc<dyn flatbed::TelemetryService> = Arc::new(StubTelemetryService);
+    let config = FlatbedConfig::new("Test API")
+        .host("127.0.0.1")
+        .port(port)
+        .with_telemetry(telemetry)
+        .before_request(|req| match req.header("authorization") {
+            Some("Bearer secret") => Ok(()),
+            _ => Err(
+                FlatbedRouteError::unauthorized("missing or invalid bearer token")
+                    .code("UNAUTHORIZED"),
+            ),
+        });
+
+    let server = tokio::spawn(async move { Flatbed::run(config, |_| async { Ok(()) }).await });
+
+    let base = format!("http://127.0.0.1:{}", port);
+    let client = reqwest::Client::new();
+
+    let mut ready = false;
+    for _ in 0..100 {
+        if let Ok(r) = client.get(format!("{}/readyz", base)).send().await {
+            if r.status().as_u16() == 200 {
+                ready = true;
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    }
+    assert!(ready, "server did not become ready");
+
+    // No Authorization header: the guard rejects before the handler runs.
+    let resp = client
+        .post(format!("{}/api/ping", base))
+        .header("content-type", "application/json")
+        .body(r#"{"message":"hi","value":1}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 401);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["code"], "UNAUTHORIZED");
+    assert_eq!(body["message"], "missing or invalid bearer token");
+    assert!(body.get("value").is_none());
+
+    // Same rejection over FlatBuffers: code/message travel in headers with an
+    // empty body, matching the `#[route]` macro's own error-response shape.
+    let resp = client
+        .post(format!("{}/api/ping", base))
+        .header("content-type", "application/x-flatbuffers")
+        .body(Vec::<u8>::new())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 401);
+    assert_eq!(resp.headers().get("x-error-code").unwrap(), "UNAUTHORIZED");
+    assert_eq!(
+        resp.headers().get("x-error-message").unwrap(),
+        "missing or invalid bearer token"
+    );
+    assert!(resp.bytes().await.unwrap().is_empty());
+
+    // Correct bearer token: the guard passes and the handler runs normally.
+    let resp = client
+        .post(format!("{}/api/ping", base))
+        .header("content-type", "application/json")
+        .header("authorization", "Bearer secret")
+        .body(r#"{"message":"hi","value":1}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    let body: TestResponse = resp.json().await.unwrap();
+    assert_eq!(body.value, 1 + 100);
+
+    server.abort();
+}
+
 #[test]
 fn test_router_path_matching() {
     use flatbed::hyper::Router;
