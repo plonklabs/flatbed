@@ -27,5 +27,8 @@ Thumbs.db
 worktrees/flatbed*/
 .plonk/local/
 
+# Cached pinned toolchain binaries (flatc), shared across worktrees
+.cache/flatc/
+
 # Orchestrator identity (seeded from .env.tpl)
 .env
