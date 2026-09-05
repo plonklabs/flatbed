@@ -63,7 +63,7 @@ orchestrator still never commits to the worker's branch.
 
 ## Merge discipline
 
-- `fleet merge <n>` is the **only** sanctioned precondition check for
+- `fleet merge <n> --no-merge` is the **only** sanctioned precondition check for
   orchestrated PRs. It pins the head SHA and refuses unless every
   precondition holds *at that SHA*: not a draft; every branch-required check
   completed `SUCCESS`; and every gate in `.fleet/merge.toml` passes —

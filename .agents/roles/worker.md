@@ -136,7 +136,8 @@ On close-out, clean the seat: `cargo clean` in the worktree and
 **Dispatch-authorized merges run autonomously.** When work arrives via
 `/implement` on an agreed plan or epic, plan approval is the merge
 authorization — the worker runs the full ready → review-bot loop →
-`fleet merge` without a per-PR approval stop. Gates remain absolute: the CI
+`fleet merge <n> --no-merge` → authorized admin merge without a per-PR
+approval stop. Gates remain absolute: the CI
 workflow green at head, the review bot's body read with every finding applied
 or explicitly declined. Stop-at-green (surface for the user's merge decision)
 is an explicit per-dispatch override, not the default for dispatched work.

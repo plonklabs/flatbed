@@ -96,6 +96,22 @@ jobs:
           sudo install -m 0755 flatc /usr/local/bin/flatc
       - run: bash scripts/check-generated.sh
 
+  # The agent harness is instructions plus two enforcement seams, none of which
+  # the Rust jobs compile. Without these the merge gate's decision paths, the
+  # hook that denies the GraphQL-backed gh porcelain, and the skills' wiring to
+  # real workflow/login/repo names are all unverified prose.
+  agent-harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate canonical agent skills
+        run: bash scripts/validate-agent-skills.sh
+      - name: Test Claude hook guards
+        run: bash scripts/test-claude-hooks.sh
+      - name: Test merge-gate contracts
+        run: bash scripts/test-merge-gate-contracts.sh
+
   # The examples/ projects are standalone packages (own [workspace] table), so
   # the workspace clippy/test jobs above don't reach them. Lint each one so a
   # framework API change can't silently break a published example.
@@ -182,7 +198,7 @@ jobs:
   # Alert Discord only on main-branch breakage. PR failures are visible to the
   # author already, and fork PRs don't get the DISCORD_WEBHOOK secret.
   notify-failure:
-    needs: [fmt, clippy, test, nats-integration, check-generated, examples, flatbed-client, codec-compat, flatbed-client-e2e]
+    needs: [fmt, clippy, test, nats-integration, check-generated, agent-harness, examples, flatbed-client, codec-compat, flatbed-client-e2e]
     if: failure() && github.event_name == 'push'
     uses: plonklabs/.github/.github/workflows/discord-notify-failure.yml@main
     with:

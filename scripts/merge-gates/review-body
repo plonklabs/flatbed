@@ -23,25 +23,37 @@ its verdict as a plain *issue comment*, and `GET /pulls/{n}/reviews` returns
      both paths), so a straggler comment from another round can't be read as
      this round's verdict.
   2. Failing that, correlate the `review / review` check run at the head SHA
-     with a fresh bot comment: the run must have completed `success`, and the
-     latest `claude[bot]` issue comment must fall inside that run's
+     with a fresh verdict comment: the run must have completed `success`, and
+     the latest qualifying issue comment must fall inside that run's
      `[started_at, completed_at]` window. The review job posts its verdict as
      one of its final steps, before the job — and thus the check run —
      concludes, so a genuine verdict's timestamp lands inside the window
      (empirically ~10s before `completed_at`). A comment before `started_at`
      belongs to an earlier round; a comment after `completed_at` is a straggler
      from a prior push's run that outlived its concurrency cancellation. Both
-     are excluded, so the body parsed belongs to the round that ran at *this*
-     head, not a clearance carried over from another push.
+     are excluded, so the body parsed belongs to the run that concluded at
+     *this* head.
+
+Two comment shapes qualify on that second path. The usual one is the
+reviewer's own top-level comment. The other is a *carried-over* verdict: the
+shared review workflow anchors its re-review delta on `git patch-id`, so a
+force-push that rewrites SHAs without changing content runs no model round and
+instead repeats the previous round's `Verdict:` line in a comment of its own,
+marked with `<!-- claude-review-carried-over -->`. Without accepting it, every
+rebase — which branch protection's up-to-date-head rule forces on each open PR
+behind a merge — would read as "no verdict at head" and refuse. It is matched
+on the workflow token's login *and* the marker *and* the run window: a
+pull-request author cannot post under a `[bot]` login, so the shape cannot be
+forged from a comment box.
 
 Either way the chosen body is read for findings identically. Fail closed when
 neither path yields a body: no verdict is never read as clearance.
 
 Two refusal shapes:
   1. No verdict can be tied to the head SHA — no review object at head, and
-     either no successful `review / review` run or no bot comment inside that
-     run's window. A clean verdict on an older SHA does not clear the current
-     head.
+     either no successful `review / review` run or no qualifying comment
+     inside that run's window. A clean verdict on an older SHA does not clear
+     the current head.
   2. The verdict body logs findings not covered by an `--ack`. Fleet forwards
      the ack strings opaquely; this gate counts one ack as covering one
      finding, in declaration order, and lists any that remain uncovered.
@@ -61,6 +73,14 @@ import subprocess
 import sys
 
 BOT_LOGIN = "claude[bot]"
+
+# The identity the review workflow posts under when it speaks for itself rather
+# than for the model — the Actions token's login.
+WORKFLOW_LOGIN = "github-actions[bot]"
+
+# Marks a verdict the review workflow carried forward across a force-push that
+# changed no content. Its body repeats the previous round's `Verdict:` line.
+CARRIED_OVER_MARKER = "<!-- claude-review-carried-over -->"
 
 # The check run the review workflow publishes at head (`<workflow> / <job>`).
 REVIEW_CHECK_NAME = "review / review"
@@ -143,50 +163,63 @@ def successful_review_run_window(check_runs):
     return latest["started_at"], latest["completed_at"]
 
 
-def latest_bot_comment_in_window(summaries, start, end):
-    """Body of the latest `claude[bot]` comment created within [start, end], or None.
+def certifies_verdict(entry):
+    """True if this comment is allowed to carry a verdict for its round.
 
-    None means no bot comment belongs to the run that produced this window —
-    distinct from '' (a bot comment exists but its body is empty, which fails
-    closed as an uncertified verdict downstream).
+    The reviewer's own comment, or a verdict the workflow carried forward. The
+    workflow's login gates the second shape: every other `github-actions[bot]`
+    comment the review job posts lacks the marker and so certifies nothing.
+    """
+    login = login_of(entry)
+    if login == BOT_LOGIN:
+        return True
+    return login == WORKFLOW_LOGIN and CARRIED_OVER_MARKER in (entry.get("body") or "")
+
+
+def latest_verdict_comment_in_window(summaries, start, end):
+    """The latest qualifying comment created within [start, end], or None.
+
+    None means no verdict comment belongs to the run that produced this window
+    — distinct from a comment whose body is empty, which fails closed as an
+    uncertified verdict downstream.
     """
     in_window = [
         c
         for c in summaries
-        if login_of(c) == BOT_LOGIN and start <= (c.get("created_at") or "") <= end
+        if certifies_verdict(c) and start <= (c.get("created_at") or "") <= end
     ]
     if not in_window:
         return None
     in_window.sort(key=lambda c: c.get("created_at", ""))
-    return in_window[-1].get("body") or ""
+    return in_window[-1]
 
 
 def verdict_body(head_sha, reviews, summaries, check_runs):
-    """Return (body, refusal). Exactly one is non-None.
+    """Return (body, carried_over, refusal). `refusal` is set iff `body` is None.
 
-    `body` is the verdict text to read for findings; `refusal` is the reason no
-    verdict could be tied to the head SHA.
+    `body` is the verdict text to read for findings; `carried_over` says the
+    verdict was repeated across a content-free force-push rather than produced
+    by a round that ran at this head, which the merge audit records.
     """
     window = successful_review_run_window(check_runs)
-    reviewed_at_head = bot_reviewed_at_head(reviews, head_sha)
     if window is not None:
         start, end = window
-        body = latest_bot_comment_in_window(summaries, start, end)
-        if body is not None:
-            return body, None
+        entry = latest_verdict_comment_in_window(summaries, start, end)
+        if entry is not None:
+            return entry.get("body") or "", login_of(entry) == WORKFLOW_LOGIN, None
         # Both paths apply the window when one exists: a comment outside the
         # successful run's [started_at, completed_at] belongs to another
         # round (a straggler from a cancelled run can land after a fresh
         # review object's submission), so a review object at head does not
         # rehabilitate an out-of-window comment.
-        return None, (
-            f"no {BOT_LOGIN} verdict at head SHA {head_sha}: `{REVIEW_CHECK_NAME}` "
+        return None, False, (
+            f"no qualifying verdict at head SHA {head_sha}: `{REVIEW_CHECK_NAME}` "
             f"ran but no comment falls within it (latest verdict is stale)"
         )
-    if reviewed_at_head:
-        return latest_bot_summary(summaries), None
-    return None, (
-        f"no {BOT_LOGIN} verdict at head SHA {head_sha}: no review object "
+    if bot_reviewed_at_head(reviews, head_sha):
+        return latest_bot_summary(summaries), False, None
+    return None, False, (
+        f"no qualifying verdict at head SHA {head_sha}: no review object "
         f"and no successful `{REVIEW_CHECK_NAME}` run"
     )
 
@@ -224,7 +257,7 @@ def parse_findings(body):
 
 def classify(head_sha, acks, reviews, summaries, check_runs):
     """Return (passed, reason). Pure over already-fetched review state."""
-    body, refusal = verdict_body(head_sha, reviews, summaries, check_runs)
+    body, carried_over, refusal = verdict_body(head_sha, reviews, summaries, check_runs)
     if refusal is not None:
         return False, refusal
     findings = parse_findings(body)
@@ -235,9 +268,12 @@ def classify(head_sha, acks, reviews, summaries, check_runs):
             f"{len(uncovered)} unacknowledged finding(s): {listed} "
             f"({len(findings)} finding(s), {len(acks)} ack(s))"
         )
+    # Named in the audit so a reader can tell a verdict a round produced at this
+    # head from one repeated across a rebase that changed no content.
+    origin = "carried over across a content-free push" if carried_over else "at head"
     if findings:
-        return True, f"{len(findings)} finding(s) acknowledged via --ack"
-    return True, f"{BOT_LOGIN} verdict clean at head"
+        return True, f"{len(findings)} finding(s) acknowledged via --ack ({origin})"
+    return True, f"{BOT_LOGIN} verdict clean {origin}"
 
 
 def gh_json(path):

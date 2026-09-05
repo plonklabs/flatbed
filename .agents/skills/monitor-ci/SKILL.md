@@ -32,10 +32,10 @@ Watch one pull request through to a terminal check state.
    lifecycle or remediates. `running`, `stale`, and `timeout` re-wake no
    one; they resume a fresh bounded check.
 
-The monitor never merges. On `success` the woken worker merges through
-`fleet merge <n>` — which re-evaluates not-draft, required checks at head,
-`ci-green`, and `review-body-clean` against the current pinned SHA before
-landing the commit.
+The monitor never merges. On `success` the woken worker runs `fleet merge <n>
+--no-merge` — which re-evaluates not-draft, required checks at head,
+`ci-green`, and `review-body-clean` against the current pinned SHA — and only
+its exit 0 authorizes the admin merge that lands the commit.
 
 ### `/monitor-ci --main --after <merge-sha>`
 
@@ -63,10 +63,16 @@ those three pieces is not a complete response.
 
 ## Monitor script patterns
 
+GitHub reads go over REST (`gh api repos/{owner}/{repo}/...`). Forbidden: `gh
+pr view`, `gh pr checks`, `gh pr list`, `gh issue list`, `gh run view --json`,
+`gh repo view`, any `--watch` — they wrap GraphQL, and a monitor is the one
+caller that polls, so it is the one most able to trip the shared user's
+GraphQL secondary rate limit.
+
 Keep `--jq` filters to plain field selection plus the `//` default operator:
 
 ```bash
-gh run view <id> --json status,conclusion \
+gh api repos/plonklabs/flatbed/actions/runs/<id> \
   --jq '.status + ":" + (.conclusion // "")'
 ```
 
@@ -79,9 +85,10 @@ notifications — a monitor in that state spins silently to its deadline.
 `conclusion != "success"` without that order classifies every running
 workflow as failed.
 
-**Check-rollup enums are UPPERCASE** (`SUCCESS`, `FAILURE`) on
-`gh pr view --json statusCheckRollup`; the lowercase forms some `gh run
-list` shapes emit belong to a different endpoint — don't mix them.
+**Check-run `status` and `conclusion` are lowercase over REST**
+(`completed`, `success`, `failure`); the UPPERCASE enums belong to the
+GraphQL check-rollup shape, so a filter carried over from the porcelain
+matches nothing and reads as "still running" forever.
 
 ## Review-check first-run flake
 

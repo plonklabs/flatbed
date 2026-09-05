@@ -30,9 +30,11 @@ checkout. It owns seat occupancy (`fleet push/pop --stack work`), user holds
 (`fleet hold`), executor records (`fleet assign`, `fleet heartbeat`), drift
 detection (`fleet doctor`), watch re-arm records (`fleet watch`), session
 hydration (`fleet resume`), board reconcile (`fleet board sync`), and the
-precondition-checked merge path (`fleet merge`, with the gates declared in
-`.fleet/merge.toml`). Fleet does not spawn agents, edit GitHub work state, or
-decide product design.
+precondition-checked merge path (`fleet merge <n> --no-merge`, with the gates
+declared in `.fleet/merge.toml`; its exit 0 is what authorizes the
+`gh pr merge --admin --match-head-commit` that lands the commit). It also
+renders every worker dispatch (`fleet brief`, spawn and re-wake). Fleet does
+not spawn agents, edit GitHub work state, or decide product design.
 
 ## Durable state
 
@@ -42,7 +44,8 @@ replacement for GitHub state.
 
 ## End-to-end flow
 
-`/spec` → dispatch (orchestrator, via the fleet work stack) → one worker per
-seat → `/implement` → `/review --auto` → `fleet merge`. Shared policy is in
+`/spec` → dispatch (orchestrator, via the fleet work stack and `fleet brief`)
+→ one worker per seat → `/implement` → `/review --auto` → `fleet merge
+--no-merge` → the authorized admin merge. Shared policy is in
 [`AGENTS.md`](../AGENTS.md); harness adapters (`.claude/`) only map native
 discovery and lifecycle capabilities.
