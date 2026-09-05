@@ -261,6 +261,29 @@ an undecodable payload and a panicking handler — so a requester's timeout neve
 means its request was rejected, only that the subject was unreachable or the
 handler never returned.
 
+## Asking on NATS subjects (optional)
+
+`typed_request` is the other side of that contract: it encodes a body, waits
+for the reply, and decodes it into the type the call site binds.
+
+```rust
+use flatbed::NatsRequestExt;
+
+let status: SatelliteStatus = ctx.nats
+    .typed_request("plonk.satellite.x07.call.status", &StatusQuery::default())
+    .timeout(Duration::from_secs(2))
+    .await?;
+```
+
+FlatBuffers unless `.encoding(NatsEncoding::Json)` says otherwise, in both
+directions; five seconds unless `.timeout(...)` says otherwise. A handler's
+rejection comes back as `NatsRequestError::Reply` carrying the
+`FlatbedRouteError` the handler returned, so the responder's status and code
+survive the hop — and `?` inside an HTTP handler propagates it, mapping an
+unreachable subject to `502` and a silent one to `504`. Nothing subscribed is
+`NoResponders`, distinct from the `Timeout` a responder that never answers
+produces.
+
 ## Crates
 
 | Crate | Purpose |

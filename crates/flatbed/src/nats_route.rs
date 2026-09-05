@@ -46,7 +46,7 @@ pub const ERROR_MESSAGE_HEADER: &str = "x-error-message";
 /// Reply header carrying the handler's numeric HTTP status (error replies only).
 pub const ERROR_STATUS_HEADER: &str = "x-error-status";
 
-const CONTENT_TYPE_HEADER: &str = "content-type";
+pub(crate) const CONTENT_TYPE_HEADER: &str = "content-type";
 const JSON_CONTENT_TYPE: &str = "application/json";
 const FLATBUFFER_CONTENT_TYPE: &str = "application/x-flatbuffers";
 
@@ -235,7 +235,9 @@ fn find_conflict<'a>(
 /// content type; every other body goes through the encoding's serializer.
 /// The handler's own response headers ride along, except that the reply's
 /// `content-type` and `x-request-id` always describe what was actually
-/// published.
+/// published, and the error headers are dropped — their presence is what a
+/// requester reads a reply as a rejection by, so a success must not carry
+/// them whatever the handler set.
 #[must_use]
 pub fn reply_ok<T: ToFlatBuffer>(
     encoding: NatsEncoding,
@@ -262,6 +264,9 @@ pub fn reply_ok<T: ToFlatBuffer>(
     };
 
     let mut headers = copy_headers(&response.headers);
+    for name in [ERROR_CODE_HEADER, ERROR_MESSAGE_HEADER, ERROR_STATUS_HEADER] {
+        headers.remove(name);
+    }
     set_header(&mut headers, CONTENT_TYPE_HEADER, &content_type);
     set_header(&mut headers, REQUEST_ID_HEADER, request_id);
 
@@ -332,7 +337,7 @@ fn copy_headers(source: &HeaderMap) -> HeaderMap {
 /// `http` rejects a header value containing a control character, so values
 /// are flattened to stay carryable — an error message quoting a multi-line
 /// payload is one.
-fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
+pub(crate) fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
     let flattened: String = value
         .chars()
         .map(|c| if c.is_control() { ' ' } else { c })
@@ -349,7 +354,7 @@ fn set_header(headers: &mut HeaderMap, name: &str, value: &str) {
 /// NATS header names are case-preserving byte strings; `http::HeaderName`
 /// parsing lowercases them, so a `X-Request-Id` sent by a requester is read
 /// back under its lowercase name.
-fn from_nats_headers(source: Option<&async_nats::HeaderMap>) -> HeaderMap {
+pub(crate) fn from_nats_headers(source: Option<&async_nats::HeaderMap>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     let Some(source) = source else {
         return headers;
@@ -368,7 +373,7 @@ fn from_nats_headers(source: Option<&async_nats::HeaderMap>) -> HeaderMap {
     headers
 }
 
-fn to_nats_headers(source: &HeaderMap) -> async_nats::HeaderMap {
+pub(crate) fn to_nats_headers(source: &HeaderMap) -> async_nats::HeaderMap {
     let mut headers = async_nats::HeaderMap::new();
     for (name, value) in source.iter() {
         let Ok(value) = value.to_str() else {
@@ -379,7 +384,7 @@ fn to_nats_headers(source: &HeaderMap) -> async_nats::HeaderMap {
     headers
 }
 
-fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+pub(crate) fn header_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name).and_then(|value| value.to_str().ok())
 }
 
@@ -726,6 +731,20 @@ mod tests {
             header_value(&reply.headers, ERROR_MESSAGE_HEADER),
             Some("line one line two  end")
         );
+    }
+
+    /// A requester reads a reply as a rejection by the presence of
+    /// `x-error-code`, so a handler that puts one on a success must not be
+    /// able to make its own answer look like a failure.
+    #[test]
+    fn a_success_reply_never_carries_the_error_headers() {
+        let reply = reply_ok(
+            NatsEncoding::Json,
+            "req-6",
+            Response::ok(()).header("x-error-code", "NOT_FOUND"),
+        );
+
+        assert_eq!(header_value(&reply.headers, ERROR_CODE_HEADER), None);
     }
 
     #[test]

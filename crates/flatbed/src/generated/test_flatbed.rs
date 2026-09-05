@@ -267,6 +267,14 @@ pub mod test {
         }
     }
 
+    impl ::flatbed::FromFlatBuffer for TestRequest {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
     impl ::flatbed::HasJsonCompanion for super::__fb::test::TestRequest<'_> {
         type Json = TestRequest;
     }
@@ -349,6 +357,14 @@ pub mod test {
 
         fn to_flatbuffer(&self) -> Vec<u8> {
             self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for TestResponse {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -439,6 +455,14 @@ pub mod test {
         }
     }
 
+    impl ::flatbed::FromFlatBuffer for Address {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
     impl ::flatbed::HasJsonCompanion for super::__fb::test::Address<'_> {
         type Json = Address;
     }
@@ -523,6 +547,14 @@ pub mod test {
 
         fn to_flatbuffer(&self) -> Vec<u8> {
             self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for UserRequest {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -617,6 +649,14 @@ pub mod test {
 
         fn to_flatbuffer(&self) -> Vec<u8> {
             self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for UserResponse {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -722,6 +762,14 @@ pub mod test {
         }
     }
 
+    impl ::flatbed::FromFlatBuffer for AddressBook {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
     impl ::flatbed::HasJsonCompanion for super::__fb::test::AddressBook<'_> {
         type Json = AddressBook;
     }
@@ -806,6 +854,14 @@ pub mod test {
 
         fn to_flatbuffer(&self) -> Vec<u8> {
             self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for LogEvent {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
         }
     }
 
@@ -909,6 +965,14 @@ pub mod test {
 
         fn to_flatbuffer(&self) -> Vec<u8> {
             self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for Defaulted {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
         }
     }
 

@@ -630,6 +630,16 @@ fn generate_flatbed_trait_impls(
     output.push_str("        }\n");
     output.push_str("    }\n\n");
 
+    // FromFlatBuffer trait implementation (delegates to inherent impl)
+    output.push_str(&format!(
+        "    impl ::flatbed::FromFlatBuffer for {} {{\n",
+        table.name
+    ));
+    output.push_str("        fn from_flatbuffer(bytes: &[u8]) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {\n");
+    output.push_str("            Self::from_flatbuffer(bytes)\n");
+    output.push_str("        }\n");
+    output.push_str("    }\n\n");
+
     // HasJsonCompanion trait implementation (plain struct IS the companion now)
     output.push_str(&format!(
         "    impl ::flatbed::HasJsonCompanion for super::__fb::{}::{}<'_> {{\n",
@@ -746,6 +756,7 @@ mod tests {
         // Check plain struct (no Json suffix)
         assert!(module.contains("pub struct TestType {"));
         assert!(module.contains("impl ::flatbed::ToFlatBuffer for TestType"));
+        assert!(module.contains("impl ::flatbed::FromFlatBuffer for TestType"));
         assert!(
             module.contains("impl ::flatbed::HasJsonCompanion for super::__fb::v_1::TestType<'_>")
         );

@@ -40,8 +40,14 @@ pub mod nats_route;
 pub use flatbed_macros::nats_route;
 #[cfg(feature = "nats")]
 pub use nats_route::{
-    get_nats_routes, run_nats_route, validate_nats_routes, NatsRouteConflict, NatsRouteInfo,
+    get_nats_routes, run_nats_route, validate_nats_routes, NatsEncoding, NatsRouteConflict,
+    NatsRouteInfo,
 };
+
+#[cfg(feature = "nats")]
+pub mod nats_request;
+#[cfg(feature = "nats")]
+pub use nats_request::{NatsRequest, NatsRequestError, NatsRequestExt};
 
 // NATS JetStream KV cache worker (enabled with "nats" feature)
 #[cfg(feature = "nats")]
@@ -574,6 +580,37 @@ impl ToFlatBuffer for () {
 
     fn to_flatbuffer(&self) -> Vec<u8> {
         Vec::new()
+    }
+}
+
+/// Trait for JSON companion types that can be decoded from FlatBuffer bytes
+///
+/// The mirror of [`ToFlatBuffer`], implemented by the same generated companion
+/// structs. It exists so code generic over a body type — a typed NATS reply,
+/// for one — can decode without naming the concrete type.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use flatbed::FromFlatBuffer;
+///
+/// let decoded = PingResponse::from_flatbuffer(&bytes)?;
+/// ```
+pub trait FromFlatBuffer: Sized {
+    /// Decode this struct from a FlatBuffer payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`flatbuffers::InvalidFlatbuffer`] when the bytes are not a
+    /// valid buffer of this type.
+    fn from_flatbuffer(bytes: &[u8]) -> Result<Self, flatbuffers::InvalidFlatbuffer>;
+}
+
+/// The mirror of [`ToFlatBuffer`]'s unit implementation, so a body-less
+/// response is as decodable as it is encodable.
+impl FromFlatBuffer for () {
+    fn from_flatbuffer(_bytes: &[u8]) -> Result<Self, flatbuffers::InvalidFlatbuffer> {
+        Ok(())
     }
 }
 

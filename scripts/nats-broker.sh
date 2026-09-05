@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Slot-scoped NATS broker for the broker-backed integration tests
-# (crates/flatbed/tests/nats_broker.rs).
+# Slot-scoped NATS broker for the broker-backed integration tests.
 #
 # The tests use fixed stream/bucket names, so two checkouts sharing one
 # broker clobber each other's streams. Isolation is per broker, not per
@@ -18,7 +17,7 @@
 # Run the tests against it with:
 #   NATS_URL=$(scripts/nats-broker.sh url) \
 #     cargo test -p flatbed --features nats,openapi \
-#       --test nats_broker --test nats_route_broker -- --ignored
+#       --test nats_broker --test nats_route_broker --test nats_request_broker -- --ignored
 set -euo pipefail
 
 slot=""
