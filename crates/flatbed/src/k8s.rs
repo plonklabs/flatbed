@@ -290,12 +290,9 @@ pub trait KubeReconciler: Send + Sync + 'static {
         Box::pin(async { Ok(()) })
     }
 
-    /// Extension point for graceful shutdown. **Not** invoked by the
-    /// runtime executor [`run_kube_reconciler`] — the shutdown path
-    /// drives [`crate::WorkerDrainInfo`] entries collected via
-    /// `inventory`, and [`crate::register_kube_reconciler!`] does not
-    /// submit one. Implementors that need drain behaviour must submit
-    /// a [`crate::WorkerDrainInfo`] separately.
+    /// Finish in-progress work during graceful shutdown, within the
+    /// configured shutdown budget. Called from the shutdown path rather
+    /// than the runtime executor. Defaults to a no-op.
     fn drain(&self, _ctx: Arc<Self::Context>) -> crate::BoxFuture<Result<(), Self::Error>> {
         Box::pin(async { Ok(()) })
     }
@@ -676,12 +673,9 @@ pub trait KubeNativeReconciler: Send + Sync + 'static {
         Box::pin(async { Ok(()) })
     }
 
-    /// Extension point for graceful shutdown. **Not** invoked by the
-    /// runtime executor [`run_kube_native_reconciler`] — the shutdown
-    /// path drives [`crate::WorkerDrainInfo`] entries collected via
-    /// `inventory`, and [`crate::register_kube_native_reconciler!`]
-    /// does not submit one. Implementors that need drain behaviour
-    /// must submit a [`crate::WorkerDrainInfo`] separately.
+    /// Finish in-progress work during graceful shutdown, within the
+    /// configured shutdown budget. Called from the shutdown path rather
+    /// than the runtime executor. Defaults to a no-op.
     fn drain(&self, _ctx: Arc<Self::Context>) -> crate::BoxFuture<Result<(), Self::Error>> {
         Box::pin(async { Ok(()) })
     }
@@ -996,6 +990,12 @@ pub trait KubeWatcher: Send + Sync + 'static {
     /// apiserver is the shared source of truth, and each pod
     /// independently arrives at the same view.
     const LEADER_GATED: bool = true;
+
+    /// Finish in-progress work during graceful shutdown, within the
+    /// configured shutdown budget. Defaults to a no-op.
+    fn drain(&self, _ctx: Arc<Self::Context>) -> crate::BoxFuture<Result<(), FlatbedWorkerError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 // ============================================================================
@@ -1118,6 +1118,68 @@ async fn dispatch_kube_event<R, C>(
             tracing::warn!(watcher = R::NAME, error = %e, "watch error; will re-list");
         }
     }
+}
+
+// ============================================================================
+// Drain Executors
+// ============================================================================
+
+/// Drain a [`KubeReconciler`] by downcasting the context and delegating to
+/// `KubeReconciler::drain`.
+#[cfg(feature = "nats")]
+pub fn run_kube_reconciler_drain<R, C>(
+    ctx: Arc<dyn std::any::Any + Send + Sync>,
+) -> crate::BoxFuture<Result<(), FlatbedWorkerError>>
+where
+    R: KubeReconciler<Context = C> + Default,
+    C: Send + Sync + 'static,
+{
+    Box::pin(async move {
+        let ctx: Arc<C> = ctx
+            .downcast::<C>()
+            .unwrap_or_else(|_| panic!("kube_reconciler '{}' context type mismatch", R::NAME));
+        R::default()
+            .drain(ctx)
+            .await
+            .map_err(|e| FlatbedWorkerError::new("DRAIN_ERROR", e.to_string()))
+    })
+}
+
+/// Drain a [`KubeNativeReconciler`] by downcasting the context and delegating
+/// to `KubeNativeReconciler::drain`.
+pub fn run_kube_native_reconciler_drain<R, C>(
+    ctx: Arc<dyn std::any::Any + Send + Sync>,
+) -> crate::BoxFuture<Result<(), FlatbedWorkerError>>
+where
+    R: KubeNativeReconciler<Context = C> + Default,
+    C: Send + Sync + 'static,
+{
+    Box::pin(async move {
+        let ctx: Arc<C> = ctx.downcast::<C>().unwrap_or_else(|_| {
+            panic!("kube_native_reconciler '{}' context type mismatch", R::NAME)
+        });
+        R::default()
+            .drain(ctx)
+            .await
+            .map_err(|e| FlatbedWorkerError::new("DRAIN_ERROR", e.to_string()))
+    })
+}
+
+/// Drain a [`KubeWatcher`] by downcasting the context and delegating to
+/// `KubeWatcher::drain`.
+pub fn run_kube_watcher_drain<R, C>(
+    ctx: Arc<dyn std::any::Any + Send + Sync>,
+) -> crate::BoxFuture<Result<(), FlatbedWorkerError>>
+where
+    R: KubeWatcher<Context = C> + Default,
+    C: Send + Sync + 'static,
+{
+    Box::pin(async move {
+        let ctx: Arc<C> = ctx
+            .downcast::<C>()
+            .unwrap_or_else(|_| panic!("kube_watcher '{}' context type mismatch", R::NAME));
+        R::default().drain(ctx).await
+    })
 }
 
 #[cfg(test)]

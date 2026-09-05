@@ -14,6 +14,7 @@ use tracing::{debug, error, info, warn};
 
 use super::service::{FlatbedService, ServiceContext};
 use super::shutdown::shutdown_signal;
+use crate::supervisor::supervise;
 use crate::{get_worker_drains, get_workers};
 
 /// Tokio executor for hyper HTTP/2
@@ -35,8 +36,9 @@ where
 /// This server automatically detects the protocol based on the connection preface.
 /// HTTP/2 connections start with "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".
 ///
-/// Workers are deferred until the server is marked as ready via the ready channel.
-/// If a worker fails, the healthz channel is set to false to trigger Kubernetes restarts.
+/// Workers are deferred until the server is marked as ready via the ready
+/// channel, then run under the supervisor, which sets the healthz channel to
+/// false when one ends terminally so Kubernetes restarts the pod.
 pub struct AutoServer<C> {
     bind_addr: SocketAddr,
     service_ctx: ServiceContext<C>,
@@ -71,10 +73,15 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
     /// Start the server and run until shutdown signal
     ///
     /// Automatically handles both HTTP/1.1 and HTTP/2 connections.
-    /// Workers are spawned only after the ready signal is received.
-    /// If a worker fails, the healthz channel is set to false.
+    /// Workers are spawned under supervision once the ready signal arrives,
+    /// and registered drains run within the shutdown budget.
     pub async fn serve(self) -> std::io::Result<()> {
         let listener = TcpListener::bind(self.bind_addr).await?;
+
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = self.service_ctx.config.telemetry.as_ref() {
+            crate::supervisor::install_state_gauge(telemetry);
+        }
 
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
@@ -126,21 +133,12 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             }
 
             for worker_info in workers {
-                let name = worker_info.name.to_string();
-                let worker_fn = worker_info.worker;
-                let healthz_tx = healthz_tx.clone();
-                let shutdown_tx = shutdown_tx_for_workers.clone();
-                let ctx = worker_ctx.clone();
-
-                tokio::spawn(async move {
-                    if let Err(e) = worker_fn(ctx).await {
-                        error!(worker = %name, error = %e, "worker failed");
-                        // Mark server as unhealthy so Kubernetes restarts the pod
-                        let _ = healthz_tx.send(false);
-                        // Trigger graceful shutdown on worker failure
-                        let _ = shutdown_tx.send(true);
-                    }
-                });
+                tokio::spawn(supervise(
+                    *worker_info,
+                    worker_ctx.clone(),
+                    healthz_tx.clone(),
+                    shutdown_tx_for_workers.clone(),
+                ));
             }
         });
 
@@ -178,57 +176,66 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             }
         }
 
-        // Run registered drain functions so workers can finish in-progress work
-        let drains = get_worker_drains();
-        if !drains.is_empty() {
-            let ctx_guard = service_ctx.context.read().await;
-            let Some(app_ctx) = ctx_guard.as_ref() else {
-                warn!("context not initialised; skipping worker drains");
-                drop(ctx_guard);
-                tokio::time::sleep(tokio::time::Duration::from_secs(self.shutdown_timeout_secs))
-                    .await;
-                return Ok(());
-            };
-
-            let worker_ctx: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(app_ctx) as _;
-            drop(ctx_guard);
-
-            let mut drain_handles = Vec::with_capacity(drains.len());
-            for drain_info in &drains {
-                let name = drain_info.name.to_string();
-                let ctx = worker_ctx.clone();
-                let drain_fn = drain_info.drain;
-                drain_handles.push(tokio::spawn(async move {
-                    info!(worker = %name, "draining worker");
-                    if let Err(e) = drain_fn(ctx).await {
-                        error!(worker = %name, error = %e, "drain failed");
-                    } else {
-                        info!(worker = %name, "drain complete");
-                    }
-                }));
-            }
-
-            let drain_timeout = tokio::time::Duration::from_secs(
-                self.shutdown_timeout_secs.saturating_sub(2).max(1),
-            );
-            let _ = tokio::time::timeout(drain_timeout, async {
-                for handle in drain_handles {
-                    let _ = handle.await;
-                }
-            })
-            .await;
-        }
-
-        // Allow in-flight connections to complete.
-        // After drains ran, a brief epilogue (2s) is enough. If no drains
-        // were registered, use the full shutdown budget for connections.
-        let connection_drain_secs = if drains.is_empty() {
-            self.shutdown_timeout_secs
-        } else {
-            self.shutdown_timeout_secs.min(2)
-        };
-        tokio::time::sleep(tokio::time::Duration::from_secs(connection_drain_secs)).await;
+        // The shutdown budget covers draining workers and then letting
+        // in-flight connections finish; whatever the drains do not spend is
+        // left to the connections.
+        let deadline = tokio::time::Instant::now()
+            + tokio::time::Duration::from_secs(self.shutdown_timeout_secs);
+        run_worker_drains(&service_ctx, deadline).await;
+        tokio::time::sleep_until(deadline).await;
 
         Ok(())
     }
+}
+
+/// Reserve the last two seconds of the shutdown budget for in-flight
+/// connections and give the rest to the registered worker drains.
+const CONNECTION_EPILOGUE: tokio::time::Duration = tokio::time::Duration::from_secs(2);
+
+async fn run_worker_drains<C: Clone + Send + Sync + 'static>(
+    service_ctx: &ServiceContext<C>,
+    deadline: tokio::time::Instant,
+) {
+    let drains = get_worker_drains();
+    if drains.is_empty() {
+        return;
+    }
+
+    let worker_ctx: Arc<dyn Any + Send + Sync> = {
+        let guard = service_ctx.context.read().await;
+        let Some(app_ctx) = guard.as_ref() else {
+            warn!("context not initialised; skipping worker drains");
+            return;
+        };
+        Arc::clone(app_ctx) as Arc<dyn Any + Send + Sync>
+    };
+
+    let handles: Vec<_> = drains
+        .iter()
+        .map(|drain_info| {
+            let name = drain_info.name;
+            let ctx = worker_ctx.clone();
+            let drain_fn = drain_info.drain;
+            let handle = tokio::spawn(async move {
+                if let Err(e) = drain_fn(ctx).await {
+                    error!(worker = name, error = %e, "drain failed");
+                } else {
+                    debug!(worker = name, "drain complete");
+                }
+            });
+            (name, handle)
+        })
+        .collect();
+
+    let drain_deadline = deadline
+        .checked_sub(CONNECTION_EPILOGUE)
+        .unwrap_or(deadline);
+    let _ = tokio::time::timeout_at(drain_deadline, async {
+        for (name, handle) in handles {
+            if let Err(e) = handle.await {
+                error!(worker = name, error = %e, "drain task did not complete");
+            }
+        }
+    })
+    .await;
 }

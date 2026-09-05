@@ -102,6 +102,10 @@ pub mod hyper;
 pub mod readiness;
 pub use readiness::{Readiness, ReadinessGate};
 
+// Worker supervision
+pub mod supervisor;
+pub use supervisor::{worker_states, RestartPolicy, WorkerState};
+
 // Telemetry module (enabled with "telemetry" feature)
 #[cfg(feature = "telemetry")]
 pub mod telemetry;
@@ -1583,7 +1587,7 @@ pub type DrainFn = fn(
     Box<dyn std::future::Future<Output = Result<(), FlatbedWorkerError>> + Send>,
 >;
 
-/// Worker metadata registered via the `#[worker]` macro or `register_*!` macros
+/// Worker metadata registered via the `register_*!` macros
 ///
 /// This struct is collected via the `inventory` crate at runtime.
 #[derive(Clone, Copy)]
@@ -1594,6 +1598,9 @@ pub struct WorkerInfo {
     pub description: Option<&'static str>,
     /// The worker function that receives the context
     pub worker: WorkerFn,
+    /// Opt-in in-process restart policy. `None` makes the worker's first
+    /// exit terminal.
+    pub restart: Option<RestartPolicy>,
 }
 
 // Manual Debug implementation to avoid printing function pointers
@@ -1603,16 +1610,18 @@ impl std::fmt::Debug for WorkerInfo {
             .field("name", &self.name)
             .field("description", &self.description)
             .field("worker", &"<worker_fn>")
+            .field("restart", &self.restart)
             .finish()
     }
 }
 
-/// Drain function metadata registered alongside workers that support graceful shutdown.
+/// Drain function metadata submitted by the `register_*!` macros alongside
+/// the worker itself.
 ///
-/// Workers registered via `register_kube_reconciler!` may provide a drain function
-/// that is called during graceful shutdown to finish in-progress work.
-/// Collected separately from [`WorkerInfo`] to maintain backward compatibility
-/// with existing `#[worker]` macro-generated code.
+/// The shutdown path calls every registered drain once the server has stopped
+/// accepting connections, so a worker trait's `drain` implementation is the
+/// hook for finishing in-progress work. Workers that don't override it drain
+/// as a no-op.
 #[derive(Clone, Copy)]
 pub struct WorkerDrainInfo {
     /// Worker name (must match the corresponding WorkerInfo name)
@@ -1693,8 +1702,21 @@ pub trait Worker: Send + Sync + 'static {
     /// Optional description of what this worker does.
     const DESCRIPTION: Option<&'static str> = None;
 
-    /// Run the worker. Called once after the server is ready.
+    /// Run the worker. Called once after the server is ready, and expected to
+    /// keep running for the life of the process — returning `Ok(())` marks the
+    /// process unhealthy, and returning `Err` or panicking additionally starts
+    /// graceful shutdown. One-shot initialisation belongs in the boot function
+    /// passed to [`Flatbed::run`], not in a worker.
     fn run(&self, ctx: std::sync::Arc<Self::Context>) -> BoxFuture<Result<(), FlatbedWorkerError>>;
+
+    /// Finish in-progress work during graceful shutdown, within the
+    /// configured shutdown budget. Defaults to a no-op.
+    fn drain(
+        &self,
+        _ctx: std::sync::Arc<Self::Context>,
+    ) -> BoxFuture<Result<(), FlatbedWorkerError>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// Run a [`Worker`] by downcasting the context and delegating to `Worker::run`.
@@ -1714,14 +1736,32 @@ where
     })
 }
 
+/// Drain a [`Worker`] by downcasting the context and delegating to
+/// `Worker::drain`.
+pub fn run_basic_worker_drain<W, C>(
+    ctx: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+) -> BoxFuture<Result<(), FlatbedWorkerError>>
+where
+    W: Worker<Context = C> + Default,
+    C: Send + Sync + 'static,
+{
+    Box::pin(async move {
+        let ctx: std::sync::Arc<C> = ctx
+            .downcast::<C>()
+            .unwrap_or_else(|_| panic!("worker '{}' context type mismatch", W::NAME));
+        W::default().drain(ctx).await
+    })
+}
+
 // ============================================================================
 // Registration Macros
 // ============================================================================
 
 /// Register a [`KubeReconciler`] implementor with the Flatbed worker system.
 ///
-/// This macro generates a `WorkerFn`-compatible wrapper that delegates to
-/// [`run_kube_reconciler`] and submits a [`WorkerInfo`] via `inventory`.
+/// Submits a [`WorkerInfo`] whose worker function delegates to
+/// [`run_kube_reconciler`], plus a [`WorkerDrainInfo`] wired to the
+/// reconciler's `drain`.
 ///
 /// # Usage
 ///
@@ -1731,14 +1771,28 @@ where
 ///
 /// flatbed::register_kube_reconciler!(MyReconciler, AppContext);
 /// ```
+///
+/// An optional `restart = <policy>` argument attaches a
+/// [`RestartPolicy`](crate::RestartPolicy).
 #[cfg(all(feature = "nats", feature = "k8s"))]
 #[macro_export]
 macro_rules! register_kube_reconciler {
     ($reconciler:ty, $context:ty) => {
+        $crate::register_kube_reconciler!(
+            @build $reconciler, $context, ::core::option::Option::None
+        );
+    };
+    ($reconciler:ty, $context:ty, restart = $policy:expr) => {
+        $crate::register_kube_reconciler!(
+            @build $reconciler, $context, ::core::option::Option::Some($policy)
+        );
+    };
+    (@build $reconciler:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$reconciler as $crate::k8s::KubeReconciler>::NAME,
                 description: <$reconciler as $crate::k8s::KubeReconciler>::DESCRIPTION,
+                restart: $restart,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -1751,16 +1805,32 @@ macro_rules! register_kube_reconciler {
                 },
             }
         }
+        $crate::inventory::submit! {
+            $crate::WorkerDrainInfo {
+                name: <$reconciler as $crate::k8s::KubeReconciler>::NAME,
+                drain: {
+                    fn __drain(
+                        ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                    ) -> ::std::pin::Pin<
+                        Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
+                    > {
+                        $crate::k8s::run_kube_reconciler_drain::<$reconciler, $context>(ctx)
+                    }
+                    __drain
+                },
+            }
+        }
     };
 }
 
 /// Register a [`KubeNativeReconciler`] implementor with the Flatbed
 /// worker system.
 ///
-/// The generated wrapper delegates to [`run_kube_native_reconciler`]
-/// and submits a [`WorkerInfo`] via `inventory`. Use this for
-/// reconcilers whose contexts implement `HasKubeClient +
-/// HasLeaderElection` only — no JetStream context bound required.
+/// Submits a [`WorkerInfo`] whose worker function delegates to
+/// [`run_kube_native_reconciler`], plus a [`WorkerDrainInfo`] wired to the
+/// reconciler's `drain`. Use this for reconcilers whose contexts implement
+/// `HasKubeClient + HasLeaderElection` only — no JetStream context bound
+/// required.
 ///
 /// # Usage
 ///
@@ -1772,16 +1842,30 @@ macro_rules! register_kube_reconciler {
 /// flatbed::register_kube_native_reconciler!(MyReconciler, AppContext);
 /// ```
 ///
+/// An optional `restart = <policy>` argument attaches a
+/// [`RestartPolicy`](crate::RestartPolicy).
+///
 /// [`KubeNativeReconciler`]: crate::k8s::KubeNativeReconciler
 /// [`run_kube_native_reconciler`]: crate::k8s::run_kube_native_reconciler
 #[cfg(feature = "k8s")]
 #[macro_export]
 macro_rules! register_kube_native_reconciler {
     ($reconciler:ty, $context:ty) => {
+        $crate::register_kube_native_reconciler!(
+            @build $reconciler, $context, ::core::option::Option::None
+        );
+    };
+    ($reconciler:ty, $context:ty, restart = $policy:expr) => {
+        $crate::register_kube_native_reconciler!(
+            @build $reconciler, $context, ::core::option::Option::Some($policy)
+        );
+    };
+    (@build $reconciler:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$reconciler as $crate::k8s::KubeNativeReconciler>::NAME,
                 description: <$reconciler as $crate::k8s::KubeNativeReconciler>::DESCRIPTION,
+                restart: $restart,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -1791,6 +1875,21 @@ macro_rules! register_kube_native_reconciler {
                         Box::pin($crate::k8s::run_kube_native_reconciler::<$reconciler, $context>(ctx))
                     }
                     __worker
+                },
+            }
+        }
+        $crate::inventory::submit! {
+            $crate::WorkerDrainInfo {
+                name: <$reconciler as $crate::k8s::KubeNativeReconciler>::NAME,
+                drain: {
+                    fn __drain(
+                        ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                    ) -> ::std::pin::Pin<
+                        Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
+                    > {
+                        $crate::k8s::run_kube_native_reconciler_drain::<$reconciler, $context>(ctx)
+                    }
+                    __drain
                 },
             }
         }
@@ -1821,24 +1920,53 @@ macro_rules! register_kube_native_reconciler {
 /// flatbed::register_kube_watcher!(EndpointWatcher, AppContext);
 /// ```
 ///
+/// An optional `restart = <policy>` argument attaches a
+/// [`RestartPolicy`](crate::RestartPolicy).
+///
 /// [`KubeWatcher`]: crate::k8s::KubeWatcher
 #[cfg(feature = "k8s")]
 #[macro_export]
 macro_rules! register_kube_watcher {
-    ($reconciler:ty, $context:ty) => {
+    ($watcher:ty, $context:ty) => {
+        $crate::register_kube_watcher!(
+            @build $watcher, $context, ::core::option::Option::None
+        );
+    };
+    ($watcher:ty, $context:ty, restart = $policy:expr) => {
+        $crate::register_kube_watcher!(
+            @build $watcher, $context, ::core::option::Option::Some($policy)
+        );
+    };
+    (@build $watcher:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
-                name: <$reconciler as $crate::k8s::KubeWatcher>::NAME,
-                description: <$reconciler as $crate::k8s::KubeWatcher>::DESCRIPTION,
+                name: <$watcher as $crate::k8s::KubeWatcher>::NAME,
+                description: <$watcher as $crate::k8s::KubeWatcher>::DESCRIPTION,
+                restart: $restart,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
                     ) -> ::std::pin::Pin<
                         Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
                     > {
-                        Box::pin($crate::k8s::run_kube_watcher::<$reconciler, $context>(ctx))
+                        Box::pin($crate::k8s::run_kube_watcher::<$watcher, $context>(ctx))
                     }
                     __worker
+                },
+            }
+        }
+        $crate::inventory::submit! {
+            $crate::WorkerDrainInfo {
+                name: <$watcher as $crate::k8s::KubeWatcher>::NAME,
+                drain: {
+                    fn __drain(
+                        ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                    ) -> ::std::pin::Pin<
+                        Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
+                    > {
+                        $crate::k8s::run_kube_watcher_drain::<$watcher, $context>(ctx)
+                    }
+                    __drain
                 },
             }
         }
@@ -1847,8 +1975,9 @@ macro_rules! register_kube_watcher {
 
 /// Register a [`StreamWorker`] implementor with the Flatbed worker system.
 ///
-/// This macro generates a `WorkerFn`-compatible wrapper that delegates to
-/// [`run_stream_worker`] and submits a [`WorkerInfo`] via `inventory`.
+/// Submits a [`WorkerInfo`] whose worker function delegates to
+/// [`run_stream_worker`], plus a [`WorkerDrainInfo`] wired to the worker's
+/// `drain`.
 ///
 /// # Usage
 ///
@@ -1858,14 +1987,42 @@ macro_rules! register_kube_watcher {
 ///
 /// flatbed::register_stream_worker!(MyWorker, AppContext);
 /// ```
+///
+/// An optional `restart = <policy>` argument attaches a
+/// [`RestartPolicy`](crate::RestartPolicy):
+///
+/// ```rust,ignore
+/// flatbed::register_stream_worker!(
+///     MyWorker,
+///     AppContext,
+///     restart = flatbed::RestartPolicy::backoff(
+///         std::time::Duration::from_secs(1),
+///         std::time::Duration::from_secs(60),
+///     )
+/// );
+/// ```
+///
+/// [`StreamWorker`]: crate::nats::StreamWorker
+/// [`run_stream_worker`]: crate::nats::run_stream_worker
 #[cfg(feature = "nats")]
 #[macro_export]
 macro_rules! register_stream_worker {
     ($stream_worker:ty, $context:ty) => {
+        $crate::register_stream_worker!(
+            @build $stream_worker, $context, ::core::option::Option::None
+        );
+    };
+    ($stream_worker:ty, $context:ty, restart = $policy:expr) => {
+        $crate::register_stream_worker!(
+            @build $stream_worker, $context, ::core::option::Option::Some($policy)
+        );
+    };
+    (@build $stream_worker:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$stream_worker as $crate::nats::StreamWorker>::NAME,
                 description: <$stream_worker as $crate::nats::StreamWorker>::DESCRIPTION,
+                restart: $restart,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -1878,13 +2035,29 @@ macro_rules! register_stream_worker {
                 },
             }
         }
+        $crate::inventory::submit! {
+            $crate::WorkerDrainInfo {
+                name: <$stream_worker as $crate::nats::StreamWorker>::NAME,
+                drain: {
+                    fn __drain(
+                        ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                    ) -> ::std::pin::Pin<
+                        Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
+                    > {
+                        $crate::nats::run_stream_worker_drain::<$stream_worker, $context>(ctx)
+                    }
+                    __drain
+                },
+            }
+        }
     };
 }
 
 /// Register a [`KvWorker`] implementor with the Flatbed worker system.
 ///
-/// This macro generates a `WorkerFn`-compatible wrapper that delegates to
-/// [`run_kv_worker`] and submits a [`WorkerInfo`] via `inventory`.
+/// Submits a [`WorkerInfo`] whose worker function delegates to
+/// [`run_kv_worker`], plus a [`WorkerDrainInfo`] wired to the worker's
+/// `drain`.
 ///
 /// # Requirements
 ///
@@ -1902,16 +2075,30 @@ macro_rules! register_stream_worker {
 /// flatbed::register_kv_worker!(CacheSubscriber, AppContext);
 /// ```
 ///
+/// An optional `restart = <policy>` argument attaches a
+/// [`RestartPolicy`](crate::RestartPolicy).
+///
 /// [`KvWorker`]: crate::kv::KvWorker
 /// [`run_kv_worker`]: crate::kv::run_kv_worker
 #[cfg(feature = "nats")]
 #[macro_export]
 macro_rules! register_kv_worker {
     ($kv_worker:ty, $context:ty) => {
+        $crate::register_kv_worker!(
+            @build $kv_worker, $context, ::core::option::Option::None
+        );
+    };
+    ($kv_worker:ty, $context:ty, restart = $policy:expr) => {
+        $crate::register_kv_worker!(
+            @build $kv_worker, $context, ::core::option::Option::Some($policy)
+        );
+    };
+    (@build $kv_worker:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$kv_worker as $crate::kv::KvWorker>::NAME,
                 description: <$kv_worker as $crate::kv::KvWorker>::DESCRIPTION,
+                restart: $restart,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -1924,13 +2111,29 @@ macro_rules! register_kv_worker {
                 },
             }
         }
+        $crate::inventory::submit! {
+            $crate::WorkerDrainInfo {
+                name: <$kv_worker as $crate::kv::KvWorker>::NAME,
+                drain: {
+                    fn __drain(
+                        ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                    ) -> ::std::pin::Pin<
+                        Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
+                    > {
+                        $crate::kv::run_kv_worker_drain::<$kv_worker, $context>(ctx)
+                    }
+                    __drain
+                },
+            }
+        }
     };
 }
 
 /// Register a [`Worker`] implementor with the Flatbed worker system.
 ///
-/// This macro generates a `WorkerFn`-compatible wrapper that delegates to
-/// [`run_basic_worker`] and submits a [`WorkerInfo`] via `inventory`.
+/// Submits a [`WorkerInfo`] whose worker function delegates to
+/// [`run_basic_worker`], plus a [`WorkerDrainInfo`] wired to the worker's
+/// `drain`.
 ///
 /// # Usage
 ///
@@ -1940,13 +2143,39 @@ macro_rules! register_kv_worker {
 ///
 /// flatbed::register_worker!(HealthChecker, AppContext);
 /// ```
+///
+/// An optional `restart = <policy>` argument attaches a
+/// [`RestartPolicy`], trading a pod restart for an in-process retry with
+/// capped, jittered backoff:
+///
+/// ```rust,ignore
+/// flatbed::register_worker!(
+///     ConnKeeper,
+///     AppContext,
+///     restart = flatbed::RestartPolicy::backoff(
+///         std::time::Duration::from_secs(1),
+///         std::time::Duration::from_secs(60),
+///     )
+/// );
+/// ```
 #[macro_export]
 macro_rules! register_worker {
     ($worker_type:ty, $context:ty) => {
+        $crate::register_worker!(
+            @build $worker_type, $context, ::core::option::Option::None
+        );
+    };
+    ($worker_type:ty, $context:ty, restart = $policy:expr) => {
+        $crate::register_worker!(
+            @build $worker_type, $context, ::core::option::Option::Some($policy)
+        );
+    };
+    (@build $worker_type:ty, $context:ty, $restart:expr) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
                 name: <$worker_type as $crate::Worker>::NAME,
                 description: <$worker_type as $crate::Worker>::DESCRIPTION,
+                restart: $restart,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -1956,6 +2185,21 @@ macro_rules! register_worker {
                         $crate::run_basic_worker::<$worker_type, $context>(ctx)
                     }
                     __worker
+                },
+            }
+        }
+        $crate::inventory::submit! {
+            $crate::WorkerDrainInfo {
+                name: <$worker_type as $crate::Worker>::NAME,
+                drain: {
+                    fn __drain(
+                        ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                    ) -> ::std::pin::Pin<
+                        Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
+                    > {
+                        $crate::run_basic_worker_drain::<$worker_type, $context>(ctx)
+                    }
+                    __drain
                 },
             }
         }

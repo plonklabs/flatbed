@@ -364,14 +364,12 @@ fn handle_telemetry_endpoint<C>(
 
     match path {
         "/healthz" => {
-            if ctx.is_healthy() {
-                Some(build_text_response(StatusCode::OK, "OK"))
+            let (status, verdict) = if ctx.is_healthy() {
+                (StatusCode::OK, "OK")
             } else {
-                Some(build_text_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Not Healthy",
-                ))
-            }
+                (StatusCode::SERVICE_UNAVAILABLE, "Not Healthy")
+            };
+            Some(build_text_response(status, &health_body(verdict)))
         }
         "/readyz" => {
             if ctx.is_ready() {
@@ -394,6 +392,20 @@ fn handle_telemetry_endpoint<C>(
         },
         _ => None,
     }
+}
+
+/// Append a line per supervised worker that is not running, so a probe
+/// failure names the worker that caused it instead of only reporting that
+/// the process is unhealthy.
+#[cfg(feature = "telemetry")]
+fn health_body(verdict: &str) -> String {
+    crate::supervisor::worker_states()
+        .into_iter()
+        .filter(|(_, state)| *state != crate::supervisor::WorkerState::Running)
+        .fold(verdict.to_string(), |mut body, (name, state)| {
+            body.push_str(&format!("\n{name}: {}", state.as_str()));
+            body
+        })
 }
 
 /// Handle OpenAPI endpoints (/openapi.json)
@@ -588,4 +600,39 @@ fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<Full<Byte
             .body(Full::new(Bytes::from_static(bfbs)))
             .unwrap(),
     )
+}
+
+#[cfg(all(test, feature = "telemetry"))]
+mod tests {
+    use super::health_body;
+
+    #[test]
+    fn health_body_is_the_bare_verdict_when_every_worker_runs() {
+        assert_eq!(health_body("OK").lines().next(), Some("OK"));
+    }
+
+    #[tokio::test]
+    async fn health_body_names_a_worker_that_is_not_running() {
+        crate::supervisor::supervise(
+            crate::WorkerInfo {
+                name: "health-body-worker",
+                description: None,
+                restart: None,
+                worker: |_ctx| {
+                    Box::pin(async { Err(crate::FlatbedWorkerError::new("BOOM", "down")) })
+                },
+            },
+            std::sync::Arc::new(()),
+            tokio::sync::watch::channel(true).0,
+            tokio::sync::watch::channel(false).0,
+        )
+        .await;
+
+        let body = health_body("Not Healthy");
+        assert!(body.starts_with("Not Healthy"), "got {body}");
+        assert!(
+            body.lines().any(|l| l == "health-body-worker: failed"),
+            "got {body}"
+        );
+    }
 }

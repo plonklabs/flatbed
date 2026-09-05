@@ -332,6 +332,41 @@ that is away for an hour is waited out rather than giving up on the pod.
 Nothing registers a gate on your behalf — a service with no gates behaves
 exactly as before.
 
+## Background workers
+
+A registered worker runs for the life of the process, and the supervisor makes
+sure a dead one is never invisible. Returning `Err` or panicking logs the
+reason, marks `/healthz` unhealthy and starts graceful shutdown; returning
+`Ok(())` logs and marks the process unhealthy, because a worker that finished
+is a job that stopped being done. One-shot initialisation belongs in the boot
+function passed to `Flatbed::run`, which already runs before traffic arrives.
+
+Kubernetes stays the outer supervisor. Where a pod restart per blip is too
+blunt — a WAN connection holder riding out a broker outage — attach a restart
+policy and the worker is re-run in place instead:
+
+```rust
+flatbed::register_worker!(
+    ConnKeeper,
+    AppContext,
+    restart = flatbed::RestartPolicy::backoff(
+        Duration::from_secs(1),
+        Duration::from_secs(60),
+    )
+);
+```
+
+Backoff doubles from the floor to the cap, jittered so replicas that saw the
+same outage do not reconnect in lockstep, and a run that lasts at least the cap
+counts as a recovery. Ten consecutive restarts (`.max_restarts(n)` to change
+it) escalate to the loud path. Every worker's state — `running`, `backing-off`,
+`failed` — is a `flatbed_worker_state` series in `/metrics` and a line in the
+`/healthz` body, so a failing probe names the worker behind it.
+
+Each `register_*!` macro also registers the worker trait's `drain`, which the
+shutdown path calls once the server stops accepting connections; it defaults to
+a no-op.
+
 ## Crates
 
 | Crate | Purpose |

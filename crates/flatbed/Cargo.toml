@@ -59,6 +59,10 @@ name = "hyper_integration"
 required-features = ["openapi", "telemetry"]
 
 [[test]]
+name = "worker_supervision"
+required-features = ["telemetry", "prometheus"]
+
+[[test]]
 name = "reconciler_tests"
 required-features = ["nats", "k8s"]
 

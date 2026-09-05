@@ -439,42 +439,45 @@ async fn test_flatbuffer_hyphenated_content_type() {
 // Worker tests
 // ============================================================================
 
-/// Test context for workers
-struct TestWorkerContext {
-    #[allow(dead_code)]
-    pub name: String,
-}
-
-/// Simple worker for testing registration
+/// Registered workers are spawned into every server this binary starts, so
+/// they take the `()` context those servers boot with and park rather than
+/// returning — an exit would mark the process unhealthy and fail the probe
+/// tests.
 #[derive(Default)]
 struct TestSimpleWorker;
 
 impl Worker for TestSimpleWorker {
-    type Context = TestWorkerContext;
+    type Context = ();
     const NAME: &'static str = "test_simple_worker";
 
     fn run(&self, _ctx: Arc<Self::Context>) -> flatbed::BoxFuture<Result<(), FlatbedWorkerError>> {
-        Box::pin(async move { Ok(()) })
+        Box::pin(async move {
+            std::future::pending::<()>().await;
+            Ok(())
+        })
     }
 }
 
-flatbed::register_worker!(TestSimpleWorker, TestWorkerContext);
+flatbed::register_worker!(TestSimpleWorker, ());
 
 /// Worker with custom name and description
 #[derive(Default)]
 struct TestCustomWorker;
 
 impl Worker for TestCustomWorker {
-    type Context = TestWorkerContext;
+    type Context = ();
     const NAME: &'static str = "custom-worker";
     const DESCRIPTION: Option<&'static str> = Some("A worker with custom attributes");
 
     fn run(&self, _ctx: Arc<Self::Context>) -> flatbed::BoxFuture<Result<(), FlatbedWorkerError>> {
-        Box::pin(async move { Ok(()) })
+        Box::pin(async move {
+            std::future::pending::<()>().await;
+            Ok(())
+        })
     }
 }
 
-flatbed::register_worker!(TestCustomWorker, TestWorkerContext);
+flatbed::register_worker!(TestCustomWorker, ());
 
 #[test]
 fn test_worker_registration() {
@@ -501,22 +504,22 @@ fn test_worker_registration() {
 
 #[tokio::test]
 async fn test_worker_execution() {
-    let ctx = Arc::new(TestWorkerContext {
-        name: "test".to_string(),
-    });
-
-    // Find and execute the simple worker
     let workers = get_workers();
     let simple_worker = workers
         .iter()
         .find(|w| w.name == "test_simple_worker")
         .unwrap();
 
-    // The worker function expects Arc<dyn Any + Send + Sync>
-    let dyn_ctx: Arc<dyn std::any::Any + Send + Sync> = ctx;
-    let result = (simple_worker.worker)(dyn_ctx).await;
+    let ctx: Arc<dyn std::any::Any + Send + Sync> = Arc::new(());
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        (simple_worker.worker)(ctx),
+    )
+    .await;
 
-    assert!(result.is_ok(), "Worker should execute successfully");
+    // The generated wrapper panics when the context type does not match, so
+    // reaching the timeout is what shows the worker accepted this context.
+    assert!(outcome.is_err(), "Worker should still be running");
 }
 
 // ============================================================================
