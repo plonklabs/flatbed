@@ -55,7 +55,16 @@ For each PR in order:
 
 #### 2a. Implement
 
-1. Branch off `origin/main` (or the prior PR's branch when `branch-from` says so):
+1. Before branching, reset any harness-managed drift the worktree carries from a prior occupant — `.claude/hooks/guard-bash.sh` and `scripts/test-claude-hooks.sh` are the paths seen appearing modified-but-uncommitted or untracked between assignments. Reset each path individually: a combined `git checkout -- a b` aborts entirely (no partial restore) if either path isn't currently tracked, which is exactly the untracked-drift case this is meant to clear.
+   ```bash
+   for f in .claude/hooks/guard-bash.sh scripts/test-claude-hooks.sh; do
+     git checkout -- "$f" 2>/dev/null || true
+     git clean -fq -- "$f" 2>/dev/null || true
+   done
+   ```
+   Never discard drift outside this fixed path pair — a dirty non-harness path at assignment start means real in-flight work, not a stale handoff; stop and escalate instead of touching it.
+
+   Then branch off `origin/main` (or the prior PR's branch when `branch-from` says so):
    ```bash
    git fetch origin main
    git switch -c feature/<descriptive-slug> origin/main
@@ -104,6 +113,7 @@ Bot review (`/review --auto`) and the smoke (Lane B) run **concurrently** agains
 - **Runnable examples, if the repo has them**: when a change ships or touches a runnable `examples/` tree (crates with their own `docker-compose.yml`), bring the affected one up (`docker compose up --build`, or `cargo run` with `flatc` on `PATH`) and `curl` its endpoints, including any sidecar the compose file starts. If several examples bind the same host port, smoke them **sequentially** (`up` → assert → `down`).
 - **Broker-backed NATS tests** (when the PR touches the `nats`/`kv` worker layer): run against **this checkout's own broker**, never the shared default port — `scripts/nats-broker.sh up`, then `NATS_URL=$(scripts/nats-broker.sh url) cargo test -p flatbed --features nats,openapi --test nats_broker -- --ignored`, then `scripts/nats-broker.sh down`. The tests use fixed stream names, so two checkouts sharing one broker cross-contaminate.
 - The smoke must surface a signal that **distinguishes done from not-done** — a real response body, a metric value, a log line — not merely "it compiled." A green `cargo build` is necessary but is never the smoke result on its own.
+- **A wait loop on a probe polls for the expected status code, not any response.** `curl <url> && break` exits 0 on a 503 — curl succeeded at making the request even though the server isn't ready — so the loop reports "up" on the first answer and produced a false regression signal. Poll `curl -s -o /dev/null -w '%{http_code}'` (or `curl -f`) until it equals the expected code before treating the probe as up.
 - **Skipping**: when `smoke: skip` (pure-cleanup or docs-only), Lane B is a no-op for this PR — the local gate suite from 2a is the whole automated story.
 
 **HEAD-pinning**: tag every Lane B run with the commit SHA it started against. When Lane A pushes a fix commit:
@@ -118,6 +128,8 @@ The merge precondition is "bot green AND Lane B green against the **same** SHA a
 - **Design-level failure** (the failure surfaces a problem in the agreed PR's design, not a mechanical fix): stop and surface to the user.
 
 #### 2e. Merge
+
+**If this PR took any fix round** (self-review, bot-review, or smoke-driven pushes beyond the initial draft), re-read the PR body against the final diff before evaluating the precondition below, and correct any claim the fix rounds falsified — a design note describing code a fix since changed, a test a fix deleted, a behavior the final version no longer has. `fleet merge`'s gates check CI and the review verdict; neither reads the description, and the squash pins today's body as the permanent commit message on `main`. Patch a stale body with `gh api repos/{owner}/{repo}/pulls/{n} -X PATCH -f body='<corrected body>'`.
 
 Precondition (all must hold at the same HEAD):
 - Lane A green: `/review --auto` returned a green bot review.

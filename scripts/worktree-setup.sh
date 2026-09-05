@@ -22,6 +22,39 @@ for n in 1 2 3 4; do
     echo "$dir created on $branch"
 done
 
+# Cache the pinned flatc binary here so any worktree running the version
+# check can prefer it over whatever flatc the host has — otherwise a seat's
+# own drifted flatc means silently skipping the codegen-drift gate.
+flatc_version="$(tr -d '[:space:]' <.flatc-version)"
+cache_dir=".cache/flatc/$flatc_version"
+if [ -x "$cache_dir/flatc" ]; then
+    echo "flatc $flatc_version already cached at $cache_dir"
+elif [ -z "$flatc_version" ]; then
+    echo "warning: .flatc-version is empty — skipping flatc cache fetch" >&2
+else
+    case "$(uname -s)-$(uname -m)" in
+        Darwin-arm64)  asset=Mac.flatc.binary.zip ;;
+        Darwin-x86_64) asset=MacIntel.flatc.binary.zip ;;
+        Linux-*)       asset=Linux.flatc.binary.g++-13.zip ;;
+        *)             asset="" ;;
+    esac
+    if [ -z "$asset" ]; then
+        echo "warning: no known flatc release asset for $(uname -s)-$(uname -m) — skipping cache fetch" >&2
+    else
+        tmp="$(mktemp -d)"
+        url="https://github.com/google/flatbuffers/releases/download/v${flatc_version}/${asset}"
+        if curl -fsSL "$url" -o "$tmp/flatc.zip" \
+            && unzip -q "$tmp/flatc.zip" -d "$tmp" \
+            && mkdir -p "$cache_dir" \
+            && install -m 0755 "$tmp/flatc" "$cache_dir/flatc"; then
+            echo "cached flatc $flatc_version at $cache_dir"
+        else
+            echo "warning: failed to fetch flatc $flatc_version from $url — skipping cache fetch" >&2
+        fi
+        rm -rf "$tmp"
+    fi
+fi
+
 if command -v fleet >/dev/null 2>&1; then
     fleet upgrade
     fleet workspace sync
