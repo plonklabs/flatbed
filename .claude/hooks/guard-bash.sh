@@ -93,10 +93,8 @@ if grep -Eq '(^|[;&|[:space:]])gh[[:space:]]+[^;&|[:space:]]*[[:space:]].*--watc
 fi
 
 # Commits never land on main; every change arrives through a feature branch.
-# The -C path is read from the raw command: stripping quotes would lose a
-# directory containing spaces and silently check the wrong repository's HEAD.
 if grep -Eq '(^|[;&|[:space:]])git[[:space:]]+(-C[[:space:]]+[^[:space:]]+[[:space:]]+)?commit([[:space:]]|$)' <<<"$stripped"; then
-  dir="$(grep -Eo 'git[[:space:]]+-C[[:space:]]+[^[:space:]]+' <<<"$cmd" | head -1 | awk '{print $3}' || true)"
+  dir="$(grep -Eo 'git[[:space:]]+-C[[:space:]]+[^[:space:]]+' <<<"$stripped" | head -1 | awk '{print $3}' || true)"
   branch="$(git -C "${dir:-$root}" branch --show-current 2>/dev/null || true)"
   if [ "$branch" = "main" ]; then
     deny "HEAD is on 'main' ($(git -C "${dir:-$root}" log -1 --oneline 2>/dev/null)); cut a feature branch before committing."
