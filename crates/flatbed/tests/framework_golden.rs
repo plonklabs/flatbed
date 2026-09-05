@@ -198,8 +198,8 @@ async fn render(client: &reqwest::Client, base: &str, probe: &Probe) -> String {
 
 async fn transcript(client: &reqwest::Client, base: &str, probes: Vec<Probe>) -> Vec<String> {
     let mut sections = Vec::new();
-    for probe in &probes {
-        sections.push(render(client, base, probe).await);
+    for probe in probes {
+        sections.push(render(client, base, &probe).await);
     }
     sections
 }

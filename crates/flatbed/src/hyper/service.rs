@@ -352,7 +352,7 @@ fn telemetry_response<C>(req: &RequestParts, ctx: &ServiceContext<C>) -> Option<
             StatusCode::SERVICE_UNAVAILABLE,
             "Not Healthy",
         )),
-        "/readyz" => Some(readiness_response(ctx)),
+        "/readyz" => Some(readyz_response(ctx)),
         "/metrics" => Some(match telemetry.get_feed() {
             Ok(feed) => ResponseParts::ok(
                 feed.into_bytes(),
@@ -369,7 +369,7 @@ fn telemetry_response<C>(req: &RequestParts, ctx: &ServiceContext<C>) -> Option<
 }
 
 #[cfg(feature = "telemetry")]
-fn readiness_response<C>(ctx: &ServiceContext<C>) -> ResponseParts {
+fn readyz_response<C>(ctx: &ServiceContext<C>) -> ResponseParts {
     if ctx.is_ready() {
         return text_response(StatusCode::OK, "Ready");
     }
