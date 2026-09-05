@@ -119,6 +119,14 @@ pub use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 #[doc(hidden)]
 pub use uuid;
 
+/// A guard invoked before a matched `#[route]` handler runs.
+///
+/// Returning `Err` short-circuits the request with the error's status,
+/// code, and message; the handler never runs. See
+/// [`FlatbedConfig::before_request`].
+pub type BeforeRequestHook =
+    std::sync::Arc<dyn Fn(&RequestParts) -> Result<(), FlatbedRouteError> + Send + Sync>;
+
 // ============================================================================
 // OpenAPI Support Types
 // ============================================================================
@@ -156,6 +164,9 @@ pub struct FlatbedConfig {
     pub port: u16,
     /// Splash message printed on server startup (None = no splash)
     pub splash: Option<String>,
+    /// Guard invoked before a matched route handler runs (see
+    /// [`FlatbedConfig::before_request`]).
+    pub before_request: Option<BeforeRequestHook>,
     /// Telemetry service for health endpoints (when telemetry feature is enabled)
     #[cfg(feature = "telemetry")]
     pub telemetry: Option<Arc<dyn TelemetryService>>,
@@ -170,6 +181,7 @@ impl Default for FlatbedConfig {
             host: "0.0.0.0".to_string(),
             port: 8080,
             splash: None,
+            before_request: None,
             #[cfg(feature = "telemetry")]
             telemetry: None,
         }
@@ -185,7 +197,11 @@ impl fmt::Debug for FlatbedConfig {
             .field("external_url", &self.external_url)
             .field("host", &self.host)
             .field("port", &self.port)
-            .field("splash", &self.splash.as_ref().map(|_| "<splash>"));
+            .field("splash", &self.splash.as_ref().map(|_| "<splash>"))
+            .field(
+                "before_request",
+                &self.before_request.as_ref().map(|_| "<hook>"),
+            );
         #[cfg(feature = "telemetry")]
         debug.field(
             "telemetry",
@@ -205,6 +221,7 @@ impl FlatbedConfig {
             host: "0.0.0.0".to_string(),
             port: 8080,
             splash: None,
+            before_request: None,
             #[cfg(feature = "telemetry")]
             telemetry: None,
         }
@@ -243,6 +260,31 @@ impl FlatbedConfig {
     /// ```
     pub fn splash(mut self, splash: impl Into<String>) -> Self {
         self.splash = Some(splash.into());
+        self
+    }
+
+    /// Register a guard invoked before every matched `#[route]` handler runs.
+    ///
+    /// Returning `Err` short-circuits the request with the error's status,
+    /// code, and message — the handler never runs. Built-in endpoints
+    /// (`/healthz`, `/readyz`, `/metrics`, `/openapi.json`, `/schema.bfbs`)
+    /// and `static_route!` mounts are not matched routes and skip the guard.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let config = FlatbedConfig::new("My API").before_request(|req| match req
+    ///     .header("authorization")
+    /// {
+    ///     Some("Bearer secret") => Ok(()),
+    ///     _ => Err(FlatbedRouteError::unauthorized("missing or invalid bearer token")),
+    /// });
+    /// ```
+    pub fn before_request<F>(mut self, hook: F) -> Self
+    where
+        F: Fn(&RequestParts) -> Result<(), FlatbedRouteError> + Send + Sync + 'static,
+    {
+        self.before_request = Some(std::sync::Arc::new(hook));
         self
     }
 
@@ -1073,6 +1115,11 @@ impl RequestParts {
             self.request_id = id.to_string();
         }
         self
+    }
+
+    /// Get a header value by name (case-insensitive)
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.get(name).and_then(|v| v.to_str().ok())
     }
 }
 

@@ -15,7 +15,10 @@ use hyper::service::Service;
 use tokio::sync::{watch, RwLock};
 
 use super::router::Router;
-use crate::{Error, FlatbedConfig, HeaderMap, HeaderValue, Method, RequestParts, ResponseParts};
+use crate::{
+    Error, FlatbedConfig, FlatbedRouteError, HeaderMap, HeaderName, HeaderValue, Method,
+    RequestParts, ResponseParts,
+};
 
 #[cfg(feature = "openapi")]
 use crate::{get_latest_version, get_openapi_json_for_version, get_route_versions};
@@ -201,12 +204,6 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
     let is_flatbuffer = content_type.contains("application/x-flatbuffers")
         || content_type.contains("application/x-flat-buffers");
 
-    // For methods with body, require valid content type
-    let needs_body = matches!(method.to_uppercase().as_str(), "POST" | "PUT" | "PATCH");
-    if needs_body && !is_json && !is_flatbuffer {
-        return build_unsupported_media_type();
-    }
-
     // Copy headers before consuming req
     let mut headers = HeaderMap::new();
     for (key, value) in req.headers().iter() {
@@ -217,19 +214,8 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         }
     }
 
-    // Read body (consumes req)
-    let body_bytes = match req.into_body().collect().await {
-        Ok(collected) => collected.to_bytes().to_vec(),
-        Err(e) => {
-            return build_error_response(
-                StatusCode::BAD_REQUEST,
-                "BODY_READ_ERROR",
-                &format!("Failed to read request body: {}", e),
-            );
-        }
-    };
-
-    // Build request parts
+    // Build request parts ahead of the body read, so the before_request guard
+    // (and an early rejection) never pays for consuming the body.
     let mut request_parts = RequestParts::new(
         Method::from_bytes(method.as_bytes()).unwrap_or(Method::POST),
         path.clone(),
@@ -257,6 +243,31 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
 
     // Set request ID from header or keep generated one
     request_parts = request_parts.with_request_id_from_header();
+
+    // Run the before_request guard, if configured, before the handler runs
+    if let Some(hook) = ctx.config.before_request.as_ref() {
+        if let Err(err) = hook(&request_parts) {
+            return build_route_error_response(&err, is_flatbuffer, &request_parts.request_id);
+        }
+    }
+
+    // For methods with body, require valid content type
+    let needs_body = matches!(method.to_uppercase().as_str(), "POST" | "PUT" | "PATCH");
+    if needs_body && !is_json && !is_flatbuffer {
+        return build_unsupported_media_type();
+    }
+
+    // Read body (consumes req)
+    let body_bytes = match req.into_body().collect().await {
+        Ok(collected) => collected.to_bytes().to_vec(),
+        Err(e) => {
+            return build_error_response(
+                StatusCode::BAD_REQUEST,
+                "BODY_READ_ERROR",
+                &format!("Failed to read request body: {}", e),
+            );
+        }
+    };
 
     // Extract application context for route handlers
     let app_ctx: Arc<dyn std::any::Any + Send + Sync> = {
@@ -437,6 +448,65 @@ fn build_unsupported_media_type() -> Response<Full<Bytes>> {
             "Content-Type must be application/json or application/x-flatbuffers",
         )))
         .unwrap()
+}
+
+/// Build the HTTP response for a `before_request` guard rejection, mirroring
+/// the error-response shape the `#[route]` macro builds for a handler error:
+/// JSON body with `code`/`message` for JSON requests, `x-error-code` /
+/// `x-error-message` headers with an empty body for FlatBuffer requests.
+fn build_route_error_response(
+    err: &FlatbedRouteError,
+    is_flatbuffer: bool,
+    request_id: &str,
+) -> Response<Full<Bytes>> {
+    let error_code = if err.code.is_empty() {
+        "ERROR"
+    } else {
+        &err.code
+    };
+
+    let mut headers = HeaderMap::new();
+    if let Ok(val) = HeaderValue::try_from(request_id) {
+        headers.insert(HeaderName::from_static("x-request-id"), val);
+    }
+    for (key, value) in err.headers.iter() {
+        headers.insert(key.clone(), value.clone());
+    }
+
+    let (body, content_type) = if is_flatbuffer {
+        if let Ok(val) = HeaderValue::try_from(error_code) {
+            headers.insert(HeaderName::from_static("x-error-code"), val);
+        }
+        if let Ok(val) = HeaderValue::try_from(err.message.as_str()) {
+            headers.insert(HeaderName::from_static("x-error-message"), val);
+        }
+        (Vec::new(), "application/x-flatbuffers")
+    } else {
+        let body = serde_json::json!({
+            "code": error_code,
+            "message": err.message,
+        })
+        .to_string()
+        .into_bytes();
+        (body, "application/json")
+    };
+
+    let mut builder = Response::builder()
+        .status(err.status)
+        .header("content-type", content_type);
+    for (key, value) in headers.iter() {
+        if let Ok(val) = value.to_str() {
+            builder = builder.header(key.as_str(), val);
+        }
+    }
+    builder
+        .body(Full::new(Bytes::from(body)))
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Full::new(Bytes::from("Failed to build response")))
+                .unwrap()
+        })
 }
 
 fn build_error_response(status: StatusCode, code: &str, message: &str) -> Response<Full<Bytes>> {
