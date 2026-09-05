@@ -364,14 +364,13 @@ fn handle_telemetry_endpoint<C>(
 
     match path {
         "/healthz" => {
-            if ctx.is_healthy() {
-                Some(build_text_response(StatusCode::OK, "OK"))
+            let (status, verdict) = if ctx.is_healthy() {
+                (StatusCode::OK, "OK")
             } else {
-                Some(build_text_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Not Healthy",
-                ))
-            }
+                (StatusCode::SERVICE_UNAVAILABLE, "Not Healthy")
+            };
+            let states = crate::supervisor::worker_states();
+            Some(build_text_response(status, &health_body(verdict, &states)))
         }
         "/readyz" => {
             if ctx.is_ready() {
@@ -394,6 +393,24 @@ fn handle_telemetry_endpoint<C>(
         },
         _ => None,
     }
+}
+
+/// Append a line per supervised worker that is not running, so a probe
+/// failure names the worker that caused it instead of only reporting that
+/// the process is unhealthy.
+#[cfg(feature = "telemetry")]
+fn health_body(verdict: &str, states: &[(&'static str, crate::supervisor::WorkerState)]) -> String {
+    let mut body = verdict.to_string();
+    for (name, state) in states {
+        if *state == crate::supervisor::WorkerState::Running {
+            continue;
+        }
+        body.push('\n');
+        body.push_str(name);
+        body.push_str(": ");
+        body.push_str(state.as_str());
+    }
+    body
 }
 
 /// Handle OpenAPI endpoints (/openapi.json)
@@ -588,4 +605,29 @@ fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<Full<Byte
             .body(Full::new(Bytes::from_static(bfbs)))
             .unwrap(),
     )
+}
+
+#[cfg(all(test, feature = "telemetry"))]
+mod tests {
+    use super::health_body;
+    use crate::supervisor::WorkerState;
+
+    #[test]
+    fn health_body_is_the_bare_verdict_when_every_worker_runs() {
+        let states = [("a", WorkerState::Running), ("b", WorkerState::Running)];
+        assert_eq!(health_body("OK", &states), "OK");
+    }
+
+    #[test]
+    fn health_body_names_only_the_workers_that_are_not_running() {
+        let states = [
+            ("healthy", WorkerState::Running),
+            ("retrying", WorkerState::BackingOff),
+            ("dead", WorkerState::Failed),
+        ];
+        assert_eq!(
+            health_body("Not Healthy", &states),
+            "Not Healthy\nretrying: backing-off\ndead: failed"
+        );
+    }
 }

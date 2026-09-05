@@ -332,12 +332,56 @@ that is away for an hour is waited out rather than giving up on the pod.
 Nothing registers a gate on your behalf — a service with no gates behaves
 exactly as before.
 
+## Background workers
+
+A registered worker runs for the life of the process, and the supervisor makes
+sure a dead one is never invisible. Returning `Err` or panicking logs the
+reason, marks `/healthz` unhealthy and starts graceful shutdown; returning
+`Ok(())` logs and marks the process unhealthy, because a worker that finished
+is a job that stopped being done. One-shot initialisation belongs in the boot
+function passed to `Flatbed::run`, which already runs before traffic arrives.
+
+Kubernetes stays the outer supervisor. Where a pod restart per blip is too
+blunt — a WAN connection holder riding out a broker outage — set the worker's
+`RESTART` const and it is re-run in place instead:
+
+```rust
+impl flatbed::Worker for ConnKeeper {
+    const NAME: &'static str = "conn-keeper";
+    const RESTART: Option<flatbed::RestartPolicy> = Some(
+        flatbed::RestartPolicy::backoff(
+            Duration::from_secs(1),
+            Duration::from_secs(60),
+        ),
+    );
+
+    // ...
+}
+```
+
+Every worker trait carries it, defaulting to `None`, so opting in is one line
+in the impl block and the `register_*!` macros stay pure `(Type, Context)`
+registration.
+
+Backoff doubles from the floor to the cap, jittered so replicas that saw the
+same outage do not reconnect in lockstep, and a run that lasts at least the cap
+counts as a recovery. Ten consecutive restarts are allowed
+(`.max_restarts(n)` to change it); the next exit escalates to the loud path.
+Any worker that is not running is named on its own line in the `/healthz` body,
+so a failing probe names the worker behind it, and on a telemetry backend that
+supports labelled gauges each worker's state — `running`, `backing-off`,
+`failed` — is also a `flatbed_worker_state` series in `/metrics`.
+
+Each `register_*!` macro also registers the worker trait's `drain`, which the
+shutdown path calls once the server stops accepting connections; it defaults to
+a no-op.
+
 ## Crates
 
 | Crate | Purpose |
 |---|---|
 | [`flatbed`](crates/flatbed) | HTTP server, route registry, optional telemetry / OpenAPI / NATS / Kubernetes feature gates |
-| [`flatbed_macros`](crates/flatbed_macros) | `#[route]`, `#[nats_route]`, `#[worker]`, and `#[flatbed::main]` procedural macros |
+| [`flatbed_macros`](crates/flatbed_macros) | `#[route]`, `#[nats_route]`, and `#[flatbed::main]` procedural macros |
 | [`flatbed_build`](crates/flatbed_build) | Build-time FlatBuffer codegen and the `flatbed` CLI tool (`cargo install flatbed_build` ships the binary) |
 
 ## License
