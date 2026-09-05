@@ -1,0 +1,148 @@
+## booting
+
+### GET /
+200
+content-length: 13
+content-type: text/plain; charset=utf-8
+body: golden splash
+
+### GET /healthz
+200
+content-length: 2
+content-type: text/plain
+body: OK
+
+### HEAD /healthz
+200
+content-length: 2
+content-type: text/plain
+body: 
+
+### GET /metrics
+200
+content-length: 13
+content-type: text/plain; version=0.0.4; charset=utf-8
+body: # golden feed
+
+### GET /openapi.json
+200
+content-length: 8062
+content-type: application/json
+body: <8062 bytes>
+
+### GET /schema.bfbs
+200
+content-length: 2296
+content-type: application/octet-stream
+body: <2296 bytes>
+
+### GET /readyz
+503
+content-length: 9
+content-type: text/plain
+body: Not Ready
+
+### GET /nope
+503
+content-length: 74
+content-type: application/json
+body: {"code":"BOOTING","message":"Server is starting up, please retry shortly"}
+
+### POST /api/echo [application/json]
+503
+content-length: 74
+content-type: application/json
+body: {"code":"BOOTING","message":"Server is starting up, please retry shortly"}
+
+## ready
+
+### GET /
+200
+content-length: 13
+content-type: text/plain; charset=utf-8
+body: golden splash
+
+### GET /healthz
+200
+content-length: 2
+content-type: text/plain
+body: OK
+
+### HEAD /healthz
+200
+content-length: 2
+content-type: text/plain
+body: 
+
+### GET /metrics
+200
+content-length: 13
+content-type: text/plain; version=0.0.4; charset=utf-8
+body: # golden feed
+
+### GET /openapi.json
+200
+content-length: 8062
+content-type: application/json
+body: <8062 bytes>
+
+### GET /schema.bfbs
+200
+content-length: 2296
+content-type: application/octet-stream
+body: <2296 bytes>
+
+### GET /readyz
+200
+content-length: 5
+content-type: text/plain
+body: Ready
+
+### GET /nope
+404
+content-length: 9
+content-type: text/plain
+body: Not Found
+
+### GET /api/echo
+405
+allow: POST
+content-length: 18
+content-type: text/plain
+body: Method Not Allowed
+
+### POST /api/echo [text/plain]
+415
+content-length: 66
+content-type: text/plain
+body: Content-Type must be application/json or application/x-flatbuffers
+
+### POST /api/echo [application/json]
+200
+content-length: 45
+content-type: application/json
+x-request-id: <uuid>
+body: {"message":"golden","value":7,"success":true}
+
+### POST /api/echo [application/x-flatbuffers]
+200
+content-length: 56
+content-type: application/x-flatbuffers
+x-request-id: <uuid>
+body: <56 bytes>
+
+### POST /api/fail [application/json]
+400
+content-length: 43
+content-type: application/json
+x-request-id: <uuid>
+body: {"code":"REFUSED","message":"echo refused"}
+
+### POST /api/fail [application/x-flatbuffers]
+400
+content-length: 0
+content-type: application/x-flatbuffers
+x-error-code: REFUSED
+x-error-message: echo refused
+x-request-id: <uuid>
+body: 

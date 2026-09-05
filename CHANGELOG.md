@@ -55,6 +55,21 @@ contain breaking changes during the pre-1.0 stabilization window.
 - **Breaking:** `ServiceContext::ready_rx` is renamed `booted_rx`, and
   `ServiceContext::is_ready` now means booted *and* every gate ready. The
   old one-shot meaning is available as the new `is_booted`.
+- The HTTP pipeline is parts-first: `RequestParts` is built from the request
+  before any tier looks at it, every tier — splash, telemetry, OpenAPI,
+  schema, the readiness 503, static files, 404/405/415, and the `#[route]`
+  handler — answers with `ResponseParts`, and a single `finish` writes those
+  onto the wire. Responses are unchanged; a golden transcript over every
+  framework-written response pins that byte for byte.
+
+### Removed
+
+- **Breaking:** `flatbed::hyper::{health_response, ready_response,
+  metrics_response, openapi_response, is_telemetry_endpoint,
+  is_openapi_endpoint, extract_openapi_version}`. These built a second,
+  unreachable copy of the built-in endpoints' responses — the server never
+  called them. The server's own tier functions are now the single
+  implementation.
 
 ## [0.0.2] — 2026-07-21
 
