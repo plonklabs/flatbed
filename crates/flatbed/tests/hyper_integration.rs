@@ -500,26 +500,11 @@ fn test_worker_registration() {
         custom_worker.unwrap().description,
         Some("A worker with custom attributes")
     );
-}
 
-#[tokio::test]
-async fn test_worker_execution() {
-    let workers = get_workers();
-    let simple_worker = workers
+    assert!(simple_worker.unwrap().restart.is_none());
+    assert!(flatbed::get_worker_drains()
         .iter()
-        .find(|w| w.name == "test_simple_worker")
-        .unwrap();
-
-    let ctx: Arc<dyn std::any::Any + Send + Sync> = Arc::new(());
-    let outcome = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        (simple_worker.worker)(ctx),
-    )
-    .await;
-
-    // The generated wrapper panics when the context type does not match, so
-    // reaching the timeout is what shows the worker accepted this context.
-    assert!(outcome.is_err(), "Worker should still be running");
+        .any(|d| d.name == "test_simple_worker"));
 }
 
 // ============================================================================

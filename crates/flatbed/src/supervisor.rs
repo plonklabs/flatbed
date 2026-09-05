@@ -21,11 +21,14 @@
 //! so the supervisor logs the outcome and does nothing else.
 
 use std::any::Any;
+use std::collections::hash_map::RandomState;
 use std::collections::BTreeMap;
+use std::hash::BuildHasher;
 use std::sync::{Mutex, PoisonError};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, warn};
 
 use crate::{WorkerFn, WorkerInfo};
@@ -139,7 +142,9 @@ pub fn worker_states() -> Vec<(&'static str, WorkerState)> {
 }
 
 /// Register the `flatbed_worker_state` gauge so supervisor transitions reach
-/// the `/metrics` feed. Subsequent calls are ignored.
+/// the `/metrics` feed. Subsequent calls are ignored. A backend that only
+/// implements counters is a supported configuration — it simply carries no
+/// worker-state series.
 #[cfg(feature = "telemetry")]
 pub(crate) fn install_state_gauge(telemetry: &std::sync::Arc<dyn crate::TelemetryService>) {
     if STATE_GAUGE.get().is_some() {
@@ -153,7 +158,7 @@ pub(crate) fn install_state_gauge(telemetry: &std::sync::Arc<dyn crate::Telemetr
         Ok(gauge) => {
             let _ = STATE_GAUGE.set(gauge);
         }
-        Err(e) => warn!(error = %e, "could not register the worker-state metric"),
+        Err(e) => debug!(error = %e, "could not register the worker-state metric"),
     }
 }
 
@@ -186,8 +191,6 @@ enum Exit {
     Completed,
     Failed(String),
     Panicked(String),
-    /// The task was aborted or the runtime is shutting down.
-    Cancelled,
 }
 
 impl std::fmt::Display for Exit {
@@ -196,7 +199,6 @@ impl std::fmt::Display for Exit {
             Exit::Completed => write!(f, "returned Ok(())"),
             Exit::Failed(e) => write!(f, "returned Err: {e}"),
             Exit::Panicked(p) => write!(f, "panicked: {p}"),
-            Exit::Cancelled => write!(f, "cancelled"),
         }
     }
 }
@@ -212,13 +214,20 @@ fn panic_message(payload: &(dyn Any + Send)) -> String {
 }
 
 /// Run the worker in its own task so an unwinding panic surfaces as a
-/// `JoinError` instead of silently killing just that task.
-async fn run_once(worker: WorkerFn, ctx: std::sync::Arc<dyn Any + Send + Sync>) -> Exit {
-    match tokio::spawn(async move { worker(ctx).await }).await {
-        Ok(Ok(())) => Exit::Completed,
-        Ok(Err(e)) => Exit::Failed(e.to_string()),
-        Err(join) if join.is_panic() => Exit::Panicked(panic_message(join.into_panic().as_ref())),
-        Err(_) => Exit::Cancelled,
+/// `JoinError` instead of silently killing just that task. `None` means the
+/// task was cancelled, which carries no information about the worker.
+///
+/// The handle aborts on drop so a cancelled supervisor takes its worker with
+/// it rather than leaving it running unobserved.
+async fn run_once(worker: WorkerFn, ctx: std::sync::Arc<dyn Any + Send + Sync>) -> Option<Exit> {
+    let handle = AbortOnDropHandle::new(tokio::spawn(async move { worker(ctx).await }));
+    match handle.await {
+        Ok(Ok(())) => Some(Exit::Completed),
+        Ok(Err(e)) => Some(Exit::Failed(e.to_string())),
+        Err(join) if join.is_panic() => {
+            Some(Exit::Panicked(panic_message(join.into_panic().as_ref())))
+        }
+        Err(_) => None,
     }
 }
 
@@ -235,11 +244,9 @@ pub(crate) async fn supervise(
     loop {
         set_state(info.name, WorkerState::Running);
         let started = Instant::now();
-        let exit = run_once(info.worker, std::sync::Arc::clone(&ctx)).await;
-
-        if matches!(exit, Exit::Cancelled) {
+        let Some(exit) = run_once(info.worker, std::sync::Arc::clone(&ctx)).await else {
             return;
-        }
+        };
 
         // A worker whose resources are already being torn down is a
         // consequence of the shutdown, not a reason to declare the process
@@ -257,7 +264,7 @@ pub(crate) async fn supervise(
         if started.elapsed() >= policy.cap() {
             attempt = 0;
         }
-        attempt += 1;
+        attempt = attempt.saturating_add(1);
 
         if attempt > policy.max_restarts {
             error!(
@@ -270,7 +277,7 @@ pub(crate) async fn supervise(
             return;
         }
 
-        let delay = jittered(policy.delay(attempt));
+        let delay = jittered(policy.delay(attempt), info.name, attempt);
         warn!(
             worker = info.name,
             attempt,
@@ -309,7 +316,6 @@ fn terminate(
             error!(worker = name, panic = %p, "worker panicked");
             fail(name, healthz_tx, Some(shutdown_tx));
         }
-        Exit::Cancelled => {}
     }
 }
 
@@ -325,20 +331,17 @@ fn fail(
     }
 }
 
-/// Spread the backoff over `[delay / 2, delay]`. Replicas that started at
-/// different wall-clock instants draw different offsets, so a broker outage
-/// they all saw at once does not produce a synchronised reconnect burst.
-fn jittered(delay: Duration) -> Duration {
+/// Spread the backoff over `[delay / 2, delay]`, drawing the offset from a
+/// per-process random hasher keyed by worker and attempt. Two replicas that
+/// saw the same outage, and two workers backing off within the same instant,
+/// therefore wait different amounts instead of retrying in lockstep.
+fn jittered(delay: Duration, worker: &str, attempt: u32) -> Duration {
     let half = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX) / 2;
     if half == 0 {
         return delay;
     }
-    let entropy = u64::from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| since.subsec_nanos()),
-    );
-    Duration::from_millis(half + entropy % (half + 1))
+    let offset = RandomState::new().hash_one((worker, attempt));
+    Duration::from_millis(half + offset % (half + 1))
 }
 
 #[cfg(test)]
@@ -539,10 +542,19 @@ mod tests {
     #[test]
     fn jitter_stays_within_the_upper_half_of_the_delay() {
         let delay = Duration::from_millis(1000);
-        for _ in 0..64 {
-            let jittered = jittered(delay);
+        for attempt in 0..64 {
+            let jittered = jittered(delay, "jittered-worker", attempt);
             assert!(jittered >= Duration::from_millis(500));
             assert!(jittered <= delay);
         }
+    }
+
+    #[test]
+    fn jitter_differs_between_workers_backing_off_together() {
+        let delay = Duration::from_secs(30);
+        let draws: std::collections::BTreeSet<_> = (0..16)
+            .map(|i| jittered(delay, "same-instant", i))
+            .collect();
+        assert!(draws.len() > 1, "every worker drew the same backoff");
     }
 }

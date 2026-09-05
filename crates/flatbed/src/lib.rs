@@ -103,7 +103,7 @@ pub mod readiness;
 pub use readiness::{Readiness, ReadinessGate};
 
 // Worker supervision
-pub mod supervisor;
+mod supervisor;
 pub use supervisor::{worker_states, RestartPolicy, WorkerState};
 
 // Telemetry module (enabled with "telemetry" feature)
@@ -1773,7 +1773,8 @@ where
 /// ```
 ///
 /// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`](crate::RestartPolicy).
+/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
+/// policy expression has to be const-evaluatable.
 #[cfg(all(feature = "nats", feature = "k8s"))]
 #[macro_export]
 macro_rules! register_kube_reconciler {
@@ -1843,7 +1844,8 @@ macro_rules! register_kube_reconciler {
 /// ```
 ///
 /// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`](crate::RestartPolicy).
+/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
+/// policy expression has to be const-evaluatable.
 ///
 /// [`KubeNativeReconciler`]: crate::k8s::KubeNativeReconciler
 /// [`run_kube_native_reconciler`]: crate::k8s::run_kube_native_reconciler
@@ -1921,7 +1923,8 @@ macro_rules! register_kube_native_reconciler {
 /// ```
 ///
 /// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`](crate::RestartPolicy).
+/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
+/// policy expression has to be const-evaluatable.
 ///
 /// [`KubeWatcher`]: crate::k8s::KubeWatcher
 #[cfg(feature = "k8s")]
@@ -1989,7 +1992,8 @@ macro_rules! register_kube_watcher {
 /// ```
 ///
 /// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`](crate::RestartPolicy):
+/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
+/// policy expression has to be const-evaluatable:
 ///
 /// ```rust,ignore
 /// flatbed::register_stream_worker!(
@@ -2076,7 +2080,8 @@ macro_rules! register_stream_worker {
 /// ```
 ///
 /// An optional `restart = <policy>` argument attaches a
-/// [`RestartPolicy`](crate::RestartPolicy).
+/// [`RestartPolicy`]. Registration expands to a `static` initializer, so the
+/// policy expression has to be const-evaluatable.
 ///
 /// [`KvWorker`]: crate::kv::KvWorker
 /// [`run_kv_worker`]: crate::kv::run_kv_worker
@@ -2146,7 +2151,8 @@ macro_rules! register_kv_worker {
 ///
 /// An optional `restart = <policy>` argument attaches a
 /// [`RestartPolicy`], trading a pod restart for an in-process retry with
-/// capped, jittered backoff:
+/// capped, jittered backoff. Registration expands to a `static` initializer,
+/// so the policy expression has to be const-evaluatable:
 ///
 /// ```rust,ignore
 /// flatbed::register_worker!(

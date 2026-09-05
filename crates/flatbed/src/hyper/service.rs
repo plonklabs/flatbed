@@ -369,7 +369,8 @@ fn handle_telemetry_endpoint<C>(
             } else {
                 (StatusCode::SERVICE_UNAVAILABLE, "Not Healthy")
             };
-            Some(build_text_response(status, &health_body(verdict)))
+            let states = crate::supervisor::worker_states();
+            Some(build_text_response(status, &health_body(verdict, &states)))
         }
         "/readyz" => {
             if ctx.is_ready() {
@@ -398,14 +399,18 @@ fn handle_telemetry_endpoint<C>(
 /// failure names the worker that caused it instead of only reporting that
 /// the process is unhealthy.
 #[cfg(feature = "telemetry")]
-fn health_body(verdict: &str) -> String {
-    crate::supervisor::worker_states()
-        .into_iter()
-        .filter(|(_, state)| *state != crate::supervisor::WorkerState::Running)
-        .fold(verdict.to_string(), |mut body, (name, state)| {
-            body.push_str(&format!("\n{name}: {}", state.as_str()));
-            body
-        })
+fn health_body(verdict: &str, states: &[(&'static str, crate::supervisor::WorkerState)]) -> String {
+    let mut body = verdict.to_string();
+    for (name, state) in states {
+        if *state == crate::supervisor::WorkerState::Running {
+            continue;
+        }
+        body.push('\n');
+        body.push_str(name);
+        body.push_str(": ");
+        body.push_str(state.as_str());
+    }
+    body
 }
 
 /// Handle OpenAPI endpoints (/openapi.json)
@@ -605,34 +610,24 @@ fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<Full<Byte
 #[cfg(all(test, feature = "telemetry"))]
 mod tests {
     use super::health_body;
+    use crate::supervisor::WorkerState;
 
     #[test]
-    fn health_body_leads_with_the_verdict() {
-        assert_eq!(health_body("OK").lines().next(), Some("OK"));
+    fn health_body_is_the_bare_verdict_when_every_worker_runs() {
+        let states = [("a", WorkerState::Running), ("b", WorkerState::Running)];
+        assert_eq!(health_body("OK", &states), "OK");
     }
 
-    #[tokio::test]
-    async fn health_body_names_a_worker_that_is_not_running() {
-        crate::supervisor::supervise(
-            crate::WorkerInfo {
-                name: "health-body-worker",
-                description: None,
-                restart: None,
-                worker: |_ctx| {
-                    Box::pin(async { Err(crate::FlatbedWorkerError::new("BOOM", "down")) })
-                },
-            },
-            std::sync::Arc::new(()),
-            tokio::sync::watch::channel(true).0,
-            tokio::sync::watch::channel(false).0,
-        )
-        .await;
-
-        let body = health_body("Not Healthy");
-        assert!(body.starts_with("Not Healthy"), "got {body}");
-        assert!(
-            body.lines().any(|l| l == "health-body-worker: failed"),
-            "got {body}"
+    #[test]
+    fn health_body_names_only_the_workers_that_are_not_running() {
+        let states = [
+            ("healthy", WorkerState::Running),
+            ("retrying", WorkerState::BackingOff),
+            ("dead", WorkerState::Failed),
+        ];
+        assert_eq!(
+            health_body("Not Healthy", &states),
+            "Not Healthy\nretrying: backing-off\ndead: failed"
         );
     }
 }

@@ -358,11 +358,12 @@ flatbed::register_worker!(
 
 Backoff doubles from the floor to the cap, jittered so replicas that saw the
 same outage do not reconnect in lockstep, and a run that lasts at least the cap
-counts as a recovery. Ten consecutive restarts (`.max_restarts(n)` to change
-it) escalate to the loud path. Every worker's state — `running`, `backing-off`,
-`failed` — is a `flatbed_worker_state` series in `/metrics`, and any worker that
-is not running is also named on its own line in the `/healthz` body, so a
-failing probe names the worker behind it.
+counts as a recovery. Ten consecutive restarts are allowed
+(`.max_restarts(n)` to change it); the next exit escalates to the loud path.
+Any worker that is not running is named on its own line in the `/healthz` body,
+so a failing probe names the worker behind it, and on a telemetry backend that
+supports labelled gauges each worker's state — `running`, `backing-off`,
+`failed` — is also a `flatbed_worker_state` series in `/metrics`.
 
 Each `register_*!` macro also registers the worker trait's `drain`, which the
 shutdown path calls once the server stops accepting connections; it defaults to

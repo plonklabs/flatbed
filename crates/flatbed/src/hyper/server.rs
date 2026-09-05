@@ -176,36 +176,41 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             }
         }
 
-        // The shutdown budget covers draining workers and then letting
-        // in-flight connections finish; whatever the drains do not spend is
-        // left to the connections.
-        let deadline = tokio::time::Instant::now()
-            + tokio::time::Duration::from_secs(self.shutdown_timeout_secs);
-        run_worker_drains(&service_ctx, deadline).await;
-        tokio::time::sleep_until(deadline).await;
+        let budget = tokio::time::Duration::from_secs(self.shutdown_timeout_secs);
+        let epilogue = CONNECTION_EPILOGUE.min(budget);
+        let drain_budget = budget
+            .saturating_sub(epilogue)
+            .max(tokio::time::Duration::from_secs(1));
+
+        // Nothing counts in-flight connections, so the wait for them is a
+        // fixed sleep: the short epilogue once drains have had their turn,
+        // and otherwise the whole budget.
+        let drained = run_worker_drains(&service_ctx, drain_budget).await;
+        tokio::time::sleep(if drained { epilogue } else { budget }).await;
 
         Ok(())
     }
 }
 
-/// Reserve the last two seconds of the shutdown budget for in-flight
-/// connections and give the rest to the registered worker drains.
+/// Time left to in-flight connections after the worker drains have run.
 const CONNECTION_EPILOGUE: tokio::time::Duration = tokio::time::Duration::from_secs(2);
 
+/// Run every registered drain concurrently, giving them at most `budget`.
+/// Returns whether any drain ran.
 async fn run_worker_drains<C: Clone + Send + Sync + 'static>(
     service_ctx: &ServiceContext<C>,
-    deadline: tokio::time::Instant,
-) {
+    budget: tokio::time::Duration,
+) -> bool {
     let drains = get_worker_drains();
     if drains.is_empty() {
-        return;
+        return false;
     }
 
     let worker_ctx: Arc<dyn Any + Send + Sync> = {
         let guard = service_ctx.context.read().await;
         let Some(app_ctx) = guard.as_ref() else {
             warn!("context not initialised; skipping worker drains");
-            return;
+            return false;
         };
         Arc::clone(app_ctx) as Arc<dyn Any + Send + Sync>
     };
@@ -227,10 +232,7 @@ async fn run_worker_drains<C: Clone + Send + Sync + 'static>(
         })
         .collect();
 
-    let drain_deadline = deadline
-        .checked_sub(CONNECTION_EPILOGUE)
-        .unwrap_or(deadline);
-    let _ = tokio::time::timeout_at(drain_deadline, async {
+    let _ = tokio::time::timeout(budget, async {
         for (name, handle) in handles {
             if let Err(e) = handle.await {
                 error!(worker = name, error = %e, "drain task did not complete");
@@ -238,4 +240,6 @@ async fn run_worker_drains<C: Clone + Send + Sync + 'static>(
         }
     })
     .await;
+
+    true
 }
