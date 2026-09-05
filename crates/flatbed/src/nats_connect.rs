@@ -164,7 +164,7 @@ impl Connector {
     }
 
     /// Drive a readiness gate from the connection's state: ready once
-    /// connected, not ready while disconnected or closed.
+    /// connected, not ready while disconnected, draining, or closed.
     pub fn readiness(mut self, gate: ReadinessGate) -> Self {
         self.readiness = Some(gate);
         self
@@ -291,8 +291,14 @@ fn on_event(event: &async_nats::Event, gate: Option<&ReadinessGate>) {
                 gate.set_ready(true);
             }
         }
-        async_nats::Event::Disconnected | async_nats::Event::Closed => {
-            warn!(%event, "NATS connection lost");
+        // Draining and Closed are terminal for this client rather than a blip,
+        // but they close the gate through the same path: a process on its way
+        // out should leave the load balancer as promptly as one that lost its
+        // link.
+        async_nats::Event::Disconnected
+        | async_nats::Event::Draining
+        | async_nats::Event::Closed => {
+            warn!(%event, "NATS connection unusable");
             if let Some(gate) = gate {
                 gate.set_ready(false);
             }

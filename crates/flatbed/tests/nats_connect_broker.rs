@@ -74,13 +74,16 @@ impl Proxy {
             let links = Arc::clone(&links);
             async move {
                 while let Ok((inbound, _)) = listener.accept().await {
+                    // Taking the lock before testing the flag makes accepting
+                    // a link atomic against severing, so a connection cannot
+                    // slip in between the flag being set and the live links
+                    // being dropped.
+                    let mut live = links.lock().expect("proxy links");
                     if severed.load(Ordering::SeqCst) {
-                        drop(inbound);
                         continue;
                     }
 
-                    let link = tokio::spawn(splice(inbound, upstream.clone()));
-                    links.lock().expect("proxy links").push(link);
+                    live.push(tokio::spawn(splice(inbound, upstream.clone())));
                 }
             }
         });
@@ -98,8 +101,9 @@ impl Proxy {
     }
 
     fn sever(&self) {
+        let mut live = self.links.lock().expect("proxy links");
         self.severed.store(true, Ordering::SeqCst);
-        for link in self.links.lock().expect("proxy links").drain(..) {
+        for link in live.drain(..) {
             link.abort();
         }
     }
@@ -194,19 +198,19 @@ async fn serve_probes(readiness: Readiness) -> String {
         .with_telemetry(Arc::new(ProbesOnly));
 
     let (healthz_tx, healthz_rx) = watch::channel(true);
-    let (ready_tx, ready_rx) = watch::channel(true);
+    let (booted_tx, booted_rx) = watch::channel(true);
 
     let service_ctx = ServiceContext {
         router: Arc::new(build_router()),
         healthz_rx,
-        ready_rx,
+        booted_rx,
         context: Arc::new(RwLock::new(Some(Arc::new(())))),
         config,
         static_routes: Arc::new(Vec::new()),
     };
 
     tokio::spawn(async move {
-        let _ready_tx = ready_tx;
+        let _booted_tx = booted_tx;
         AutoServer::new(addr, service_ctx, healthz_tx).serve().await
     });
 

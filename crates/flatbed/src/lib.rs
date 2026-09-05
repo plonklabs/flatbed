@@ -471,7 +471,7 @@ impl Flatbed {
 
         // Create watch channels for probes (start as unhealthy/not ready)
         let (healthz_tx, healthz_rx) = watch::channel(false);
-        let (ready_tx, ready_rx) = watch::channel(false);
+        let (booted_tx, booted_rx) = watch::channel(false);
 
         // Create shared context storage (None until boot completes)
         let context: Arc<RwLock<Option<Arc<C>>>> = Arc::new(RwLock::new(None));
@@ -483,7 +483,7 @@ impl Flatbed {
         let service_ctx = hyper::ServiceContext {
             router,
             healthz_rx,
-            ready_rx,
+            booted_rx,
             context: Arc::clone(&context),
             config,
             static_routes: Arc::new(crate::get_static_routes()),
@@ -508,7 +508,7 @@ impl Flatbed {
             let mut guard = context.write().await;
             *guard = Some(Arc::new(ctx));
         }
-        let _ = ready_tx.send(true);
+        let _ = booted_tx.send(true);
 
         // Await server completion
         server_handle

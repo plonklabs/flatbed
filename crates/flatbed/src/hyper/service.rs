@@ -32,8 +32,9 @@ pub struct ServiceContext<C> {
     pub router: Arc<Router>,
     /// Health probe receiver (true = healthy)
     pub healthz_rx: watch::Receiver<bool>,
-    /// Ready probe receiver (true = ready)
-    pub ready_rx: watch::Receiver<bool>,
+    /// Boot latch receiver (true once the boot function has returned a
+    /// context). Readiness is this and every gate in `config.readiness`.
+    pub booted_rx: watch::Receiver<bool>,
     /// User-provided application context (None until boot completes)
     pub context: Arc<RwLock<Option<Arc<C>>>>,
     /// Flatbed configuration
@@ -52,7 +53,7 @@ impl<C> ServiceContext<C> {
     ///
     /// This is the one-shot half of readiness: it never returns to `false`.
     pub fn is_booted(&self) -> bool {
-        *self.ready_rx.borrow()
+        *self.booted_rx.borrow()
     }
 
     /// Check if the server is ready to accept requests: booted, and with
@@ -67,7 +68,7 @@ impl<C> Clone for ServiceContext<C> {
         Self {
             router: Arc::clone(&self.router),
             healthz_rx: self.healthz_rx.clone(),
-            ready_rx: self.ready_rx.clone(),
+            booted_rx: self.booted_rx.clone(),
             context: Arc::clone(&self.context),
             config: self.config.clone(),
             static_routes: Arc::clone(&self.static_routes),
