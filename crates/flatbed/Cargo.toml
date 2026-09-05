@@ -55,6 +55,10 @@ h2 = "0.4"
 futures = "0.3"
 
 [[test]]
+name = "framework_golden"
+required-features = ["openapi", "telemetry"]
+
+[[test]]
 name = "hyper_integration"
 required-features = ["openapi", "telemetry"]
 

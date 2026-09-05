@@ -16,8 +16,8 @@ use tokio::sync::{watch, RwLock};
 
 use super::router::Router;
 use crate::{
-    Error, FlatbedConfig, FlatbedRouteError, HeaderMap, HeaderName, HeaderValue, Method,
-    RequestParts, ResponseParts,
+    Error, FlatbedConfig, FlatbedRouteError, HeaderMap, HeaderName, HeaderValue, RequestParts,
+    ResponseParts,
 };
 
 #[cfg(feature = "openapi")]
@@ -163,104 +163,38 @@ async fn strip_body_for_head(response: Response<Full<Bytes>>) -> Response<Full<B
     Response::from_parts(parts, Full::new(Bytes::new()))
 }
 
-/// Build the response for a request, including any body.
+/// Answer a request: type-erased parts in, type-erased parts out, hyper only
+/// at the two ends.
 async fn dispatch<C: Clone + Send + Sync + 'static>(
     req: Request<Incoming>,
     ctx: ServiceContext<C>,
 ) -> Response<Full<Bytes>> {
-    // Extract method and path before consuming req
-    let method = req.method().as_str().to_string();
-    let path = req.uri().path().to_string();
-    let query = req.uri().query().map(|s| s.to_string());
+    let (head, body) = req.into_parts();
+    finish(respond(request_parts(&head), body, ctx).await)
+}
 
-    // Check for built-in endpoints first
+/// Build the request's type-erased parts, before any tier has looked at it.
+fn request_parts(head: &http::request::Parts) -> RequestParts {
+    let mut parts = RequestParts::new(head.method.clone(), head.uri.path().to_string());
 
-    if let Some(response) = handle_splash_endpoint(&method, &path, &ctx.config) {
-        return response;
-    }
-
-    #[cfg(feature = "telemetry")]
-    if ctx.config.telemetry.is_some() {
-        if let Some(response) = handle_telemetry_endpoint(&method, &path, &ctx) {
-            return response;
-        }
-    }
-
-    #[cfg(feature = "openapi")]
-    if let Some(response) = handle_openapi_endpoint(&method, &path, &ctx.config) {
-        return response;
-    }
-
-    if let Some(response) = handle_schema_endpoint(&method, &path) {
-        return response;
-    }
-
-    if !ctx.is_ready() {
-        let (code, message) = match ctx.blocked_gates() {
-            Some(gates) => ("NOT_READY", format!("Waiting on {gates}")),
-            None => (
-                "BOOTING",
-                "Server is starting up, please retry shortly".to_string(),
-            ),
-        };
-        return build_error_response(StatusCode::SERVICE_UNAVAILABLE, code, &message);
-    }
-
-    // Try to match a user-defined route
-    let Some((route_entry, path_params)) = ctx.router.match_route(&path, &method) else {
-        // Check if path exists but method is not allowed
-        let allowed = ctx.router.get_allowed_methods(&path);
-        if !allowed.is_empty() {
-            return build_method_not_allowed(&allowed);
-        }
-        if is_get_or_head(&method) && !ctx.static_routes.is_empty() {
-            if let Some(parts) = super::static_files::serve(&ctx.static_routes, &path).await {
-                return build_success_response(parts);
-            }
-        }
-        return build_not_found();
-    };
-
-    // Extract content type
-    let content_type = req
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-
-    // Validate content type
-    let is_json = content_type.contains("application/json");
-    let is_flatbuffer = content_type.contains("application/x-flatbuffers")
-        || content_type.contains("application/x-flat-buffers");
-
-    // Copy headers before consuming req
-    let mut headers = HeaderMap::new();
-    for (key, value) in req.headers().iter() {
+    // Rebuilt rather than moved: `insert` collapses a repeated header name to
+    // its last value, which is the single value `RequestParts::header` and
+    // every handler reading `headers.get` are written against.
+    for (key, value) in head.headers.iter() {
         if let Ok(val) = HeaderValue::try_from(value.as_bytes()) {
-            if let Ok(name) = http::header::HeaderName::try_from(key.as_str()) {
-                headers.insert(name, val);
+            if let Ok(name) = HeaderName::try_from(key.as_str()) {
+                parts.headers.insert(name, val);
             }
         }
     }
 
-    // Built ahead of the body read so an early rejection skips consuming it.
-    let mut request_parts = RequestParts::new(
-        Method::from_bytes(method.as_bytes()).unwrap_or(Method::POST),
-        path.clone(),
-    );
-
-    request_parts.headers = headers;
-    request_parts.path_params = path_params;
-
-    // Parse query parameters
-    if let Some(query) = query {
-        request_parts.query_params = query
+    if let Some(query) = head.uri.query() {
+        parts.query_params = query
             .split('&')
             .filter_map(|pair| {
-                let mut parts = pair.splitn(2, '=');
-                let key = parts.next()?;
-                let value = parts.next().unwrap_or("");
+                let mut fields = pair.splitn(2, '=');
+                let key = fields.next()?;
+                let value = fields.next().unwrap_or("");
                 if key.is_empty() {
                     None
                 } else {
@@ -270,172 +204,18 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
             .collect();
     }
 
-    // Set request ID from header or keep generated one
-    request_parts = request_parts.with_request_id_from_header();
-
-    if let Some(hook) = ctx.config.before_request.as_ref() {
-        if let Err(err) = hook(&request_parts) {
-            return build_route_error_response(&err, is_flatbuffer, &request_parts.request_id);
-        }
-    }
-
-    // For methods with body, require valid content type
-    let needs_body = matches!(method.to_uppercase().as_str(), "POST" | "PUT" | "PATCH");
-    if needs_body && !is_json && !is_flatbuffer {
-        return build_unsupported_media_type();
-    }
-
-    // Read body (consumes req)
-    let body_bytes = match req.into_body().collect().await {
-        Ok(collected) => collected.to_bytes().to_vec(),
-        Err(e) => {
-            return build_error_response(
-                StatusCode::BAD_REQUEST,
-                "BODY_READ_ERROR",
-                &format!("Failed to read request body: {}", e),
-            );
-        }
-    };
-
-    // Extract application context for route handlers
-    let app_ctx: Arc<dyn std::any::Any + Send + Sync> = {
-        let guard = ctx.context.read().await;
-        match guard.as_ref() {
-            Some(c) => c.clone(),
-            None => Arc::new(()),
-        }
-    };
-
-    // Call the handler
-    let handler = route_entry.handler;
-    match handler(request_parts.clone(), body_bytes, &content_type, app_ctx).await {
-        Ok(response_parts) => build_success_response(response_parts),
-        Err(e) => {
-            // Determine appropriate status code based on error type
-            let (status, code) = match &e {
-                Error::DeserializationError(_) => (StatusCode::BAD_REQUEST, "BAD_REQUEST"),
-                Error::SerializationError(_) => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "SERIALIZATION_ERROR")
-                }
-                Error::HandlerError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "HANDLER_ERROR"),
-                Error::Custom(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
-            };
-            build_error_response(status, code, &e.to_string())
-        }
-    }
+    parts.with_request_id_from_header()
 }
 
-fn is_get_or_head(method: &str) -> bool {
-    method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
-}
+/// Render response parts onto the wire.
+///
+/// `content-type` is written from the dedicated field first, so parts carrying
+/// one in `headers` too emit both, in that order.
+fn finish(parts: ResponseParts) -> Response<Full<Bytes>> {
+    let mut builder = Response::builder()
+        .status(parts.status)
+        .header("content-type", parts.content_type.as_ref());
 
-fn handle_splash_endpoint(
-    method: &str,
-    path: &str,
-    config: &FlatbedConfig,
-) -> Option<Response<Full<Bytes>>> {
-    if !is_get_or_head(method) || path != "/" {
-        return None;
-    }
-
-    let splash = config.splash.as_ref()?;
-
-    Some(
-        Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "text/plain; charset=utf-8")
-            .body(Full::new(Bytes::from(splash.clone())))
-            .unwrap(),
-    )
-}
-
-/// Handle telemetry endpoints (/healthz, /readyz, /metrics)
-#[cfg(feature = "telemetry")]
-fn handle_telemetry_endpoint<C>(
-    method: &str,
-    path: &str,
-    ctx: &ServiceContext<C>,
-) -> Option<Response<Full<Bytes>>> {
-    if !is_get_or_head(method) {
-        return None;
-    }
-
-    let telemetry = ctx.config.telemetry.as_ref()?;
-
-    match path {
-        "/healthz" => {
-            if ctx.is_healthy() {
-                Some(build_text_response(StatusCode::OK, "OK"))
-            } else {
-                Some(build_text_response(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Not Healthy",
-                ))
-            }
-        }
-        "/readyz" => {
-            if ctx.is_ready() {
-                Some(build_text_response(StatusCode::OK, "Ready"))
-            } else {
-                let body = match ctx.blocked_gates() {
-                    Some(gates) => format!("Not Ready: {gates}"),
-                    None => "Not Ready".to_string(),
-                };
-                Some(build_text_response(StatusCode::SERVICE_UNAVAILABLE, &body))
-            }
-        }
-        "/metrics" => match telemetry.get_feed() {
-            Ok(feed) => Some(build_metrics_response(feed)),
-            Err(e) => Some(build_error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "METRICS_ERROR",
-                &e.to_string(),
-            )),
-        },
-        _ => None,
-    }
-}
-
-/// Handle OpenAPI endpoints (/openapi.json)
-#[cfg(feature = "openapi")]
-fn handle_openapi_endpoint(
-    method: &str,
-    path: &str,
-    config: &FlatbedConfig,
-) -> Option<Response<Full<Bytes>>> {
-    if !is_get_or_head(method) {
-        return None;
-    }
-
-    // Match /openapi.json (latest version)
-    if path == "/openapi.json" {
-        let version = get_latest_version();
-        let json = get_openapi_json_for_version(config, &version);
-        return Some(build_json_response(json));
-    }
-
-    // Match /v{version}/openapi.json
-    let versions = get_route_versions();
-    for version in &versions {
-        let versioned_path = format!("/{}/openapi.json", version);
-        if path == versioned_path {
-            let json = get_openapi_json_for_version(config, version);
-            return Some(build_json_response(json));
-        }
-    }
-
-    None
-}
-
-// Response builders
-
-fn build_success_response(parts: ResponseParts) -> Response<Full<Bytes>> {
-    let mut builder = Response::builder().status(parts.status);
-
-    // Set content type
-    builder = builder.header("content-type", parts.content_type.as_ref());
-
-    // Copy headers
     for (key, value) in parts.headers.iter() {
         if let Ok(val) = value.to_str() {
             builder = builder.header(key.as_str(), val);
@@ -452,38 +232,251 @@ fn build_success_response(parts: ResponseParts) -> Response<Full<Bytes>> {
         })
 }
 
-fn build_not_found() -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .header("content-type", "text/plain")
-        .body(Full::new(Bytes::from("Not Found")))
-        .unwrap()
+/// The tier ladder: the first tier that claims the request answers it.
+async fn respond<C: Clone + Send + Sync + 'static>(
+    mut req: RequestParts,
+    body: Incoming,
+    ctx: ServiceContext<C>,
+) -> ResponseParts {
+    if let Some(parts) = splash_response(&req, &ctx.config) {
+        return parts;
+    }
+
+    #[cfg(feature = "telemetry")]
+    if let Some(parts) = telemetry_response(&req, &ctx) {
+        return parts;
+    }
+
+    #[cfg(feature = "openapi")]
+    if let Some(parts) = openapi_response(&req, &ctx.config) {
+        return parts;
+    }
+
+    if let Some(parts) = schema_response(&req) {
+        return parts;
+    }
+
+    if !ctx.is_ready() {
+        return not_ready_response(&ctx);
+    }
+
+    let Some((route_entry, path_params)) = ctx.router.match_route(&req.path, req.method.as_str())
+    else {
+        let allowed = ctx.router.get_allowed_methods(&req.path);
+        if !allowed.is_empty() {
+            return method_not_allowed_response(&allowed);
+        }
+        if is_get_or_head(req.method.as_str()) && !ctx.static_routes.is_empty() {
+            if let Some(parts) = super::static_files::serve(&ctx.static_routes, &req.path).await {
+                return parts;
+            }
+        }
+        return not_found_response();
+    };
+    req.path_params = path_params;
+
+    let content_type = req.header("content-type").unwrap_or("").to_string();
+    let is_json = content_type.contains("application/json");
+    let is_flatbuffer = content_type.contains("application/x-flatbuffers")
+        || content_type.contains("application/x-flat-buffers");
+
+    if let Some(hook) = ctx.config.before_request.as_ref() {
+        if let Err(err) = hook(&req) {
+            return route_error_response(&err, is_flatbuffer, &req.request_id);
+        }
+    }
+
+    let needs_body = matches!(
+        req.method.as_str().to_uppercase().as_str(),
+        "POST" | "PUT" | "PATCH"
+    );
+    if needs_body && !is_json && !is_flatbuffer {
+        return unsupported_media_type_response();
+    }
+
+    let body_bytes = match body.collect().await {
+        Ok(collected) => collected.to_bytes().to_vec(),
+        Err(e) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "BODY_READ_ERROR",
+                &format!("Failed to read request body: {}", e),
+            )
+        }
+    };
+
+    let app_ctx: Arc<dyn std::any::Any + Send + Sync> = {
+        let guard = ctx.context.read().await;
+        match guard.as_ref() {
+            Some(c) => c.clone(),
+            None => Arc::new(()),
+        }
+    };
+
+    let handler = route_entry.handler;
+    match handler(req, body_bytes, &content_type, app_ctx).await {
+        Ok(parts) => parts,
+        Err(e) => handler_error_response(&e),
+    }
 }
 
-fn build_method_not_allowed(allowed: impl AsRef<[String]>) -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(StatusCode::METHOD_NOT_ALLOWED)
-        .header("content-type", "text/plain")
-        .header("allow", allowed.as_ref().join(", "))
-        .body(Full::new(Bytes::from("Method Not Allowed")))
-        .unwrap()
+fn is_get_or_head(method: &str) -> bool {
+    method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")
 }
 
-fn build_unsupported_media_type() -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
-        .header("content-type", "text/plain")
-        .body(Full::new(Bytes::from(
-            "Content-Type must be application/json or application/x-flatbuffers",
-        )))
-        .unwrap()
+fn splash_response(req: &RequestParts, config: &FlatbedConfig) -> Option<ResponseParts> {
+    if !is_get_or_head(req.method.as_str()) || req.path != "/" {
+        return None;
+    }
+
+    let splash = config.splash.as_ref()?;
+
+    Some(ResponseParts::ok(
+        splash.clone().into_bytes(),
+        "text/plain; charset=utf-8",
+    ))
 }
 
-fn build_route_error_response(
+/// Answer `/healthz`, `/readyz` and `/metrics`.
+#[cfg(feature = "telemetry")]
+fn telemetry_response<C>(req: &RequestParts, ctx: &ServiceContext<C>) -> Option<ResponseParts> {
+    if !is_get_or_head(req.method.as_str()) {
+        return None;
+    }
+
+    let telemetry = ctx.config.telemetry.as_ref()?;
+
+    match req.path.as_str() {
+        "/healthz" if ctx.is_healthy() => Some(text_response(StatusCode::OK, "OK")),
+        "/healthz" => Some(text_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Not Healthy",
+        )),
+        "/readyz" => Some(readyz_response(ctx)),
+        "/metrics" => Some(match telemetry.get_feed() {
+            Ok(feed) => ResponseParts::ok(
+                feed.into_bytes(),
+                "text/plain; version=0.0.4; charset=utf-8",
+            ),
+            Err(e) => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "METRICS_ERROR",
+                &e.to_string(),
+            ),
+        }),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "telemetry")]
+fn readyz_response<C>(ctx: &ServiceContext<C>) -> ResponseParts {
+    if ctx.is_ready() {
+        return text_response(StatusCode::OK, "Ready");
+    }
+
+    let body = match ctx.blocked_gates() {
+        Some(gates) => format!("Not Ready: {gates}"),
+        None => "Not Ready".to_string(),
+    };
+    text_response(StatusCode::SERVICE_UNAVAILABLE, &body)
+}
+
+/// Answer `/openapi.json` and its `/{version}/openapi.json` siblings.
+#[cfg(feature = "openapi")]
+fn openapi_response(req: &RequestParts, config: &FlatbedConfig) -> Option<ResponseParts> {
+    if !is_get_or_head(req.method.as_str()) {
+        return None;
+    }
+
+    let version = if req.path == "/openapi.json" {
+        get_latest_version()
+    } else {
+        get_route_versions()
+            .into_iter()
+            .find(|version| req.path == format!("/{}/openapi.json", version))?
+    };
+
+    Some(ResponseParts::ok(
+        get_openapi_json_for_version(config, &version).into_bytes(),
+        "application/json",
+    ))
+}
+
+fn schema_response(req: &RequestParts) -> Option<ResponseParts> {
+    if !is_get_or_head(req.method.as_str()) || req.path != "/schema.bfbs" {
+        return None;
+    }
+
+    let Some(bfbs) = crate::get_schema_bfbs() else {
+        return Some(not_found_response());
+    };
+
+    Some(ResponseParts::ok(bfbs.to_vec(), "application/octet-stream"))
+}
+
+fn not_ready_response<C>(ctx: &ServiceContext<C>) -> ResponseParts {
+    let (code, message) = match ctx.blocked_gates() {
+        Some(gates) => ("NOT_READY", format!("Waiting on {gates}")),
+        None => (
+            "BOOTING",
+            "Server is starting up, please retry shortly".to_string(),
+        ),
+    };
+    error_response(StatusCode::SERVICE_UNAVAILABLE, code, &message)
+}
+
+fn not_found_response() -> ResponseParts {
+    text_response(StatusCode::NOT_FOUND, "Not Found")
+}
+
+fn method_not_allowed_response(allowed: &[String]) -> ResponseParts {
+    let mut parts = text_response(StatusCode::METHOD_NOT_ALLOWED, "Method Not Allowed");
+    if let Ok(val) = HeaderValue::try_from(allowed.join(", ")) {
+        parts.headers.insert(HeaderName::from_static("allow"), val);
+    }
+    parts
+}
+
+fn unsupported_media_type_response() -> ResponseParts {
+    text_response(
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        "Content-Type must be application/json or application/x-flatbuffers",
+    )
+}
+
+fn text_response(status: StatusCode, body: &str) -> ResponseParts {
+    ResponseParts::with_status(body.as_bytes().to_vec(), status, "text/plain")
+}
+
+/// The framework's standard error shape: a JSON `{code, message}` body.
+fn error_response(status: StatusCode, code: &str, message: &str) -> ResponseParts {
+    let body = serde_json::json!({
+        "code": code,
+        "message": message
+    })
+    .to_string();
+
+    ResponseParts::with_status(body.into_bytes(), status, "application/json")
+}
+
+fn handler_error_response(err: &Error) -> ResponseParts {
+    let (status, code) = match err {
+        Error::DeserializationError(_) => (StatusCode::BAD_REQUEST, "BAD_REQUEST"),
+        Error::SerializationError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "SERIALIZATION_ERROR"),
+        Error::HandlerError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "HANDLER_ERROR"),
+        Error::Custom(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
+    };
+    error_response(status, code, &err.to_string())
+}
+
+/// Render a route error the way `#[route]` renders its own: a JSON body, or —
+/// when the request negotiated FlatBuffers — code and message in headers over
+/// an empty body.
+fn route_error_response(
     err: &FlatbedRouteError,
     is_flatbuffer: bool,
     request_id: &str,
-) -> Response<Full<Bytes>> {
+) -> ResponseParts {
     let error_code = if err.code.is_empty() {
         "ERROR"
     } else {
@@ -516,76 +509,10 @@ fn build_route_error_response(
         (body, "application/json")
     };
 
-    let mut builder = Response::builder()
-        .status(err.status)
-        .header("content-type", content_type);
-    for (key, value) in headers.iter() {
-        if let Ok(val) = value.to_str() {
-            builder = builder.header(key.as_str(), val);
-        }
+    ResponseParts {
+        body,
+        status: err.status,
+        headers,
+        content_type: content_type.into(),
     }
-    builder
-        .body(Full::new(Bytes::from(body)))
-        .unwrap_or_else(|_| {
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Full::new(Bytes::from("Failed to build response")))
-                .unwrap()
-        })
-}
-
-fn build_error_response(status: StatusCode, code: &str, message: &str) -> Response<Full<Bytes>> {
-    let body = serde_json::json!({
-        "code": code,
-        "message": message
-    });
-
-    Response::builder()
-        .status(status)
-        .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(body.to_string())))
-        .unwrap()
-}
-
-#[cfg(feature = "telemetry")]
-fn build_text_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(status)
-        .header("content-type", "text/plain")
-        .body(Full::new(Bytes::from(body.to_string())))
-        .unwrap()
-}
-
-#[cfg(feature = "telemetry")]
-fn build_metrics_response(metrics: String) -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
-        .body(Full::new(Bytes::from(metrics)))
-        .unwrap()
-}
-
-#[cfg(feature = "openapi")]
-fn build_json_response(json: String) -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(json)))
-        .unwrap()
-}
-
-fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<Full<Bytes>>> {
-    if !is_get_or_head(method) || path != "/schema.bfbs" {
-        return None;
-    }
-    let Some(bfbs) = crate::get_schema_bfbs() else {
-        return Some(build_not_found());
-    };
-    Some(
-        Response::builder()
-            .status(StatusCode::OK)
-            .header("content-type", "application/octet-stream")
-            .body(Full::new(Bytes::from_static(bfbs)))
-            .unwrap(),
-    )
 }
