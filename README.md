@@ -284,6 +284,39 @@ unreachable subject to `502` and a silent one to `504`. Nothing subscribed is
 `NoResponders`, distinct from the `Timeout` a responder that never answers
 produces.
 
+## Holding the NATS connection (optional)
+
+`Connector` owns the connection lifecycle a boot function would otherwise
+hand-roll, and reports the connection's state into readiness.
+
+```rust
+Flatbed::run(config, |cfg| async move {
+    let nats = flatbed::nats::Connector::new("nats://broker:4222")
+        .credentials_file("/etc/nats/user.creds")
+        .readiness(cfg.readiness.gate("nats"))
+        .connect_with_retry()
+        .await?;
+
+    Ok(AppContext { nats })
+})
+.await
+```
+
+The first connect is retried with a capped, jittered backoff under a bounded
+budget, so a broker that has not started yet is waited out while a
+misconfigured address still fails the boot instead of hanging forever. A
+credentials file is read at connect time, so a missing secret mount is a
+connect error rather than a panic at startup.
+
+Readiness is two things: the one-shot boot latch, and any number of *gates*.
+A gate is a named dependency that can come and go for the life of the process
+— `/readyz` returns 200 only when the boot latch is set and every gate is
+ready, and names the blocking gates in its 503 body. The connector holds the
+gate it is given open while connected and closes it while disconnected, so a
+dropped broker connection takes the pod out of its Service endpoints for
+exactly the interval the connection is down. Nothing registers a gate on your
+behalf: a service with no gates behaves exactly as before.
+
 ## Crates
 
 | Crate | Purpose |

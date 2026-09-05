@@ -24,6 +24,25 @@ contain breaking changes during the pre-1.0 stabilization window.
   its request was rejected. Overlapping subjects are rejected at startup, and a
   responder whose subscription ends fails its worker rather than leaving the
   process healthy and the subject silent.
+- `Readiness` / `ReadinessGate`: runtime readiness alongside the one-shot boot
+  latch. A gate is a named dependency that can come and go after boot; the
+  server reports ready only when the boot latch is set and every registered
+  gate is. `FlatbedConfig::readiness` carries the registry, so a boot function
+  can register a gate from the config it already receives, and `/readyz` names
+  the gates holding it down instead of a bare `Not Ready`.
+- `flatbed::nats::Connector` (feature `nats`): a managed core-NATS connection.
+  Retries the first connect with a capped, jittered backoff under a bounded
+  budget, loads credentials inline or from a file read at connect time,
+  jitters the client's own reconnect delays, and drives a `ReadinessGate` from
+  the connection's state — so a broker that drops takes `/readyz` to 503 for
+  exactly the interval the connection is down, and restores it when the client
+  reconnects.
+
+### Changed
+
+- A `503` from a user route now distinguishes a boot that has not finished
+  (`BOOTING`) from a readiness gate reporting its dependency unusable
+  (`NOT_READY`, naming the gates).
 
 ## [0.0.2] — 2026-07-21
 

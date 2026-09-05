@@ -1,12 +1,12 @@
-//! NATS JetStream support types for flatbed workers.
-//!
-//! These types are used by the [`StreamWorker`] trait to provide a
-//! clean handler interface for JetStream consumers.
+//! NATS support: the managed [`Connector`] that holds a service's connection,
+//! and the JetStream types the [`StreamWorker`] trait builds on to give
+//! JetStream consumers a clean handler interface.
 
 use std::sync::Arc;
 
 use tracing::{error, info, warn};
 
+pub use crate::nats_connect::{Connector, ConnectorError};
 use crate::FlatbedWorkerError;
 
 /// Result type for NATS worker handlers.

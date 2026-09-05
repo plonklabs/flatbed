@@ -34,6 +34,11 @@ pub mod nats;
 #[cfg(feature = "nats")]
 pub use nats::{run_stream_worker, HasJetStream, HasNatsClient, NatsResult, StreamWorker};
 
+// Re-exported through `nats` rather than declared public here, so the managed
+// connector has one canonical path.
+#[cfg(feature = "nats")]
+mod nats_connect;
+
 #[cfg(feature = "nats")]
 pub mod nats_route;
 #[cfg(feature = "nats")]
@@ -93,6 +98,10 @@ pub use kube;
 
 // Hyper integration module
 pub mod hyper;
+
+// Runtime readiness gates behind /readyz
+pub mod readiness;
+pub use readiness::{Readiness, ReadinessGate};
 
 // Telemetry module (enabled with "telemetry" feature)
 #[cfg(feature = "telemetry")]
@@ -173,6 +182,10 @@ pub struct FlatbedConfig {
     /// Guard invoked before a matched route handler runs (see
     /// [`FlatbedConfig::before_request`]).
     pub before_request: Option<BeforeRequestHook>,
+    /// Runtime dependencies readiness answers on, on top of the boot latch.
+    /// The boot function receives this config by value, so it can register a
+    /// gate for anything it connects (see [`Readiness::gate`]).
+    pub readiness: Readiness,
     /// Telemetry service for health endpoints (when telemetry feature is enabled)
     #[cfg(feature = "telemetry")]
     pub telemetry: Option<Arc<dyn TelemetryService>>,
@@ -188,6 +201,7 @@ impl Default for FlatbedConfig {
             port: 8080,
             splash: None,
             before_request: None,
+            readiness: Readiness::new(),
             #[cfg(feature = "telemetry")]
             telemetry: None,
         }
@@ -207,7 +221,8 @@ impl fmt::Debug for FlatbedConfig {
             .field(
                 "before_request",
                 &self.before_request.as_ref().map(|_| "<hook>"),
-            );
+            )
+            .field("readiness", &self.readiness);
         #[cfg(feature = "telemetry")]
         debug.field(
             "telemetry",
@@ -222,14 +237,7 @@ impl FlatbedConfig {
     pub fn new(title: &'static str) -> Self {
         Self {
             title,
-            description: None,
-            external_url: None,
-            host: "0.0.0.0".to_string(),
-            port: 8080,
-            splash: None,
-            before_request: None,
-            #[cfg(feature = "telemetry")]
-            telemetry: None,
+            ..Self::default()
         }
     }
 
@@ -294,6 +302,24 @@ impl FlatbedConfig {
         self
     }
 
+    /// Answer readiness on an existing [`Readiness`] registry rather than the
+    /// empty one every config starts with.
+    ///
+    /// Only needed when gates are registered before the config exists; a boot
+    /// function can reach the default registry through the config it receives.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let readiness = Readiness::new();
+    /// let nats_gate = readiness.gate("nats");
+    /// let config = FlatbedConfig::new("My API").readiness(readiness);
+    /// ```
+    pub fn readiness(mut self, readiness: Readiness) -> Self {
+        self.readiness = readiness;
+        self
+    }
+
     /// Set the external URL for OpenAPI spec (e.g., public endpoint through Envoy/TLS).
     pub fn external_url(mut self, url: impl Into<String>) -> Self {
         self.external_url = Some(url.into());
@@ -331,6 +357,11 @@ impl FlatbedConfig {
 /// 2. Boot function runs — `/readyz` returns 503, user routes return 503
 /// 3. Boot completes, context is stored — `/readyz` returns 200, routes accept traffic
 /// 4. Workers are spawned after the ready signal
+///
+/// Step 3's latch is one-shot, but readiness is not: a boot function that
+/// registers a [`Readiness`] gate for a runtime dependency keeps driving
+/// `/readyz` for the life of the process, and `/readyz` returns 503 again
+/// whenever a gate reports its dependency unusable.
 ///
 /// If a worker fails, `/healthz` returns 503 to trigger Kubernetes restart.
 ///

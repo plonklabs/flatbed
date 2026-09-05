@@ -48,9 +48,17 @@ impl<C> ServiceContext<C> {
         *self.healthz_rx.borrow()
     }
 
-    /// Check if the server is ready to accept requests
-    pub fn is_ready(&self) -> bool {
+    /// Check if the boot function has completed and the context is stored.
+    ///
+    /// This is the one-shot half of readiness: it never returns to `false`.
+    pub fn is_booted(&self) -> bool {
         *self.ready_rx.borrow()
+    }
+
+    /// Check if the server is ready to accept requests: booted, and with
+    /// every registered readiness gate reporting its dependency usable.
+    pub fn is_ready(&self) -> bool {
+        self.is_booted() && self.config.readiness.is_ready()
     }
 }
 
@@ -169,11 +177,21 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
 
     // Return 503 for user routes until server is ready
     if !ctx.is_ready() {
-        return build_error_response(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "BOOTING",
-            "Server is starting up, please retry shortly",
-        );
+        let (code, message) = if ctx.is_booted() {
+            (
+                "NOT_READY",
+                format!(
+                    "Waiting on {}",
+                    ctx.config.readiness.blocked_on().join(", ")
+                ),
+            )
+        } else {
+            (
+                "BOOTING",
+                "Server is starting up, please retry shortly".to_string(),
+            )
+        };
+        return build_error_response(StatusCode::SERVICE_UNAVAILABLE, code, &message);
     }
 
     // Try to match a user-defined route
@@ -319,6 +337,18 @@ fn handle_splash_endpoint(
     )
 }
 
+/// The `/readyz` body when the server is not ready, naming the gates that are
+/// holding it down so an operator can tell a slow boot from a lost dependency.
+#[cfg(feature = "telemetry")]
+fn not_ready_body<C>(ctx: &ServiceContext<C>) -> String {
+    let blocked = ctx.config.readiness.blocked_on();
+    if blocked.is_empty() {
+        return "Not Ready".to_string();
+    }
+
+    format!("Not Ready: {}", blocked.join(", "))
+}
+
 /// Handle telemetry endpoints (/healthz, /readyz, /metrics)
 #[cfg(feature = "telemetry")]
 fn handle_telemetry_endpoint<C>(
@@ -349,7 +379,7 @@ fn handle_telemetry_endpoint<C>(
             } else {
                 Some(build_text_response(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    "Not Ready",
+                    &not_ready_body(ctx),
                 ))
             }
         }
