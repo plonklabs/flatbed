@@ -311,16 +311,26 @@ connect error rather than a panic at startup.
 Readiness is two things: the one-shot boot latch, and any number of *gates*.
 A gate is a named dependency that can come and go for the life of the process
 — `/readyz` returns 200 only when the boot latch is set and every gate is
-ready, and names the blocking gates in its 503 body. Declared routes answer
-503 for the same interval, the way they already do during boot, so readiness
-stays one notion rather than two that can disagree.
+ready, and names the blocking gates in its 503 body.
+
+A closed gate 503s the whole HTTP surface, not just `/readyz`: declared
+routes and static files alike, the way they already do during boot, so
+readiness stays one notion rather than two that can disagree. Size a gate
+accordingly — gating on NATS takes the SPA and every unrelated route down
+with it, which is right for a service that cannot do its job without the
+broker and wrong for one that can. Workers are the exception: they keep
+running behind a closed gate, since the worker re-establishing a dependency
+would otherwise be gated on itself.
 
 The connector opens the gate it is given while connected and closes it while
 disconnected, draining, or closed, so a dropped broker connection takes the
-pod out of its Service endpoints for exactly the interval the connection is
-down. Reconnection is unbounded: a broker that is away for an hour is waited
-out rather than giving up on the pod. Nothing registers a gate on your behalf
-— a service with no gates behaves exactly as before.
+pod out of its Service endpoints for the interval it is down. A link that
+closes its socket is noticed at once; one that dies silently — a partition, a
+dropped conntrack entry — is noticed a few ping intervals later, so budget
+tens of seconds there rather than none. Reconnection is unbounded: a broker
+that is away for an hour is waited out rather than giving up on the pod.
+Nothing registers a gate on your behalf — a service with no gates behaves
+exactly as before.
 
 ## Crates
 

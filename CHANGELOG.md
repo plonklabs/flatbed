@@ -31,19 +31,28 @@ contain breaking changes during the pre-1.0 stabilization window.
   can register a gate from the config it already receives, and `/readyz` names
   the gates holding it down instead of a bare `Not Ready`.
 - `flatbed::nats::Connector` (feature `nats`): a managed core-NATS connection.
-  Retries the first connect with a capped, jittered backoff under a bounded
+  Retries the first connect with a capped, jittered backoff under a hard time
   budget, loads credentials inline or from a file read at connect time,
   jitters the client's own reconnect delays, and drives a `ReadinessGate` from
   the connection's state — so a broker that drops takes `/readyz` to 503 for
-  exactly the interval the connection is down, and restores it when the client
-  reconnects. Reconnection is unbounded; a long broker outage is waited out
+  the interval it is down, and restores it when the client reconnects. A link
+  that closes its socket is noticed at once; a silent partition is noticed
+  after a few ping intervals, for which the connector shortens the client's
+  default. Reconnection is unbounded; a long broker outage is waited out
   rather than giving up on the process.
 
 ### Changed
 
 - A `503` from a user route now distinguishes a boot that has not finished
   (`BOOTING`) from a readiness gate reporting its dependency unusable
-  (`NOT_READY`, naming the gates).
+  (`NOT_READY`, naming the gates). Readiness now covers the whole HTTP
+  surface for gates as it already did for the boot latch: a closed gate 503s
+  declared routes and static files, not only `/readyz`.
+- **Breaking:** `FlatbedConfig` gains a public `readiness` field, so struct
+  literals that named every field no longer compile. Builders are unaffected.
+- **Breaking:** `ServiceContext::ready_rx` is renamed `booted_rx`, and
+  `ServiceContext::is_ready` now means booted *and* every gate ready. The
+  old one-shot meaning is available as the new `is_booted`.
 
 ## [0.0.2] — 2026-07-21
 
