@@ -244,7 +244,6 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
     // Set request ID from header or keep generated one
     request_parts = request_parts.with_request_id_from_header();
 
-    // Run the before_request guard, if configured, before the handler runs
     if let Some(hook) = ctx.config.before_request.as_ref() {
         if let Err(err) = hook(&request_parts) {
             return build_route_error_response(&err, is_flatbuffer, &request_parts.request_id);

@@ -872,6 +872,23 @@ async fn test_before_request_guard_rejects_before_handler_runs() {
     // handler never ran.
     assert!(body.get("value").is_none());
 
+    // Same rejection over FlatBuffers: code/message travel in headers with an
+    // empty body, matching the `#[route]` macro's own error-response shape.
+    let resp = client
+        .post(format!("{}/api/ping", base))
+        .header("content-type", "application/x-flatbuffers")
+        .body(Vec::<u8>::new())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 401);
+    assert_eq!(resp.headers().get("x-error-code").unwrap(), "UNAUTHORIZED");
+    assert_eq!(
+        resp.headers().get("x-error-message").unwrap(),
+        "missing or invalid bearer token"
+    );
+    assert!(resp.bytes().await.unwrap().is_empty());
+
     // Correct bearer token: the guard passes and the handler runs normally.
     let resp = client
         .post(format!("{}/api/ping", base))
