@@ -62,10 +62,17 @@ impl<C> ServiceContext<C> {
         self.is_booted() && self.config.readiness.is_ready()
     }
 
-    /// The gates holding readiness down as a comma-separated list, or `None`
-    /// when no gate is, so a probe or an error can tell a slow boot from a
-    /// lost dependency.
-    fn blocked_on(&self) -> Option<String> {
+    /// The gates holding readiness down as a comma-separated list, so a probe
+    /// or an error can tell a lost dependency from a boot that has not
+    /// finished.
+    ///
+    /// `None` covers both halves of the latter: a boot still running is
+    /// waiting on itself, whatever gates it has registered along the way.
+    fn blocked_gates(&self) -> Option<String> {
+        if !self.is_booted() {
+            return None;
+        }
+
         let blocked = self.config.readiness.blocked_on();
         if blocked.is_empty() {
             return None;
@@ -188,9 +195,8 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         return response;
     }
 
-    // Return 503 for user routes until server is ready
     if !ctx.is_ready() {
-        let (code, message) = match ctx.blocked_on() {
+        let (code, message) = match ctx.blocked_gates() {
             Some(gates) => ("NOT_READY", format!("Waiting on {gates}")),
             None => (
                 "BOOTING",
@@ -371,7 +377,7 @@ fn handle_telemetry_endpoint<C>(
             if ctx.is_ready() {
                 Some(build_text_response(StatusCode::OK, "Ready"))
             } else {
-                let body = match ctx.blocked_on() {
+                let body = match ctx.blocked_gates() {
                     Some(gates) => format!("Not Ready: {gates}"),
                     None => "Not Ready".to_string(),
                 };

@@ -26,12 +26,13 @@
 //! ```
 
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 struct GateState {
     name: String,
     ready: AtomicBool,
+    blocking: Arc<AtomicUsize>,
 }
 
 /// The registry of runtime dependencies that readiness answers on, alongside
@@ -43,6 +44,7 @@ struct GateState {
 #[derive(Clone, Default)]
 pub struct Readiness {
     gates: Arc<Mutex<Vec<Arc<GateState>>>>,
+    blocking: Arc<AtomicUsize>,
 }
 
 impl Readiness {
@@ -61,16 +63,20 @@ impl Readiness {
         let state = Arc::new(GateState {
             name: name.into(),
             ready: AtomicBool::new(false),
+            blocking: Arc::clone(&self.blocking),
         });
+        self.blocking.fetch_add(1, Ordering::AcqRel);
         self.lock().push(Arc::clone(&state));
         ReadinessGate { state }
     }
 
     /// Whether every registered gate is ready.
+    ///
+    /// Every request answered by the server consults this, so it reads the
+    /// count of gates that are not ready rather than walking the registry
+    /// behind its lock.
     pub fn is_ready(&self) -> bool {
-        self.lock()
-            .iter()
-            .all(|gate| gate.ready.load(Ordering::Acquire))
+        self.blocking.load(Ordering::Acquire) == 0
     }
 
     /// The names of the gates currently holding readiness down, in
@@ -121,7 +127,14 @@ impl ReadinessGate {
 
     /// Report whether the dependency is currently usable.
     pub fn set_ready(&self, ready: bool) {
-        self.state.ready.store(ready, Ordering::Release);
+        if self.state.ready.swap(ready, Ordering::AcqRel) == ready {
+            return;
+        }
+
+        match ready {
+            true => self.state.blocking.fetch_sub(1, Ordering::AcqRel),
+            false => self.state.blocking.fetch_add(1, Ordering::AcqRel),
+        };
     }
 
     /// Whether this gate is currently ready.
@@ -187,6 +200,45 @@ mod tests {
         gate.set_ready(false);
         assert!(!readiness.is_ready());
         assert_eq!(readiness.blocked_on(), vec!["nats".to_string()]);
+    }
+
+    #[test]
+    fn repeating_a_gate_value_leaves_readiness_where_it_was() {
+        let readiness = Readiness::new();
+        let gate = readiness.gate("nats");
+
+        gate.set_ready(true);
+        gate.set_ready(true);
+        assert!(readiness.is_ready());
+
+        gate.set_ready(false);
+        assert!(!readiness.is_ready());
+    }
+
+    #[test]
+    fn concurrent_flips_leave_readiness_consistent() {
+        let readiness = Readiness::new();
+        let gate = readiness.gate("nats");
+        gate.set_ready(true);
+
+        let flippers: Vec<_> = (0..8)
+            .map(|_| {
+                let gate = gate.clone();
+                std::thread::spawn(move || {
+                    for _ in 0..1_000 {
+                        gate.set_ready(false);
+                        gate.set_ready(true);
+                    }
+                })
+            })
+            .collect();
+
+        for flipper in flippers {
+            flipper.join().expect("flipper thread");
+        }
+
+        assert!(readiness.is_ready());
+        assert!(readiness.blocked_on().is_empty());
     }
 
     #[test]
