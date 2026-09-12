@@ -11,6 +11,7 @@ and hit with `curl`. They are ordered from simplest to most featureful.
 | [`context-worker`](context-worker)   | An application `AppContext` built in the boot closure plus a background `Worker`. |
 | [`raw-response`](raw-response)       | `Response::raw` — returning arbitrary media (CSV, SVG) from a handler instead of JSON/FlatBuffer. |
 | [`static-assets`](static-assets)     | Serving a bundled single-page app and its JSON API from one origin — `static_route!` for `dist/`, `#[route]` for `/api/*`, no CORS. |
+| [`embedded-assets`](embedded-assets) | The same app compiled into the binary — `static_route!(embed = ...)`, so the binary is the whole deployable and the image ships no `dist/`. |
 
 ## Running an example
 

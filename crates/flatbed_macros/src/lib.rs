@@ -893,8 +893,14 @@ pub fn static_route(input: TokenStream) -> TokenStream {
         StaticSourceArg::Dir(dir) => quote! { ::flatbed::StaticSource::Dir(#dir) },
         StaticSourceArg::Embed(embed) => {
             let path = embed_path(&embed);
+            // `include_dir!` names its own crate as a bare `include_dir::` path,
+            // so the re-export is brought into scope for the expansion.
             quote! {
-                ::flatbed::StaticSource::Embedded(&::flatbed::include_dir::include_dir!(#path))
+                ::flatbed::StaticSource::Embedded({
+                    use ::flatbed::include_dir;
+                    static DIR: include_dir::Dir<'static> = include_dir::include_dir!(#path);
+                    &DIR
+                })
             }
         }
     };
@@ -922,9 +928,10 @@ pub fn static_route(input: TokenStream) -> TokenStream {
 /// passed through.
 fn embed_path(embed: &LitStr) -> LitStr {
     let value = embed.value();
-    let anchored = match value.starts_with('/') || value.starts_with('$') {
-        true => value,
-        false => format!("$CARGO_MANIFEST_DIR/{value}"),
+    let anchored = if value.starts_with('/') || value.starts_with('$') {
+        value
+    } else {
+        format!("$CARGO_MANIFEST_DIR/{value}")
     };
     LitStr::new(&anchored, embed.span())
 }
