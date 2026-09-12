@@ -1,0 +1,11 @@
+namespace api;
+
+table HelloRequest {
+  name: string;
+}
+
+table HelloResponse {
+  message: string;
+}
+
+root_type HelloRequest;

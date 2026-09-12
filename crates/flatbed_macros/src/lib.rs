@@ -789,9 +789,14 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
     main_macro::main_impl(attr, item)
 }
 
+enum StaticSourceArg {
+    Dir(LitStr),
+    Embed(LitStr),
+}
+
 struct StaticRouteArgs {
     mount: LitStr,
-    dir: LitStr,
+    source: StaticSourceArg,
     fallback: Option<LitStr>,
 }
 
@@ -799,6 +804,7 @@ impl Parse for StaticRouteArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut mount = None;
         let mut dir = None;
+        let mut embed = None;
         let mut fallback = None;
 
         while !input.is_empty() {
@@ -808,11 +814,12 @@ impl Parse for StaticRouteArgs {
             match key.to_string().as_str() {
                 "mount" => mount = Some(value),
                 "dir" => dir = Some(value),
+                "embed" => embed = Some(value),
                 "fallback" => fallback = Some(value),
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
-                        format!("unknown static_route key `{other}`; expected `mount`, `dir`, or `fallback`"),
+                        format!("unknown static_route key `{other}`; expected `mount`, `dir`, `embed`, or `fallback`"),
                     ));
                 }
             }
@@ -824,12 +831,26 @@ impl Parse for StaticRouteArgs {
         let span = proc_macro2::Span::call_site();
         let mount = mount
             .ok_or_else(|| syn::Error::new(span, "static_route! requires `mount = \"...\"`"))?;
-        let dir =
-            dir.ok_or_else(|| syn::Error::new(span, "static_route! requires `dir = \"...\"`"))?;
+        let source = match (dir, embed) {
+            (Some(dir), None) => StaticSourceArg::Dir(dir),
+            (None, Some(embed)) => StaticSourceArg::Embed(embed),
+            (Some(_), Some(_)) => {
+                return Err(syn::Error::new(
+                    span,
+                    "static_route! takes either `dir = \"...\"` or `embed = \"...\"`, not both",
+                ))
+            }
+            (None, None) => {
+                return Err(syn::Error::new(
+                    span,
+                    "static_route! requires `dir = \"...\"` or `embed = \"...\"`",
+                ))
+            }
+        };
 
         Ok(Self {
             mount,
-            dir,
+            source,
             fallback,
         })
     }
@@ -837,30 +858,52 @@ impl Parse for StaticRouteArgs {
 
 /// Mount a directory of static files, served under a URL prefix.
 ///
-/// Files are read from `dir` on the container filesystem at request time, so
-/// the directory must be present in the running image (e.g. `COPY dist/ /app/dist`
-/// in the Dockerfile). Declared `#[route]` routes always take precedence, so an
-/// API and a static mount can share one origin. A configured splash message
-/// answers `GET /` ahead of a root mount, so don't pair a splash with a
-/// `mount = "/"` SPA.
+/// The directory is either `dir`, read from the container filesystem at
+/// request time (so it must be present in the running image, e.g.
+/// `COPY dist/ /app/dist` in the Dockerfile), or `embed`, compiled into the
+/// binary at build time and served from memory. Declared `#[route]` routes
+/// always take precedence, so an API and a static mount can share one origin.
+/// A configured splash message answers `GET /` ahead of a root mount, so don't
+/// pair a splash with a `mount = "/"` SPA.
 ///
 /// # Arguments
 /// - `mount` (required): URL prefix to serve under, e.g. `"/"` or `"/assets"`.
-/// - `dir` (required): filesystem directory to read files from.
+/// - `dir`: filesystem directory to read files from, resolved against the
+///   process working directory when relative.
+/// - `embed`: directory to compile into the binary, resolved against the
+///   crate's manifest directory when relative. Exactly one of `dir` and
+///   `embed` is required.
 /// - `fallback` (optional): file served for unmatched sub-paths, enabling SPA
 ///   history fallback (e.g. `"index.html"`).
 ///
-/// # Example
+/// # Examples
 ///
 /// ```rust,ignore
 /// // Serve a built SPA at the root; unknown non-API paths fall back to index.html.
 /// flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
+///
+/// // The same, with <crate>/web/dist carried inside the binary.
+/// flatbed::static_route!(mount = "/", embed = "web/dist", fallback = "index.html");
 /// ```
 #[proc_macro]
 pub fn static_route(input: TokenStream) -> TokenStream {
     let args = parse_macro_input!(input as StaticRouteArgs);
     let mount = args.mount;
-    let dir = args.dir;
+    let source = match args.source {
+        StaticSourceArg::Dir(dir) => quote! { ::flatbed::StaticSource::Dir(#dir) },
+        StaticSourceArg::Embed(embed) => {
+            let path = embed_path(&embed);
+            // `include_dir!` names its own crate as a bare `include_dir::` path,
+            // so the re-export is brought into scope for the expansion.
+            quote! {
+                ::flatbed::StaticSource::Embedded({
+                    use ::flatbed::include_dir;
+                    static DIR: include_dir::Dir<'static> = include_dir::include_dir!(#path);
+                    &DIR
+                })
+            }
+        }
+    };
     let fallback = match args.fallback {
         Some(f) => quote! { Some(#f) },
         None => quote! { None },
@@ -870,11 +913,25 @@ pub fn static_route(input: TokenStream) -> TokenStream {
         ::flatbed::inventory::submit! {
             ::flatbed::StaticRouteInfo {
                 mount: #mount,
-                dir: #dir,
+                source: #source,
                 fallback: #fallback,
             }
         }
     };
 
     TokenStream::from(expanded)
+}
+
+/// The literal `include_dir!` reads: a relative `embed` is anchored on the
+/// consumer's manifest directory, which `include_dir!` substitutes at the
+/// consumer's build; an absolute path or one already naming a `$VAR` is
+/// passed through.
+fn embed_path(embed: &LitStr) -> LitStr {
+    let value = embed.value();
+    let anchored = if value.starts_with('/') || value.starts_with('$') {
+        value
+    } else {
+        format!("$CARGO_MANIFEST_DIR/{value}")
+    };
+    LitStr::new(&anchored, embed.span())
 }

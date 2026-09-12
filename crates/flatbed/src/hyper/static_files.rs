@@ -1,14 +1,14 @@
 //! Static-file serving for `static_route!` mounts.
 //!
-//! Files are read from the container filesystem at request time. Path
-//! resolution rejects any `..` or absolute component in the request URL;
-//! symlinks under `dir` are followed by the OS and are not separately
-//! constrained (the served directory is operator-controlled, shipped in the
-//! image).
+//! A mount reads from a directory on the container filesystem at request
+//! time, or from a directory embedded in the binary. Path resolution rejects
+//! any `..` or absolute component in the request URL; symlinks under a
+//! filesystem `dir` are followed by the OS and are not separately constrained
+//! (the served directory is operator-controlled, shipped in the image).
 
 use std::path::{Component, Path, PathBuf};
 
-use crate::{HeaderName, HeaderValue, ResponseParts, StaticRouteInfo};
+use crate::{HeaderName, HeaderValue, ResponseParts, StaticRouteInfo, StaticSource};
 
 /// Serve a static file for `path` from the first mount that produces a hit.
 ///
@@ -29,22 +29,28 @@ pub async fn serve(routes: &[StaticRouteInfo], path: &str) -> Option<ResponsePar
 async fn serve_one(route: &StaticRouteInfo, path: &str) -> Option<ResponseParts> {
     let rel = strip_mount(route.mount, path)?;
     let relative = sanitize(rel)?;
-    let dir = Path::new(route.dir);
 
     if !relative.as_os_str().is_empty() {
-        let full = dir.join(&relative);
-        if let Some(bytes) = read_file(&full).await {
-            return Some(build(bytes, &full));
+        if let Some(bytes) = read(route.source, &relative).await {
+            return Some(build(bytes, &relative));
         }
         if is_known_asset(&relative) {
             return None;
         }
     }
 
-    let fallback = route.fallback?;
-    let full = dir.join(fallback);
-    let bytes = read_file(&full).await?;
-    Some(build(bytes, &full))
+    let fallback = Path::new(route.fallback?);
+    let bytes = read(route.source, fallback).await?;
+    Some(build(bytes, fallback))
+}
+
+/// The bytes of `relative` under the mount's source, `None` when it names
+/// nothing there or names a directory.
+async fn read(source: StaticSource, relative: &Path) -> Option<Vec<u8>> {
+    match source {
+        StaticSource::Dir(dir) => read_file(&Path::new(dir).join(relative)).await,
+        StaticSource::Embedded(dir) => dir.get_file(relative).map(|file| file.contents().to_vec()),
+    }
 }
 
 /// Strip the mount prefix from a request path, returning the relative remainder.
@@ -238,7 +244,9 @@ mod tests {
         std::fs::write(dir.join("assets/app.js"), b"console.log(1)").unwrap();
         StaticRouteInfo {
             mount: "/",
-            dir: Box::leak(dir.to_str().unwrap().to_string().into_boxed_str()),
+            source: StaticSource::Dir(Box::leak(
+                dir.to_str().unwrap().to_string().into_boxed_str(),
+            )),
             fallback: Some("index.html"),
         }
     }
@@ -299,12 +307,12 @@ mod tests {
         let routes = [
             StaticRouteInfo {
                 mount: "/",
-                dir: make("winA", b"first"),
+                source: StaticSource::Dir(make("winA", b"first")),
                 fallback: None,
             },
             StaticRouteInfo {
                 mount: "/",
-                dir: make("winB", b"second"),
+                source: StaticSource::Dir(make("winB", b"second")),
                 fallback: None,
             },
         ];
@@ -317,7 +325,7 @@ mod tests {
         // No fallback configured: an extensionless miss has nowhere to go.
         let route = StaticRouteInfo {
             mount: "/",
-            dir: "/nonexistent",
+            source: StaticSource::Dir("/nonexistent"),
             fallback: None,
         };
         assert!(serve_one(&route, "/dashboard").await.is_none());
@@ -331,9 +339,68 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let route = StaticRouteInfo {
             mount: "/",
-            dir: Box::leak(dir.to_str().unwrap().to_string().into_boxed_str()),
+            source: StaticSource::Dir(Box::leak(
+                dir.to_str().unwrap().to_string().into_boxed_str(),
+            )),
             fallback: Some("index.html"),
         };
         assert!(serve_one(&route, "/dashboard").await.is_none());
+    }
+
+    /// The crate's own test fixture, compiled in: `app.js` and `index.html`.
+    static EMBEDDED: include_dir::Dir<'static> =
+        include_dir::include_dir!("$CARGO_MANIFEST_DIR/tests/static_fixture");
+
+    fn embedded(mount: &'static str, fallback: Option<&'static str>) -> StaticRouteInfo {
+        StaticRouteInfo {
+            mount,
+            source: StaticSource::Embedded(&EMBEDDED),
+            fallback,
+        }
+    }
+
+    #[tokio::test]
+    async fn embedded_serves_asset_with_type_and_cache() {
+        let route = embedded("/", Some("index.html"));
+        let parts = serve_one(&route, "/app.js").await.expect("hit");
+        assert_eq!(
+            parts.body,
+            std::fs::read("tests/static_fixture/app.js").unwrap()
+        );
+        assert_eq!(parts.content_type, "text/javascript; charset=utf-8");
+        assert_eq!(
+            parts.headers.get("cache-control").unwrap(),
+            "public, max-age=31536000, immutable"
+        );
+    }
+
+    #[tokio::test]
+    async fn embedded_root_and_client_route_serve_fallback() {
+        let route = embedded("/", Some("index.html"));
+        for path in ["/", "/dashboard", "/v2.0"] {
+            let parts = serve_one(&route, path).await.expect(path);
+            assert_eq!(parts.content_type, "text/html; charset=utf-8", "{path}");
+            assert!(parts.body.starts_with(b"<!doctype"), "{path}");
+            assert_eq!(parts.headers.get("cache-control").unwrap(), "no-cache");
+        }
+    }
+
+    #[tokio::test]
+    async fn embedded_missing_asset_is_404_not_shell() {
+        let route = embedded("/", Some("index.html"));
+        assert!(serve_one(&route, "/assets/missing-x9.js").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn embedded_no_fallback_miss_is_404() {
+        let route = embedded("/static", None);
+        assert!(serve_one(&route, "/static/dashboard").await.is_none());
+        assert!(serve_one(&route, "/static/app.js").await.is_some());
+    }
+
+    #[tokio::test]
+    async fn embedded_traversal_is_rejected() {
+        let route = embedded("/", Some("index.html"));
+        assert!(serve_one(&route, "/../Cargo.toml").await.is_none());
     }
 }

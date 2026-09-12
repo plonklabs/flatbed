@@ -120,6 +120,11 @@ pub use serde_json;
 #[cfg(feature = "openapi")]
 pub use utoipa;
 
+// Re-export include_dir: the `embed` form of `static_route!` expands to its
+// macro, so a consumer never names the crate.
+#[doc(hidden)]
+pub use include_dir;
+
 // Re-export tokio for use in generated main macro code
 #[doc(hidden)]
 pub use tokio;
@@ -1535,17 +1540,27 @@ impl std::fmt::Debug for RouteInfo {
 
 inventory::collect!(RouteInfo);
 
+/// Where a static mount reads its files from.
+#[derive(Clone, Copy, Debug)]
+pub enum StaticSource {
+    /// A directory on the container filesystem, read at request time
+    /// (e.g. `/app/dist`).
+    Dir(&'static str),
+    /// A directory compiled into the binary, served from memory.
+    Embedded(&'static include_dir::Dir<'static>),
+}
+
 /// A static-file mount registered by the `static_route!` macro.
 ///
-/// Serves files from `dir` on the container filesystem under the `mount` URL
-/// prefix. Declared `#[route]` routes always take precedence, so an API mounted
-/// under `/api` keeps working alongside a static mount at `/`.
+/// Serves files from `source` under the `mount` URL prefix. Declared
+/// `#[route]` routes always take precedence, so an API mounted under `/api`
+/// keeps working alongside a static mount at `/`.
 #[derive(Clone, Copy, Debug)]
 pub struct StaticRouteInfo {
     /// URL prefix the mount answers under (e.g. `/` or `/assets`).
     pub mount: &'static str,
-    /// Filesystem directory the files are read from (e.g. `/app/dist`).
-    pub dir: &'static str,
+    /// The directory the files come from, on disk or in the binary.
+    pub source: StaticSource,
     /// File served for unmatched sub-paths, enabling SPA history fallback
     /// (e.g. `index.html`). `None` returns 404 for a miss.
     pub fallback: Option<&'static str>,

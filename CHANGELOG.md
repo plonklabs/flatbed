@@ -11,6 +11,13 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ### Added
 
+- `static_route!(mount = "/", embed = "web/dist", fallback = "index.html")`:
+  a static mount over a directory compiled into the binary, for a binary that
+  has no image to ship `dist/` in. `embed` is relative to the crate's manifest
+  and is exclusive with `dir`; the fallback, content types and cache headers
+  are the filesystem mount's. `StaticRouteInfo.dir` is now
+  `StaticRouteInfo.source: StaticSource`, `Dir(&str)` or
+  `Embedded(&include_dir::Dir)`, and `flatbed` re-exports `include_dir`.
 - `flatbed --version` on the `flatbed_build` CLI binary, reporting the
   installed crate version — previously an unrecognized-argument error.
 - `#[nats_route]` (feature `nats`): core-NATS request-reply responders, the
