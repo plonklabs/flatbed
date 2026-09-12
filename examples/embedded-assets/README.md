@@ -14,8 +14,9 @@ image — nothing is read from disk at request time.
 #[route("/api/hello", method = "POST")]
 async fn hello(req: Request<HelloRequest>) -> Result<Response<HelloResponse>, FlatbedRouteError> { ... }
 
-// Declared routes win; unknown GETs are served from the embedded dist/.
-static_route!(mount = "/", embed = "dist", fallback = "index.html");
+// Declared routes win; unknown GETs are served from the embedded dist/,
+// except under /api/, where a miss is a 404.
+static_route!(mount = "/", embed = "dist", fallback = "index.html", no_fallback = ["/api/"]);
 ```
 
 `embed` is relative to this crate's `Cargo.toml` and is read once, at build
@@ -40,6 +41,9 @@ curl -s -X POST localhost:8080/api/hello \
 curl -s localhost:8080/                 # index.html
 curl -s localhost:8080/assets/app-a1b2c3.js   # the JS bundle, content-type text/javascript
 curl -s localhost:8080/dashboard        # unknown route → index.html (SPA fallback)
+curl -si localhost:8080/api/nothing | head -1   # HTTP/1.1 404: under no_fallback, not the shell
+curl -s localhost:8080/api/hello -X POST -H 'accept: application/json' \
+  -H 'content-type: application/x-flatbuffers' --data-binary @req.bin   # FlatBuffer in, JSON out
 ```
 
 Or with Docker:

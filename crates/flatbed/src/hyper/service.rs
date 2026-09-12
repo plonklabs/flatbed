@@ -244,6 +244,12 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         }
     }
 
+    let respond_flatbuffer = match crate::accepted_codec(&headers) {
+        Some(crate::Codec::Json) => false,
+        Some(crate::Codec::FlatBuffer) => true,
+        None => is_flatbuffer,
+    };
+
     // Built ahead of the body read so an early rejection skips consuming it.
     let mut request_parts = RequestParts::new(
         Method::from_bytes(method.as_bytes()).unwrap_or(Method::POST),
@@ -275,7 +281,7 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
 
     if let Some(hook) = ctx.config.before_request.as_ref() {
         if let Err(err) = hook(&request_parts) {
-            return build_route_error_response(&err, is_flatbuffer, &request_parts.request_id);
+            return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id);
         }
     }
 

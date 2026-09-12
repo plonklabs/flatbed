@@ -1027,3 +1027,161 @@ fn test_router_path_matching() {
     // Path matching with no routes returns None
     assert!(router.match_route("/api/ping", "GET").is_none());
 }
+
+/// `accept` picks the response codec when it names one; the body is still
+/// decoded by `content-type`, and a request that names neither is answered
+/// the way it always was.
+#[tokio::test]
+async fn accept_header_selects_the_response_codec() {
+    use flatbed::{Flatbed, FlatbedConfig};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let telemetry: Arc<dyn flatbed::TelemetryService> = Arc::new(StubTelemetryService);
+    let config = FlatbedConfig::new("Test API")
+        .host("127.0.0.1")
+        .port(port)
+        .with_telemetry(telemetry);
+    let server = tokio::spawn(async move { Flatbed::run(config, |_| async { Ok(()) }).await });
+
+    let base = format!("http://127.0.0.1:{port}");
+    let client = reqwest::Client::new();
+    for _ in 0..100 {
+        if let Ok(resp) = client.get(format!("{base}/readyz")).send().await {
+            if resp.status().as_u16() == 200 {
+                break;
+            }
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+    }
+
+    // A bodiless GET with `accept: application/json` is answered in JSON.
+    // `TestRequest.value` has no default, so the empty body is a 400 here
+    // whatever the codec; what `accept` decides is the shape of the answer.
+    let resp = client
+        .get(format!("{base}/api/resource"))
+        .header("accept", "application/json")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/json"
+    );
+    let json: flatbed::serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["code"], "BAD_REQUEST");
+
+    // The same GET with no headers is answered as before: no `accept` and no
+    // `content-type` means the JSON error body.
+    let resp = client
+        .get(format!("{base}/api/resource"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/json"
+    );
+
+    // A handler's own error under `accept: application/x-flatbuffers` takes
+    // the FlatBuffer shape: code and message in headers, no JSON body. (A body
+    // that fails to decode is the service's answer, JSON whatever the codec.)
+    let resp = client
+        .post(format!("{base}/api/error"))
+        .header("content-type", "application/json")
+        .header("accept", "application/x-flatbuffers")
+        .body(r#"{"message":"e","value":1}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/x-flatbuffers"
+    );
+    assert_eq!(resp.headers().get("x-error-code").unwrap(), "TEST_ERROR");
+    assert!(resp.bytes().await.unwrap().is_empty());
+
+    // A FlatBuffer body in, `accept: application/json` out: decoded by
+    // content-type, encoded by accept.
+    let request = TestRequest {
+        message: Some("fb".to_string()),
+        value: 1,
+    };
+    let resp = client
+        .post(format!("{base}/api/ping"))
+        .header("content-type", "application/x-flatbuffers")
+        .header("accept", "application/json")
+        .body(request.to_flatbuffer())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/json"
+    );
+    let json: flatbed::serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["value"], 101);
+    assert_eq!(json["message"], "Test pong: fb");
+
+    // JSON in with `accept: application/x-flatbuffers` answers FlatBuffers.
+    let resp = client
+        .post(format!("{base}/api/ping"))
+        .header("content-type", "application/json")
+        .header("accept", "application/x-flatbuffers")
+        .body(r#"{"message":"j","value":2}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/x-flatbuffers"
+    );
+    let decoded = TestResponse::from_flatbuffer(&resp.bytes().await.unwrap()).unwrap();
+    assert_eq!(decoded.value, 102);
+
+    // An `accept` naming neither falls through to the content-type rule.
+    let resp = client
+        .post(format!("{base}/api/ping"))
+        .header("content-type", "application/json")
+        .header("accept", "text/html")
+        .body(r#"{"message":"h","value":3}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/json"
+    );
+
+    // A handler error under `accept: application/json` is a JSON error body.
+    let resp = client
+        .post(format!("{base}/api/error"))
+        .header("content-type", "application/x-flatbuffers")
+        .header("accept", "application/json")
+        .body(
+            TestRequest {
+                message: Some("e".to_string()),
+                value: 1,
+            }
+            .to_flatbuffer(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 400);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/json"
+    );
+    let json: flatbed::serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(json["code"], "TEST_ERROR");
+
+    server.abort();
+}

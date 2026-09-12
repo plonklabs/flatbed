@@ -15,7 +15,8 @@ static_route!(mount = "/static", dir = "tests/static_fixture");
 static_route!(
     mount = "/embedded",
     embed = "tests/static_fixture",
-    fallback = "index.html"
+    fallback = "index.html",
+    no_fallback = ["/api/"]
 );
 
 /// Start a server on a free port and wait until static serving answers,
@@ -138,6 +139,14 @@ async fn embedded_mount_serves_from_the_binary() {
         .await
         .unwrap();
     assert_eq!(missing.status().as_u16(), 404);
+
+    // A miss under a `no_fallback` prefix is a 404, not the shell.
+    let api_miss = client
+        .get(format!("http://127.0.0.1:{port}/embedded/api/nothing"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(api_miss.status().as_u16(), 404);
 
     server.abort();
 }

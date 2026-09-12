@@ -23,7 +23,13 @@ async fn hello(req: Request<HelloRequest>) -> Result<Response<HelloResponse>, Fl
 }
 
 // `embed` is relative to this crate's Cargo.toml, read once at build time.
-static_route!(mount = "/", embed = "dist", fallback = "index.html");
+// A miss under /api/ is a 404, never the page shell.
+static_route!(
+    mount = "/",
+    embed = "dist",
+    fallback = "index.html",
+    no_fallback = ["/api/"]
+);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

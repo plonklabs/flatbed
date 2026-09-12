@@ -506,6 +506,17 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                     || content_type.contains("application/x-flat-buffers");
 
                 let request_id = request_parts.request_id.clone();
+                let accepted = ::flatbed::accepted_codec(&request_parts.headers);
+                let respond_json = match accepted {
+                    Some(::flatbed::Codec::Json) => true,
+                    Some(::flatbed::Codec::FlatBuffer) => false,
+                    None => is_json,
+                };
+                let respond_flatbuffer = match accepted {
+                    Some(::flatbed::Codec::Json) => false,
+                    Some(::flatbed::Codec::FlatBuffer) => true,
+                    None => is_flatbuffer,
+                };
 
                 // Deserialize request body
                 let request_body: #body_type = if is_json {
@@ -561,7 +572,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let (response_bytes, response_content_type): (Vec<u8>, ::std::borrow::Cow<'static, str>) =
                             if let Some((bytes, content_type)) = response.take_raw() {
                                 (bytes, content_type)
-                            } else if is_json {
+                            } else if respond_json {
                                 match ::flatbed::serde_json::to_vec(&response.body) {
                                     Ok(b) => (b, ::std::borrow::Cow::Borrowed("application/json")),
                                     Err(e) => {
@@ -615,7 +626,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                             headers.insert(key.clone(), value.clone());
                         }
 
-                        let (body, content_type) = if is_flatbuffer {
+                        let (body, content_type) = if respond_flatbuffer {
                             // For FlatBuffer: code/message in headers, details in body
                             if let Ok(val) = ::flatbed::HeaderValue::try_from(error_code) {
                                 headers.insert(
@@ -798,6 +809,7 @@ struct StaticRouteArgs {
     mount: LitStr,
     source: StaticSourceArg,
     fallback: Option<LitStr>,
+    no_fallback: Vec<LitStr>,
 }
 
 impl Parse for StaticRouteArgs {
@@ -806,10 +818,23 @@ impl Parse for StaticRouteArgs {
         let mut dir = None;
         let mut embed = None;
         let mut fallback = None;
+        let mut no_fallback = Vec::new();
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
+            if key == "no_fallback" {
+                let content;
+                syn::bracketed!(content in input);
+                no_fallback = content
+                    .parse_terminated(<LitStr as Parse>::parse, Token![,])?
+                    .into_iter()
+                    .collect();
+                if input.peek(Token![,]) {
+                    input.parse::<Token![,]>()?;
+                }
+                continue;
+            }
             let value: LitStr = input.parse()?;
             match key.to_string().as_str() {
                 "mount" => mount = Some(value),
@@ -819,7 +844,7 @@ impl Parse for StaticRouteArgs {
                 other => {
                     return Err(syn::Error::new(
                         key.span(),
-                        format!("unknown static_route key `{other}`; expected `mount`, `dir`, `embed`, or `fallback`"),
+                        format!("unknown static_route key `{other}`; expected `mount`, `dir`, `embed`, `fallback`, or `no_fallback`"),
                     ));
                 }
             }
@@ -852,6 +877,7 @@ impl Parse for StaticRouteArgs {
             mount,
             source,
             fallback,
+            no_fallback,
         })
     }
 }
@@ -875,6 +901,10 @@ impl Parse for StaticRouteArgs {
 ///   `embed` is required.
 /// - `fallback` (optional): file served for unmatched sub-paths, enabling SPA
 ///   history fallback (e.g. `"index.html"`).
+/// - `no_fallback` (optional): mount-relative path prefixes under which a
+///   miss is a 404 and never the fallback, so a mistyped API path is not
+///   answered with the shell (e.g. `["/api/"]`, which under `mount = "/app"`
+///   covers `/app/api/...`).
 ///
 /// # Examples
 ///
@@ -882,8 +912,9 @@ impl Parse for StaticRouteArgs {
 /// // Serve a built SPA at the root; unknown non-API paths fall back to index.html.
 /// flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
 ///
-/// // The same, with <crate>/web/dist carried inside the binary.
-/// flatbed::static_route!(mount = "/", embed = "web/dist", fallback = "index.html");
+/// // The same, with <crate>/web/dist carried inside the binary, and a miss
+/// // under /api/ a 404 rather than the shell.
+/// flatbed::static_route!(mount = "/", embed = "web/dist", fallback = "index.html", no_fallback = ["/api/"]);
 /// ```
 #[proc_macro]
 pub fn static_route(input: TokenStream) -> TokenStream {
@@ -908,6 +939,7 @@ pub fn static_route(input: TokenStream) -> TokenStream {
         Some(f) => quote! { Some(#f) },
         None => quote! { None },
     };
+    let no_fallback = args.no_fallback;
 
     let expanded = quote! {
         ::flatbed::inventory::submit! {
@@ -915,6 +947,7 @@ pub fn static_route(input: TokenStream) -> TokenStream {
                 mount: #mount,
                 source: #source,
                 fallback: #fallback,
+                no_fallback: &[#(#no_fallback),*],
             }
         }
     };
