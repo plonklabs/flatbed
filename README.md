@@ -199,7 +199,16 @@ flatbed::static_route!(mount = "/", dir = "/app/dist", fallback = "index.html");
 ```
 
 Files are read from the container filesystem at request time, so ship the
-directory in your image (e.g. `COPY dist/ /app/dist`). The `Content-Type` comes
+directory in your image (e.g. `COPY dist/ /app/dist`). A binary that has to
+carry its page itself — an installed CLI, say — embeds the directory instead,
+with `embed` in place of `dir`; the path is relative to the crate's manifest
+and the files are compiled in and served from memory:
+
+```rust
+flatbed::static_route!(mount = "/", embed = "web/dist", fallback = "index.html");
+```
+
+Either way the `Content-Type` comes
 from the file extension; `Cache-Control` is `no-cache` for HTML and other
 stable-name files (`json`, `txt`, `ico`, `xml`, `webmanifest`), and
 `public, max-age=31536000, immutable` for content-hashed assets. A missing path

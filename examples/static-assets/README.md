@@ -22,6 +22,12 @@ and copies `dist/` there, so `dir = "dist"` resolves to `/app/dist`.
 In a real project `dist/` is your bundler's output (e.g. Vite's `npm run build`);
 the checked-in `dist/` here is a hand-written stand-in.
 
+A binary with no image to ship `dist/` in — an installed CLI — compiles the
+directory in instead: `static_route!(mount = "/", embed = "dist", fallback =
+"index.html")`. `embed` is relative to the crate's `Cargo.toml`, the files are
+read at build time, and the mount serves them from memory with the same
+fallback, content types and cache headers.
+
 ## Run
 
 Locally (needs `flatc` on `PATH`, matching `.flatc-version`):
