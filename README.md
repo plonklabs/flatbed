@@ -127,18 +127,21 @@ run it by hand with the [`flatbed` CLI](#flatbed-cli). Either way you get the
 Rust `PingRequest` / `PingResponse` types your handler names in
 `Request<PingRequest>` and `Response<PingResponse>`.
 
-**2. One handler, two wire formats.** flatbed picks the codec from the request's
-`Content-Type` header:
+**2. One handler, two wire formats.** flatbed decodes the body by the request's
+`Content-Type` and encodes the response by its `Accept` when that names a codec,
+else by the same `Content-Type`:
 
 | Request `Content-Type`         | Body is parsed as | Response is encoded as |
 | ------------------------------ | ----------------- | ---------------------- |
 | `application/json`             | JSON              | JSON                   |
 | `application/x-flatbuffers`    | binary FlatBuffer | binary FlatBuffer      |
 
-The **response always mirrors the request format**, so the same handler serves a
-browser sending JSON and a service sending packed FlatBuffer bytes — you write
-it once. A body-bearing request (POST/PUT/…) with neither content type is
-rejected with `415 Unsupported Media Type`.
+The **response mirrors the request format unless `Accept` says otherwise**, so
+the same handler serves a browser sending JSON and a service sending packed
+FlatBuffer bytes — you write it once — and a bodiless `GET` can still ask for
+JSON with `Accept: application/json`. An `Accept` naming neither codec (a
+browser's `*/*`, say) changes nothing. A body-bearing request (POST/PUT/…) with
+neither content type is rejected with `415 Unsupported Media Type`.
 
 This is why FlatBuffers are a good fit here: the binary format is compact and
 zero-copy for service-to-service traffic, while the JSON view keeps the same
@@ -214,7 +217,9 @@ stable-name files (`json`, `txt`, `ico`, `xml`, `webmanifest`), and
 `public, max-age=31536000, immutable` for content-hashed assets. A missing path
 *with* an extension is a real `404` (a broken asset URL isn't masked by the
 shell); an extensionless miss serves the `fallback`. Declared routes always take
-precedence, so `/api/*` keeps working under a `/` mount. (A configured
+precedence, so `/api/*` keeps working under a `/` mount, and
+`no_fallback = ["/api/"]` makes a miss under that prefix a `404` rather than
+the shell, so a mistyped API path is not answered with HTML. (A configured
 `splash` banner answers `GET /` ahead of a root mount — don't set both.)
 
 For a handler that needs to return a body the JSON/FlatBuffer path can't express

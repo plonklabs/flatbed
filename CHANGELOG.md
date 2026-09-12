@@ -9,6 +9,18 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+### Added
+
+- A route answers in the codec the request's `accept` header names
+  (`application/json` or `application/x-flatbuffers`); the body is still
+  decoded by `content-type`, and an `accept` naming neither leaves the
+  response following `content-type` as before. `flatbed::accepted_codec` and
+  `flatbed::Codec` are the rule, shared by the route wrapper and the
+  `before_request` error path.
+- `static_route!(..., no_fallback = ["/api/"])`: request-path prefixes under
+  which a miss is a 404 and never the SPA fallback. `StaticRouteInfo` gains
+  `no_fallback: &'static [&'static str]`.
+
 ## [0.0.3] — 2026-09-12
 
 ### Added

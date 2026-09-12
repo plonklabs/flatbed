@@ -39,6 +39,13 @@ async fn serve_one(route: &StaticRouteInfo, path: &str) -> Option<ResponseParts>
         }
     }
 
+    if route
+        .no_fallback
+        .iter()
+        .any(|prefix| path.starts_with(prefix))
+    {
+        return None;
+    }
     let fallback = Path::new(route.fallback?);
     let bytes = read(route.source, fallback).await?;
     Some(build(bytes, fallback))
@@ -248,6 +255,7 @@ mod tests {
                 dir.to_str().unwrap().to_string().into_boxed_str(),
             )),
             fallback: Some("index.html"),
+            no_fallback: &[],
         }
     }
 
@@ -309,11 +317,13 @@ mod tests {
                 mount: "/",
                 source: StaticSource::Dir(make("winA", b"first")),
                 fallback: None,
+                no_fallback: &[],
             },
             StaticRouteInfo {
                 mount: "/",
                 source: StaticSource::Dir(make("winB", b"second")),
                 fallback: None,
+                no_fallback: &[],
             },
         ];
         let parts = serve(&routes, "/app.js").await.expect("hit");
@@ -327,6 +337,7 @@ mod tests {
             mount: "/",
             source: StaticSource::Dir("/nonexistent"),
             fallback: None,
+            no_fallback: &[],
         };
         assert!(serve_one(&route, "/dashboard").await.is_none());
     }
@@ -343,6 +354,7 @@ mod tests {
                 dir.to_str().unwrap().to_string().into_boxed_str(),
             )),
             fallback: Some("index.html"),
+            no_fallback: &[],
         };
         assert!(serve_one(&route, "/dashboard").await.is_none());
     }
@@ -356,6 +368,7 @@ mod tests {
             mount,
             source: StaticSource::Embedded(&EMBEDDED),
             fallback,
+            no_fallback: &[],
         }
     }
 
@@ -389,6 +402,25 @@ mod tests {
     async fn embedded_missing_asset_is_404_not_shell() {
         let route = embedded("/", Some("index.html"));
         assert!(serve_one(&route, "/assets/missing-x9.js").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn no_fallback_prefix_miss_is_404_and_the_rest_still_falls_back() {
+        let route = StaticRouteInfo {
+            mount: "/",
+            source: StaticSource::Embedded(&EMBEDDED),
+            fallback: Some("index.html"),
+            no_fallback: &["/api/"],
+        };
+        assert!(serve_one(&route, "/api/nothing").await.is_none());
+        assert!(serve_one(&route, "/api/deeper/nothing").await.is_none());
+        // The bare prefix root is not under the prefix.
+        let shell = serve_one(&route, "/api").await.expect("fallback");
+        assert_eq!(shell.content_type, "text/html; charset=utf-8");
+        let shell = serve_one(&route, "/dashboard").await.expect("fallback");
+        assert_eq!(shell.content_type, "text/html; charset=utf-8");
+        let asset = serve_one(&route, "/app.js").await.expect("asset");
+        assert_eq!(asset.content_type, "text/javascript; charset=utf-8");
     }
 
     #[tokio::test]
