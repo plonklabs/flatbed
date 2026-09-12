@@ -9,6 +9,8 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+## [0.0.4] — 2026-09-12
+
 ### Added
 
 - A route answers in the codec the request's `accept` header names
@@ -122,7 +124,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.3...HEAD
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.4...HEAD
+[0.0.4]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.3...flatbed-v0.0.4
 [0.0.3]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.2...flatbed-v0.0.3
 [0.0.2]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.1...flatbed-v0.0.2
 [0.0.1]: https://github.com/plonklabs/flatbed/releases/tag/flatbed-v0.0.1
