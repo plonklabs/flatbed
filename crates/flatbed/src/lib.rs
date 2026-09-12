@@ -1476,8 +1476,7 @@ pub enum Codec {
 /// The codec a request's `accept` header asks the response to use, when it
 /// names one flatbed serves. Both named, the earlier wins; neither named,
 /// or no header, is `None` and the response follows the request's
-/// `content-type` as it always has. A body is still decoded by
-/// `content-type` alone.
+/// `content-type`. A body is still decoded by `content-type` alone.
 #[must_use]
 pub fn accepted_codec(headers: &HeaderMap) -> Option<Codec> {
     let accept = headers.get("accept")?.to_str().ok()?;
@@ -1593,9 +1592,10 @@ pub struct StaticRouteInfo {
     /// File served for unmatched sub-paths, enabling SPA history fallback
     /// (e.g. `index.html`). `None` returns 404 for a miss.
     pub fallback: Option<&'static str>,
-    /// Request-path prefixes under which a miss is a 404 and never the
-    /// fallback, so a mistyped API path is not answered with the page
-    /// shell (e.g. `&["/api/"]`).
+    /// Mount-relative path prefixes under which a miss is a 404 and never
+    /// the fallback, so a mistyped API path is not answered with the page
+    /// shell (e.g. `&["/api/"]`, which under `mount = "/app"` covers
+    /// `/app/api/...`).
     pub no_fallback: &'static [&'static str],
 }
 

@@ -42,7 +42,7 @@ async fn serve_one(route: &StaticRouteInfo, path: &str) -> Option<ResponseParts>
     if route
         .no_fallback
         .iter()
-        .any(|prefix| path.starts_with(prefix))
+        .any(|prefix| rel.starts_with(prefix.trim_start_matches('/')))
     {
         return None;
     }
@@ -421,6 +421,19 @@ mod tests {
         assert_eq!(shell.content_type, "text/html; charset=utf-8");
         let asset = serve_one(&route, "/app.js").await.expect("asset");
         assert_eq!(asset.content_type, "text/javascript; charset=utf-8");
+    }
+
+    #[tokio::test]
+    async fn no_fallback_prefix_is_relative_to_the_mount() {
+        let route = StaticRouteInfo {
+            mount: "/app",
+            source: StaticSource::Embedded(&EMBEDDED),
+            fallback: Some("index.html"),
+            no_fallback: &["/api/"],
+        };
+        assert!(serve_one(&route, "/app/api/nothing").await.is_none());
+        let shell = serve_one(&route, "/app/dashboard").await.expect("fallback");
+        assert_eq!(shell.content_type, "text/html; charset=utf-8");
     }
 
     #[tokio::test]

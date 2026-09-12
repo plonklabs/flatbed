@@ -506,8 +506,6 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                     || content_type.contains("application/x-flat-buffers");
 
                 let request_id = request_parts.request_id.clone();
-                // `accept` picks the response codec when it names one; otherwise the
-                // response follows the request's content-type.
                 let accepted = ::flatbed::accepted_codec(&request_parts.headers);
                 let respond_json = match accepted {
                     Some(::flatbed::Codec::Json) => true,
@@ -903,9 +901,10 @@ impl Parse for StaticRouteArgs {
 ///   `embed` is required.
 /// - `fallback` (optional): file served for unmatched sub-paths, enabling SPA
 ///   history fallback (e.g. `"index.html"`).
-/// - `no_fallback` (optional): request-path prefixes under which a miss is a
-///   404 and never the fallback, so a mistyped API path is not answered with
-///   the shell (e.g. `["/api/"]`).
+/// - `no_fallback` (optional): mount-relative path prefixes under which a
+///   miss is a 404 and never the fallback, so a mistyped API path is not
+///   answered with the shell (e.g. `["/api/"]`, which under `mount = "/app"`
+///   covers `/app/api/...`).
 ///
 /// # Examples
 ///

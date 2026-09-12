@@ -17,8 +17,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   response following `content-type` as before. `flatbed::accepted_codec` and
   `flatbed::Codec` are the rule, shared by the route wrapper and the
   `before_request` error path.
-- `static_route!(..., no_fallback = ["/api/"])`: request-path prefixes under
-  which a miss is a 404 and never the SPA fallback. `StaticRouteInfo` gains
+- `static_route!(..., no_fallback = ["/api/"])`: mount-relative path prefixes
+  under which a miss is a 404 and never the SPA fallback. `StaticRouteInfo` gains
   `no_fallback: &'static [&'static str]`.
 
 ## [0.0.3] — 2026-09-12

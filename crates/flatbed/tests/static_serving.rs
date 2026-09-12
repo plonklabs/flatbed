@@ -16,7 +16,7 @@ static_route!(
     mount = "/embedded",
     embed = "tests/static_fixture",
     fallback = "index.html",
-    no_fallback = ["/embedded/api/"]
+    no_fallback = ["/api/"]
 );
 
 /// Start a server on a free port and wait until static serving answers,

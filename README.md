@@ -218,8 +218,8 @@ stable-name files (`json`, `txt`, `ico`, `xml`, `webmanifest`), and
 *with* an extension is a real `404` (a broken asset URL isn't masked by the
 shell); an extensionless miss serves the `fallback`. Declared routes always take
 precedence, so `/api/*` keeps working under a `/` mount, and
-`no_fallback = ["/api/"]` makes a miss under that prefix a `404` rather than
-the shell, so a mistyped API path is not answered with HTML. (A configured
+`no_fallback = ["/api/"]` makes a miss under that mount-relative prefix a
+`404` rather than the shell, so a mistyped API path is not answered with HTML. (A configured
 `splash` banner answers `GET /` ahead of a root mount — don't set both.)
 
 For a handler that needs to return a body the JSON/FlatBuffer path can't express
