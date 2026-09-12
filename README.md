@@ -66,7 +66,7 @@ flatbed generate --schemas-dir ./schemas --out ./src/generated
 It walks the top-level `.fbs` files in `--schemas-dir` (subdirectories like
 `v1/` are pulled in via FlatBuffer `include` directives, not compiled as roots)
 and writes the output into `--out`. The pinned `flatc` from `.flatc-version`
-must be on `PATH`.
+must be on `PATH`. `flatbed --version` reports the installed crate version.
 
 Install it either way:
 
