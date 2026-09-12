@@ -30,7 +30,7 @@ on `:8081`, Prometheus on `:9090`).
 
 Every example is an ordinary Cargo project. To run one directly you need the
 **pinned `flatc`** on your `PATH` — the version is in
-[`/.flatc-version`](../.flatc-version) (currently `25.9.23`). flatbed's codegen
+[`/.flatc-version`](../.flatc-version) (currently `25.12.19`). flatbed's codegen
 runs in each example's `build.rs`, so a normal `cargo run` regenerates the
 FlatBuffer bindings:
 
