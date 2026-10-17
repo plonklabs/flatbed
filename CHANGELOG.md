@@ -9,6 +9,18 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+## [0.0.5] — 2026-10-17
+
+### Added
+
+- `Connector::inbox_prefix`: replaces the `_INBOX` prefix of the subjects the
+  client subscribes to for request replies, JetStream API calls, and publish
+  acks, for broker accounts whose subscribe permissions are scoped to a
+  namespace.
+- `Connector::attempt_timeout`: bounds a single connect attempt inside the
+  connect deadline, so a dial that hangs on a listener that is not up yet is
+  abandoned and retried.
+
 ## [0.0.4] — 2026-09-12
 
 ### Added
@@ -124,7 +136,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.4...HEAD
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.5...HEAD
+[0.0.5]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.4...flatbed-v0.0.5
 [0.0.4]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.3...flatbed-v0.0.4
 [0.0.3]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.2...flatbed-v0.0.3
 [0.0.2]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.1...flatbed-v0.0.2
