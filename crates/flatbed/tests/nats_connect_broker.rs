@@ -382,3 +382,81 @@ async fn connect_with_retry_waits_for_a_late_broker() {
 
     late_broker.abort();
 }
+
+/// A dial that lands before the broker answers can hang rather than be
+/// refused; the per-attempt timeout abandons it so a later attempt connects.
+#[tokio::test]
+#[ignore]
+async fn a_hung_first_attempt_does_not_spend_the_budget() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind a relay port");
+    let addr = listener.local_addr().expect("read the relay port");
+
+    let upstream = broker_addr();
+    let relay = tokio::spawn(async move {
+        let Ok((_hung, _)) = listener.accept().await else {
+            return;
+        };
+        while let Ok((inbound, _)) = listener.accept().await {
+            tokio::spawn(splice(inbound, upstream.clone()));
+        }
+    });
+
+    let client = Connector::new(addr.to_string())
+        .backoff(Duration::from_millis(50), Duration::from_millis(200))
+        .attempt_timeout(Duration::from_millis(300))
+        .connect_deadline(DEADLINE)
+        .connect_with_retry()
+        .await
+        .expect("connect on a later attempt");
+
+    round_trip(&client, "flatbed.connect.hung").await;
+    relay.abort();
+}
+
+/// Request replies arrive on the configured prefix rather than `_INBOX`.
+#[tokio::test]
+#[ignore]
+async fn replies_arrive_on_the_configured_inbox_prefix() {
+    let client = Connector::new(broker_addr())
+        .inbox_prefix("flatbed-it._INBOX")
+        .connect_deadline(DEADLINE)
+        .connect_with_retry()
+        .await
+        .expect("connect to the broker");
+
+    let mut requests = client
+        .subscribe("flatbed.connect.inbox")
+        .await
+        .expect("subscribe the responder");
+    client.flush().await.expect("flush the subscription");
+
+    let responder = tokio::spawn({
+        let client = client.clone();
+        async move {
+            let request = requests.next().await.expect("a request");
+            let reply = request.reply.expect("a reply subject");
+            client
+                .publish(reply.clone(), reply.to_string().into())
+                .await
+                .expect("publish the reply");
+            client.flush().await.expect("flush the reply");
+        }
+    });
+
+    let response = tokio::time::timeout(
+        DEADLINE,
+        client.request("flatbed.connect.inbox", "ping".into()),
+    )
+    .await
+    .expect("a reply before the deadline")
+    .expect("a reply");
+    responder.await.expect("the responder");
+
+    let reply_subject = String::from_utf8(response.payload.to_vec()).expect("utf-8 subject");
+    assert!(
+        reply_subject.starts_with("flatbed-it._INBOX."),
+        "reply arrived on {reply_subject}"
+    );
+}

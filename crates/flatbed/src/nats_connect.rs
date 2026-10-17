@@ -36,6 +36,7 @@ use crate::readiness::ReadinessGate;
 const DEFAULT_MIN_BACKOFF: Duration = Duration::from_millis(250);
 const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(10);
 const DEFAULT_CONNECT_DEADLINE: Duration = Duration::from_secs(60);
+const DEFAULT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// A link that dies without closing the socket — a partition, a dropped
 /// conntrack entry — is only noticed when pings go unanswered, so the ping
@@ -77,7 +78,7 @@ pub enum ConnectorError {
         /// How long those attempts took in total.
         elapsed: Duration,
         /// The failure reported by the last attempt to finish, absent when
-        /// the budget ran out while an attempt was still in flight.
+        /// every attempt timed out.
         source: Option<async_nats::ConnectError>,
     },
 }
@@ -107,7 +108,7 @@ impl fmt::Display for ConnectorError {
                 )?;
                 match source {
                     Some(source) => write!(f, ": {source}"),
-                    None => write!(f, ": no attempt finished within the budget"),
+                    None => write!(f, ": every attempt timed out"),
                 }
             }
         }
@@ -129,9 +130,10 @@ impl std::error::Error for ConnectorError {
 /// Builder for a managed core-NATS connection.
 ///
 /// Defaults: no credentials, a 250ms-to-10s reconnect ramp, and a 60 second
-/// budget for the first connect. The budget is bounded on purpose — an
-/// unreachable broker should eventually surface as a failed boot rather than
-/// a pod that waits forever on a typo in its configuration.
+/// budget for the first connect, split into attempts of at most 5 seconds.
+/// The budget is bounded on purpose — an unreachable broker should eventually
+/// surface as a failed boot rather than a pod that waits forever on a typo in
+/// its configuration.
 pub struct Connector {
     url: String,
     credentials: Option<Credentials>,
@@ -139,6 +141,8 @@ pub struct Connector {
     min_backoff: Duration,
     max_backoff: Duration,
     deadline: Duration,
+    attempt_timeout: Duration,
+    inbox_prefix: Option<String>,
     readiness: Option<ReadinessGate>,
 }
 
@@ -155,6 +159,8 @@ impl Connector {
             min_backoff: DEFAULT_MIN_BACKOFF,
             max_backoff: DEFAULT_MAX_BACKOFF,
             deadline: DEFAULT_CONNECT_DEADLINE,
+            attempt_timeout: DEFAULT_ATTEMPT_TIMEOUT,
+            inbox_prefix: None,
             readiness: None,
         }
     }
@@ -180,6 +186,15 @@ impl Connector {
         self
     }
 
+    /// Replace the `_INBOX` prefix of the subjects the client subscribes to
+    /// for request replies, JetStream API calls, and publish acks. A broker
+    /// account whose subscribe permissions are scoped to a namespace refuses
+    /// every one of those on the default prefix.
+    pub fn inbox_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.inbox_prefix = Some(prefix.into());
+        self
+    }
+
     /// Drive a readiness gate from the connection's state: ready once
     /// connected, not ready while disconnected, draining, or closed.
     pub fn readiness(mut self, gate: ReadinessGate) -> Self {
@@ -202,6 +217,14 @@ impl Connector {
     /// addresses cannot overrun it by dialling each in turn.
     pub fn connect_deadline(mut self, deadline: Duration) -> Self {
         self.deadline = deadline;
+        self
+    }
+
+    /// Bound a single connect attempt inside the connect deadline. A dial to
+    /// a listener that does not exist yet can hang rather than be refused;
+    /// abandoning it lets a later attempt reach the listener once it is up.
+    pub fn attempt_timeout(mut self, timeout: Duration) -> Self {
+        self.attempt_timeout = timeout;
         self
     }
 
@@ -232,33 +255,44 @@ impl Connector {
             let options = self.options(credentials.as_deref())?;
             attempts += 1;
 
-            let Ok(attempt) = tokio::time::timeout(remaining, options.connect(&self.url)).await
-            else {
-                return Err(self.unreachable(attempts, started.elapsed(), last_error));
-            };
+            let attempt = tokio::time::timeout(
+                remaining.min(self.attempt_timeout),
+                options.connect(&self.url),
+            )
+            .await;
 
             let source = match attempt {
-                Ok(client) => {
+                Ok(Ok(client)) => {
                     self.mark_connected(attempts);
                     return Ok(client);
                 }
-                Err(source) => source,
+                Ok(Err(source)) => Some(source),
+                Err(_) => None,
             };
 
             let elapsed = started.elapsed();
             let delay = backoff(self.min_backoff, self.max_backoff, attempts);
             if elapsed + delay >= self.deadline {
-                return Err(self.unreachable(attempts, elapsed, Some(source)));
+                return Err(self.unreachable(attempts, elapsed, source.or(last_error)));
             }
 
-            warn!(
-                url = %self.url,
-                attempts,
-                ?delay,
-                error = %source,
-                "NATS connect failed, retrying"
-            );
-            last_error = Some(source);
+            match &source {
+                Some(error) => warn!(
+                    url = %self.url,
+                    attempts,
+                    ?delay,
+                    %error,
+                    "NATS connect failed, retrying"
+                ),
+                None => warn!(
+                    url = %self.url,
+                    attempts,
+                    ?delay,
+                    timeout = ?self.attempt_timeout,
+                    "NATS connect attempt timed out, retrying"
+                ),
+            }
+            last_error = source.or(last_error);
             tokio::time::sleep(delay).await;
         }
     }
@@ -306,6 +340,10 @@ impl Connector {
 
         if let Some(name) = &self.client_name {
             options = options.name(name);
+        }
+
+        if let Some(prefix) = &self.inbox_prefix {
+            options = options.custom_inbox_prefix(prefix);
         }
 
         let (min, max) = (self.min_backoff, self.max_backoff);
@@ -461,6 +499,38 @@ mod tests {
             "overran the budget: {:?}",
             started.elapsed()
         );
+    }
+
+    #[tokio::test]
+    async fn a_hung_attempt_is_abandoned_for_another() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind a silent port");
+        let addr = listener.local_addr().expect("read the silent port");
+        let silent = tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+
+        let error = Connector::new(addr.to_string())
+            .backoff(Duration::from_millis(10), Duration::from_millis(20))
+            .attempt_timeout(Duration::from_millis(100))
+            .connect_deadline(Duration::from_millis(600))
+            .connect_with_retry()
+            .await
+            .expect_err("the listener never speaks NATS");
+        silent.abort();
+
+        let ConnectorError::Unreachable {
+            attempts, source, ..
+        } = error
+        else {
+            panic!("expected an unreachable error, got {error:?}");
+        };
+        assert!(attempts >= 2, "made only {attempts} attempt(s)");
+        assert!(source.is_none(), "no attempt should have finished");
     }
 
     /// A retry budget far longer than the test could tolerate, so a

@@ -322,6 +322,12 @@ misconfigured address still fails the boot instead of hanging forever. A
 credentials file is read at connect time, so a missing secret mount is a
 connect error rather than a panic at startup.
 
+Each attempt is capped (`attempt_timeout`, 5s by default) so a dial that hangs
+because the listener is not up yet is abandoned for a fresh one instead of
+spending the whole budget. `inbox_prefix` replaces `_INBOX` for request
+replies, for brokers whose credentials only allow subscribing under a
+namespace.
+
 Readiness is two things: the one-shot boot latch, and any number of *gates*.
 A gate is a named dependency that can come and go for the life of the process
 — `/readyz` returns 200 only when the boot latch is set and every gate is
