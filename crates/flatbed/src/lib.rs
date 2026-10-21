@@ -2306,18 +2306,23 @@ pub struct TypeConflict {
     pub name: String,
     pub first_namespace: String,
     pub second_namespace: String,
-    /// `"type"`, `"enum"`, or `"union"` — which registry the second
-    /// registration is in. The first may be in another: tables, enums, and
-    /// unions share one OpenAPI component namespace.
-    pub kind: &'static str,
+    /// `"type"`, `"enum"`, or `"union"` — which registry each registration is
+    /// in. They may differ: tables, enums, and unions share one OpenAPI
+    /// component namespace.
+    pub first_kind: &'static str,
+    pub second_kind: &'static str,
 }
 
 impl std::fmt::Display for TypeConflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} name conflict: '{}' is registered in both namespace '{}' and '{}'",
-            self.kind, self.name, self.first_namespace, self.second_namespace
+            "name conflict: '{}' is registered in namespace '{}' ({}) and namespace '{}' ({})",
+            self.name,
+            self.first_namespace,
+            self.first_kind,
+            self.second_namespace,
+            self.second_kind
         )
     }
 }
@@ -2352,17 +2357,19 @@ pub fn validate_type_registry() -> Result<(), TypeConflict> {
 fn find_name_collision<'a>(
     entries: impl IntoIterator<Item = (&'a str, &'a str, &'static str)>,
 ) -> Result<(), TypeConflict> {
-    let mut seen: HashMap<&str, &str> = HashMap::new();
+    let mut seen: HashMap<&str, (&str, &'static str)> = HashMap::new();
     for (name, namespace, kind) in entries {
-        if let Some(prev) = seen.insert(name, namespace) {
-            if prev != namespace {
-                return Err(TypeConflict {
-                    name: name.to_string(),
-                    first_namespace: prev.to_string(),
-                    second_namespace: namespace.to_string(),
-                    kind,
-                });
-            }
+        let Some((prev_namespace, prev_kind)) = seen.insert(name, (namespace, kind)) else {
+            continue;
+        };
+        if prev_namespace != namespace {
+            return Err(TypeConflict {
+                name: name.to_string(),
+                first_namespace: prev_namespace.to_string(),
+                second_namespace: namespace.to_string(),
+                first_kind: prev_kind,
+                second_kind: kind,
+            });
         }
     }
     Ok(())
@@ -3162,7 +3169,8 @@ mod tests {
         let err = find_name_collision(entries)
             .expect_err("a name shared across namespaces must be a conflict");
         assert_eq!(err.name, "Foo");
-        assert_eq!(err.kind, "type");
+        assert_eq!(err.first_kind, "type");
+        assert_eq!(err.second_kind, "type");
         assert_eq!(err.first_namespace, "v_1");
         assert_eq!(err.second_namespace, "v_2");
     }
@@ -3182,8 +3190,10 @@ mod tests {
         let entries = [("Foo", "v_1", "enum"), ("Foo", "v_2", "union")];
         let err = find_name_collision(entries)
             .expect_err("an enum and a union sharing a bare name collide as components");
-        assert_eq!(err.kind, "union");
-        assert_eq!(err.first_namespace, "v_1");
+        assert_eq!(
+            err.to_string(),
+            "name conflict: 'Foo' is registered in namespace 'v_1' (enum) and namespace 'v_2' (union)"
+        );
     }
 
     #[test]

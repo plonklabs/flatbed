@@ -24,6 +24,13 @@ contain breaking changes during the pre-1.0 stabilization window.
   component is a `oneOf` of its member tables, and a union field adds the
   `<field>_type` string-enum discriminator beside it. `flatbed::UnionSchema`
   registers unions; `EnumSchema` gains `bit_flags: bool`.
+
+### Changed
+
+- `validate_type_registry` reports a bare name shared across namespaces by
+  any two of a table, enum, or union, since they share one OpenAPI component
+  namespace. `TypeConflict.kind` is replaced by `first_kind` and
+  `second_kind`.
 - Table fields named after a Rust keyword (`ref`, `type`, …) generate flatc's
   escaped identifier (`ref_`) and keep the schema name on the JSON wire.
 - `@plonklabs/flatbed-client` and `flatbed gen-fb-plugin` emit unions as
