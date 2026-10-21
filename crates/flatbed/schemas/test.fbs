@@ -77,4 +77,30 @@ table Defaulted {
   level: Severity = Warning;
 }
 
+enum Traits : ulong (bit_flags) {
+  Client,
+  Money,
+  NeedsDecision,
+  Gmail,
+}
+
+table MailRef {
+  account: string;
+  message_id: string;
+}
+
+table FileRef {
+  path: string;
+}
+
+union SourceRef { MailRef, FileRef }
+
+table Ingest {
+  title: string;
+  ref: SourceRef;
+  traits: Traits;
+  default_traits: Traits = Money;
+  history: [Traits];
+}
+
 root_type TestRequest;

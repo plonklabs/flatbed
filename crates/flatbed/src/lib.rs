@@ -578,11 +578,28 @@ pub struct TypeFieldInfo {
 
 /// A generated FlatBuffer enum, registered at compile time alongside
 /// [`TypeSchema`]. `variants` are listed in FlatBuffer value order.
+///
+/// A plain enum crosses JSON as one variant name; a `bit_flags` enum as the
+/// list of its set flags' names.
 #[derive(Clone, Copy, Debug)]
 pub struct EnumSchema {
     pub name: &'static str,
     pub namespace: &'static str,
     pub variants: &'static [&'static str],
+    pub bit_flags: bool,
+}
+
+/// A generated FlatBuffer union, registered at compile time alongside
+/// [`TypeSchema`]. `variants` pairs each variant name with the table it
+/// carries, in discriminator order (the implicit `NONE` is left out).
+///
+/// A table field `f` of a union type crosses JSON as two sibling keys:
+/// `f_type` (the variant name) and `f` (that variant's table).
+#[derive(Clone, Copy, Debug)]
+pub struct UnionSchema {
+    pub name: &'static str,
+    pub namespace: &'static str,
+    pub variants: &'static [(&'static str, &'static str)],
 }
 
 /// The FlatBuffer binary reflection (`.bfbs`) for a service's schemas, baked in
@@ -597,6 +614,7 @@ pub struct FlatbedSchema {
 
 inventory::collect!(TypeSchema);
 inventory::collect!(EnumSchema);
+inventory::collect!(UnionSchema);
 inventory::collect!(FlatbedSchema);
 
 /// The baked-in FlatBuffer reflection when a schema was compiled into this
@@ -2288,60 +2306,70 @@ pub struct TypeConflict {
     pub name: String,
     pub first_namespace: String,
     pub second_namespace: String,
-    /// `"type"` or `"enum"` — which registry the collision is in.
-    pub kind: &'static str,
+    /// `"type"`, `"enum"`, or `"union"` — which registry each registration is
+    /// in. They may differ: tables, enums, and unions share one OpenAPI
+    /// component namespace.
+    pub first_kind: &'static str,
+    pub second_kind: &'static str,
 }
 
 impl std::fmt::Display for TypeConflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} name conflict: '{}' is registered in both namespace '{}' and '{}'",
-            self.kind, self.name, self.first_namespace, self.second_namespace
+            "name conflict: '{}' is registered in namespace '{}' ({}) and namespace '{}' ({})",
+            self.name,
+            self.first_namespace,
+            self.first_kind,
+            self.second_namespace,
+            self.second_kind
         )
     }
 }
 
 impl std::error::Error for TypeConflict {}
 
-/// Validate that every registered type and enum has a unique bare name.
+/// Validate that every registered type, enum, and union has a unique bare name.
 ///
-/// [`get_type_schema`] and [`get_enum_schema`] key on the bare name, so two
-/// same-named types in different namespaces shadow each other in the lookup —
-/// and anything built from the registry would silently use whichever won the
-/// insert race. This surfaces the collision as an error instead, at startup
-/// before the server binds.
+/// [`get_type_schema`] and [`get_enum_schema`] key on the bare name, and the
+/// OpenAPI components are named by it across all three registries, so two
+/// same-named items in different namespaces shadow each other — and anything
+/// built from the registry would silently use whichever won the insert race.
+/// This surfaces the collision as an error instead, at startup before the
+/// server binds.
 pub fn validate_type_registry() -> Result<(), TypeConflict> {
     let types = inventory::iter::<TypeSchema>
         .into_iter()
-        .map(|t| (t.name, t.namespace));
-    find_name_collision("type", types)?;
+        .map(|t| (t.name, t.namespace, "type"));
     let enums = inventory::iter::<EnumSchema>
         .into_iter()
-        .map(|e| (e.name, e.namespace));
-    find_name_collision("enum", enums)?;
-    Ok(())
+        .map(|e| (e.name, e.namespace, "enum"));
+    let unions = inventory::iter::<UnionSchema>
+        .into_iter()
+        .map(|u| (u.name, u.namespace, "union"));
+    find_name_collision(types.chain(enums).chain(unions))
 }
 
 /// Return a [`TypeConflict`] if the same bare name appears under two different
-/// namespaces in `entries` (`(name, namespace)` pairs). Repeats of an
+/// namespaces in `entries` (`(name, namespace, kind)` triples). Repeats of an
 /// identical `(name, namespace)` are not a conflict — only a name shared
 /// across namespaces is, since that's what makes a bare-name lookup ambiguous.
 fn find_name_collision<'a>(
-    kind: &'static str,
-    entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    entries: impl IntoIterator<Item = (&'a str, &'a str, &'static str)>,
 ) -> Result<(), TypeConflict> {
-    let mut seen: HashMap<&str, &str> = HashMap::new();
-    for (name, namespace) in entries {
-        if let Some(prev) = seen.insert(name, namespace) {
-            if prev != namespace {
-                return Err(TypeConflict {
-                    name: name.to_string(),
-                    first_namespace: prev.to_string(),
-                    second_namespace: namespace.to_string(),
-                    kind,
-                });
-            }
+    let mut seen: HashMap<&str, (&str, &'static str)> = HashMap::new();
+    for (name, namespace, kind) in entries {
+        let Some((prev_namespace, prev_kind)) = seen.insert(name, (namespace, kind)) else {
+            continue;
+        };
+        if prev_namespace != namespace {
+            return Err(TypeConflict {
+                name: name.to_string(),
+                first_namespace: prev_namespace.to_string(),
+                second_namespace: namespace.to_string(),
+                first_kind: prev_kind,
+                second_kind: kind,
+            });
         }
     }
     Ok(())
@@ -2394,7 +2422,7 @@ pub fn validate_routes() -> Result<(), RouteConflict> {
 mod openapi_generation {
     use super::{
         get_routes, EnumSchema, FlatbedConfig, HttpMethod, RouteInfo, SchemaInfo, TypeFieldInfo,
-        TypeSchema,
+        TypeSchema, UnionSchema,
     };
     use std::collections::BTreeSet;
     use utoipa::openapi::{
@@ -2404,8 +2432,8 @@ mod openapi_generation {
         request_body::RequestBodyBuilder,
         response::ResponseBuilder,
         schema::{
-            AllOfBuilder, ArrayBuilder, KnownFormat, ObjectBuilder, Schema, SchemaFormat,
-            SchemaType, Type,
+            AllOfBuilder, ArrayBuilder, KnownFormat, ObjectBuilder, OneOfBuilder, Schema,
+            SchemaFormat, SchemaType, Type,
         },
         server::ServerBuilder,
         ComponentsBuilder, Deprecated, InfoBuilder, OpenApi, OpenApiBuilder, PathsBuilder, Ref,
@@ -2443,7 +2471,8 @@ mod openapi_generation {
         fbs
     }
 
-    /// Bare names of every registered table and enum (types, then enums).
+    /// Bare names of every registered table, and of every registered enum and
+    /// union — the non-table components a field references by `$ref`.
     fn registered_names() -> (BTreeSet<&'static str>, BTreeSet<&'static str>) {
         let types = crate::inventory::iter::<TypeSchema>
             .into_iter()
@@ -2452,6 +2481,11 @@ mod openapi_generation {
         let enums = crate::inventory::iter::<EnumSchema>
             .into_iter()
             .map(|e| e.name)
+            .chain(
+                crate::inventory::iter::<UnionSchema>
+                    .into_iter()
+                    .map(|u| u.name),
+            )
             .collect();
         (types, enums)
     }
@@ -2552,9 +2586,20 @@ mod openapi_generation {
         type_names: &BTreeSet<&str>,
         enum_names: &BTreeSet<&str>,
     ) {
+        let unions: std::collections::HashMap<&str, &UnionSchema> =
+            crate::inventory::iter::<UnionSchema>
+                .into_iter()
+                .map(|u| (u.name, u))
+                .collect();
         for ty in crate::inventory::iter::<TypeSchema> {
             let mut obj = ObjectBuilder::new().schema_type(SchemaType::new(Type::Object));
             for field in ty.fields {
+                if let Some(union) = unions.get(field.fbs_type) {
+                    obj = obj.property(
+                        format!("{}_type", field.name),
+                        union_type_property(union, field),
+                    );
+                }
                 obj = obj.property(field.name, property_schema(field, type_names, enum_names));
                 if field.required {
                     obj = obj.required(field.name);
@@ -2565,14 +2610,45 @@ mod openapi_generation {
         }
 
         for en in crate::inventory::iter::<EnumSchema> {
-            // Enums cross the JSON wire as their variant-name string.
-            let obj = ObjectBuilder::new()
+            // A plain enum crosses the JSON wire as its variant-name string; a
+            // `bit_flags` enum as the list of its set flags' names.
+            let names = ObjectBuilder::new()
                 .schema_type(SchemaType::new(Type::String))
                 .enum_values(Some(en.variants.iter().copied()))
                 .build();
-            *components_builder =
-                std::mem::take(components_builder).schema(en.name, Schema::Object(obj));
+            let schema = if en.bit_flags {
+                Schema::Array(ArrayBuilder::new().items(names).build())
+            } else {
+                Schema::Object(names)
+            };
+            *components_builder = std::mem::take(components_builder).schema(en.name, schema);
         }
+
+        for union in unions.values() {
+            // The union's value is the table its variant names.
+            let mut one_of = OneOfBuilder::new();
+            for (_, table) in union.variants {
+                one_of = one_of.item(Ref::from_schema_name(*table));
+            }
+            *components_builder = std::mem::take(components_builder)
+                .schema(union.name, Schema::OneOf(one_of.build()));
+        }
+    }
+
+    /// The `<field>_type` discriminator a union field carries beside its value:
+    /// the variant name, in the slot just before the value's.
+    fn union_type_property(union: &UnionSchema, field: &TypeFieldInfo) -> RefOr<Schema> {
+        let extensions = ExtensionsBuilder::new()
+            .add("x-fbs-type", format!("{}_type", union.name))
+            .add("x-fbs-id", field.field_id.saturating_sub(1))
+            .build();
+        RefOr::T(Schema::Object(
+            ObjectBuilder::new()
+                .schema_type(SchemaType::new(Type::String))
+                .enum_values(Some(union.variants.iter().map(|(variant, _)| *variant)))
+                .extensions(Some(extensions))
+                .build(),
+        ))
     }
 
     /// Convert our HttpMethod to utoipa's HttpMethod
@@ -3085,27 +3161,47 @@ mod tests {
 
     #[test]
     fn find_name_collision_flags_same_name_across_namespaces() {
-        let entries = [("Foo", "v_1"), ("Bar", "v_1"), ("Foo", "v_2")];
-        let err = find_name_collision("type", entries)
+        let entries = [
+            ("Foo", "v_1", "type"),
+            ("Bar", "v_1", "type"),
+            ("Foo", "v_2", "type"),
+        ];
+        let err = find_name_collision(entries)
             .expect_err("a name shared across namespaces must be a conflict");
         assert_eq!(err.name, "Foo");
-        assert_eq!(err.kind, "type");
+        assert_eq!(err.first_kind, "type");
+        assert_eq!(err.second_kind, "type");
         assert_eq!(err.first_namespace, "v_1");
         assert_eq!(err.second_namespace, "v_2");
     }
 
     #[test]
     fn find_name_collision_accepts_unique_names() {
-        let entries = [("Foo", "v_1"), ("Bar", "v_1"), ("Baz", "v_2")];
-        assert!(find_name_collision("type", entries).is_ok());
+        let entries = [
+            ("Foo", "v_1", "type"),
+            ("Bar", "v_1", "enum"),
+            ("Baz", "v_2", "union"),
+        ];
+        assert!(find_name_collision(entries).is_ok());
+    }
+
+    #[test]
+    fn find_name_collision_flags_a_name_shared_across_registries() {
+        let entries = [("Foo", "v_1", "enum"), ("Foo", "v_2", "union")];
+        let err = find_name_collision(entries)
+            .expect_err("an enum and a union sharing a bare name collide as components");
+        assert_eq!(
+            err.to_string(),
+            "name conflict: 'Foo' is registered in namespace 'v_1' (enum) and namespace 'v_2' (union)"
+        );
     }
 
     #[test]
     fn find_name_collision_ignores_identical_reregistration() {
         // The same (name, namespace) appearing twice is a harmless duplicate,
         // not an ambiguous lookup — only a name split across namespaces is.
-        let entries = [("Foo", "v_1"), ("Foo", "v_1")];
-        assert!(find_name_collision("enum", entries).is_ok());
+        let entries = [("Foo", "v_1", "enum"), ("Foo", "v_1", "enum")];
+        assert!(find_name_collision(entries).is_ok());
     }
 
     #[test]

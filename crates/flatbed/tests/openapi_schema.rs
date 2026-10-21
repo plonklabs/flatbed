@@ -196,3 +196,43 @@ fn unregistered_response_type_is_inlined_not_a_dangling_ref() {
     assert_eq!(count["type"].as_str(), Some("integer"));
     assert_eq!(count["format"].as_str(), Some("int64"));
 }
+
+#[test]
+fn bit_flags_enum_is_an_array_of_flag_names() {
+    let s = spec();
+    let traits = &s["components"]["schemas"]["Traits"];
+    assert_eq!(traits["type"].as_str(), Some("array"));
+    assert_eq!(traits["items"]["type"].as_str(), Some("string"));
+    assert_eq!(
+        traits["items"]["enum"],
+        serde_json::json!(["Client", "Money", "NeedsDecision", "Gmail"])
+    );
+}
+
+#[test]
+fn union_field_is_a_discriminator_beside_a_one_of_value() {
+    let s = spec();
+    let schemas = &s["components"]["schemas"];
+    assert_eq!(
+        schemas["SourceRef"]["oneOf"],
+        serde_json::json!([
+            { "$ref": "#/components/schemas/MailRef" },
+            { "$ref": "#/components/schemas/FileRef" },
+        ])
+    );
+
+    let props = &schemas["Ingest"]["properties"];
+    let kind = &props["ref_type"];
+    assert_eq!(kind["type"].as_str(), Some("string"));
+    assert_eq!(kind["enum"], serde_json::json!(["MailRef", "FileRef"]));
+    assert_eq!(kind["x-fbs-id"].as_u64(), Some(1));
+    let value = &props["ref"];
+    assert_eq!(
+        value["allOf"][0]["$ref"].as_str(),
+        Some("#/components/schemas/SourceRef")
+    );
+    assert_eq!(value["x-fbs-id"].as_u64(), Some(2));
+
+    let required = schemas["Ingest"]["required"].as_array().unwrap();
+    assert!(!required.iter().any(|r| r == "ref" || r == "ref_type"));
+}

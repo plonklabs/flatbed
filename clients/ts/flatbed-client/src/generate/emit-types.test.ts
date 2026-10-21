@@ -55,3 +55,40 @@ test("emits numeric enums with their wire values", () => {
   assert.match(out, /Info = 0,/);
   assert.match(out, /Error = 2,/);
 });
+
+test("a bit_flags enum is a flag-name type and its field a list of names", () => {
+  const out = emitTypes({
+    tables: [
+      {
+        name: "Row",
+        fields: [
+          field("traits", { kind: "flags", name: "Traits" }),
+          field("history", { kind: "vector", element: { kind: "flags", name: "Traits" } }),
+        ],
+      },
+    ],
+    enums: [{ name: "Traits", underlying: "uint64", bitFlags: true, members: [
+      { name: "A", value: 1n },
+      { name: "B", value: 2n },
+    ] }],
+  });
+  assert.match(out, /export type Traits = "A" \| "B";/);
+  assert.match(out, /readonly traits: readonly Traits\[\];/);
+  assert.match(out, /readonly history\?: readonly \(readonly Traits\[\]\)\[\];/);
+});
+
+test("a union is a tagged type and its field optional", () => {
+  const out = emitTypes({
+    tables: [{ name: "Row", fields: [field("ref", { kind: "union", name: "Ref" })] }],
+    enums: [],
+    unions: [{ name: "Ref", members: [
+      { name: "Mail", table: "MailRef", value: 1 },
+      { name: "File", table: "FileRef", value: 2 },
+    ] }],
+  });
+  assert.match(
+    out,
+    /export type Ref =\n {2}\| \{ readonly type: "Mail"; readonly value: MailRef \}\n {2}\| \{ readonly type: "File"; readonly value: FileRef \};/,
+  );
+  assert.match(out, /readonly ref\?: Ref;/);
+});

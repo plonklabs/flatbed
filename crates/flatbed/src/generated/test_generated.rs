@@ -95,6 +95,151 @@ impl<'a> ::flatbuffers::Verifiable for Severity {
 }
 
 impl ::flatbuffers::SimpleToVerifyInSlice for Severity {}
+#[allow(non_upper_case_globals)]
+mod bitflags_traits {
+  ::flatbuffers::bitflags::bitflags! {
+    #[derive(Default, Debug, Clone, Copy, PartialEq)]
+    pub struct Traits: u64 {
+      const Client = 1;
+      const Money = 2;
+      const NeedsDecision = 4;
+      const Gmail = 8;
+    }
+  }
+}
+pub use self::bitflags_traits::Traits;
+
+impl<'a> ::flatbuffers::Follow<'a> for Traits {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u64>(buf, loc) };
+    Self::from_bits_retain(b)
+  }
+}
+
+impl ::flatbuffers::Push for Traits {
+    type Output = Traits;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u64>(dst, self.bits()) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for Traits {
+  type Scalar = u64;
+  #[inline]
+  fn to_little_endian(self) -> u64 {
+    self.bits().to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u64) -> Self {
+    let b = u64::from_le(v);
+    Self::from_bits_retain(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for Traits {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u64::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for Traits {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_SOURCE_REF: u8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_SOURCE_REF: u8 = 2;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_SOURCE_REF: [SourceRef; 3] = [
+  SourceRef::NONE,
+  SourceRef::MailRef,
+  SourceRef::FileRef,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct SourceRef(pub u8);
+#[allow(non_upper_case_globals)]
+impl SourceRef {
+  pub const NONE: Self = Self(0);
+  pub const MailRef: Self = Self(1);
+  pub const FileRef: Self = Self(2);
+
+  pub const ENUM_MIN: u8 = 0;
+  pub const ENUM_MAX: u8 = 2;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::NONE,
+    Self::MailRef,
+    Self::FileRef,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::NONE => Some("NONE"),
+      Self::MailRef => Some("MailRef"),
+      Self::FileRef => Some("FileRef"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for SourceRef {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for SourceRef {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<u8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for SourceRef {
+    type Output = SourceRef;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<u8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for SourceRef {
+  type Scalar = u8;
+  #[inline]
+  fn to_little_endian(self) -> u8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: u8) -> Self {
+    let b = u8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for SourceRef {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    u8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for SourceRef {}
+pub struct SourceRefUnionTableOffset {}
+
 pub enum TestRequestOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -1149,6 +1294,450 @@ impl ::core::fmt::Debug for Defaulted<'_> {
       ds.field("flag", &self.flag());
       ds.field("ratio", &self.ratio());
       ds.field("level", &self.level());
+      ds.finish()
+  }
+}
+pub enum MailRefOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct MailRef<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for MailRef<'a> {
+  type Inner = MailRef<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> MailRef<'a> {
+  pub const VT_ACCOUNT: ::flatbuffers::VOffsetT = 4;
+  pub const VT_MESSAGE_ID: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    MailRef { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args MailRefArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<MailRef<'bldr>> {
+    let mut builder = MailRefBuilder::new(_fbb);
+    if let Some(x) = args.message_id { builder.add_message_id(x); }
+    if let Some(x) = args.account { builder.add_account(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn account(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(MailRef::VT_ACCOUNT, None)}
+  }
+  #[inline]
+  pub fn message_id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(MailRef::VT_MESSAGE_ID, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for MailRef<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("account", Self::VT_ACCOUNT, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("message_id", Self::VT_MESSAGE_ID, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct MailRefArgs<'a> {
+    pub account: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub message_id: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for MailRefArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    MailRefArgs {
+      account: None,
+      message_id: None,
+    }
+  }
+}
+
+pub struct MailRefBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> MailRefBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_account(&mut self, account: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(MailRef::VT_ACCOUNT, account);
+  }
+  #[inline]
+  pub fn add_message_id(&mut self, message_id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(MailRef::VT_MESSAGE_ID, message_id);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> MailRefBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    MailRefBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<MailRef<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for MailRef<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("MailRef");
+      ds.field("account", &self.account());
+      ds.field("message_id", &self.message_id());
+      ds.finish()
+  }
+}
+pub enum FileRefOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct FileRef<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for FileRef<'a> {
+  type Inner = FileRef<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> FileRef<'a> {
+  pub const VT_PATH: ::flatbuffers::VOffsetT = 4;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    FileRef { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args FileRefArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<FileRef<'bldr>> {
+    let mut builder = FileRefBuilder::new(_fbb);
+    if let Some(x) = args.path { builder.add_path(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn path(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(FileRef::VT_PATH, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for FileRef<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("path", Self::VT_PATH, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct FileRefArgs<'a> {
+    pub path: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for FileRefArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    FileRefArgs {
+      path: None,
+    }
+  }
+}
+
+pub struct FileRefBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> FileRefBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_path(&mut self, path: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(FileRef::VT_PATH, path);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> FileRefBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    FileRefBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<FileRef<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for FileRef<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("FileRef");
+      ds.field("path", &self.path());
+      ds.finish()
+  }
+}
+pub enum IngestOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct Ingest<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for Ingest<'a> {
+  type Inner = Ingest<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> Ingest<'a> {
+  pub const VT_TITLE: ::flatbuffers::VOffsetT = 4;
+  pub const VT_REF_TYPE: ::flatbuffers::VOffsetT = 6;
+  pub const VT_REF_: ::flatbuffers::VOffsetT = 8;
+  pub const VT_TRAITS: ::flatbuffers::VOffsetT = 10;
+  pub const VT_DEFAULT_TRAITS: ::flatbuffers::VOffsetT = 12;
+  pub const VT_HISTORY: ::flatbuffers::VOffsetT = 14;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    Ingest { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args IngestArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<Ingest<'bldr>> {
+    let mut builder = IngestBuilder::new(_fbb);
+    builder.add_default_traits(args.default_traits);
+    builder.add_traits(args.traits);
+    if let Some(x) = args.history { builder.add_history(x); }
+    if let Some(x) = args.ref_ { builder.add_ref_(x); }
+    if let Some(x) = args.title { builder.add_title(x); }
+    builder.add_ref_type(args.ref_type);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn title(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Ingest::VT_TITLE, None)}
+  }
+  #[inline]
+  pub fn ref_type(&self) -> SourceRef {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<SourceRef>(Ingest::VT_REF_TYPE, Some(SourceRef::NONE)).unwrap()}
+  }
+  #[inline]
+  pub fn ref_(&self) -> Option<::flatbuffers::Table<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Table<'a>>>(Ingest::VT_REF_, None)}
+  }
+  #[inline]
+  pub fn traits(&self) -> Traits {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<Traits>(Ingest::VT_TRAITS, Some(Default::default())).unwrap()}
+  }
+  #[inline]
+  pub fn default_traits(&self) -> Traits {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<Traits>(Ingest::VT_DEFAULT_TRAITS, Some(Traits::Money)).unwrap()}
+  }
+  #[inline]
+  pub fn history(&self) -> Option<::flatbuffers::Vector<'a, Traits>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, Traits>>>(Ingest::VT_HISTORY, None)}
+  }
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn ref__as_mail_ref(&self) -> Option<MailRef<'a>> {
+    if self.ref_type() == SourceRef::MailRef {
+      self.ref_().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { MailRef::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
+  #[inline]
+  #[allow(non_snake_case)]
+  pub fn ref__as_file_ref(&self) -> Option<FileRef<'a>> {
+    if self.ref_type() == SourceRef::FileRef {
+      self.ref_().map(|t| {
+       // Safety:
+       // Created from a valid Table for this object
+       // Which contains a valid union in this slot
+       unsafe { FileRef::init_from_table(t) }
+     })
+    } else {
+      None
+    }
+  }
+
+}
+
+impl ::flatbuffers::Verifiable for Ingest<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("title", Self::VT_TITLE, false)?
+     .visit_union::<SourceRef, _>("ref_type", Self::VT_REF_TYPE, "ref_", Self::VT_REF_, false, |key, v, pos| {
+        match key {
+          SourceRef::MailRef => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<MailRef>>("SourceRef::MailRef", pos),
+          SourceRef::FileRef => v.verify_union_variant::<::flatbuffers::ForwardsUOffset<FileRef>>("SourceRef::FileRef", pos),
+          _ => Ok(()),
+        }
+     })?
+     .visit_field::<Traits>("traits", Self::VT_TRAITS, false)?
+     .visit_field::<Traits>("default_traits", Self::VT_DEFAULT_TRAITS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, Traits>>>("history", Self::VT_HISTORY, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct IngestArgs<'a> {
+    pub title: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub ref_type: SourceRef,
+    pub ref_: Option<::flatbuffers::WIPOffset<::flatbuffers::UnionWIPOffset>>,
+    pub traits: Traits,
+    pub default_traits: Traits,
+    pub history: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, Traits>>>,
+}
+impl<'a> Default for IngestArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    IngestArgs {
+      title: None,
+      ref_type: SourceRef::NONE,
+      ref_: None,
+      traits: Default::default(),
+      default_traits: Traits::Money,
+      history: None,
+    }
+  }
+}
+
+pub struct IngestBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> IngestBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_title(&mut self, title: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Ingest::VT_TITLE, title);
+  }
+  #[inline]
+  pub fn add_ref_type(&mut self, ref_type: SourceRef) {
+    self.fbb_.push_slot::<SourceRef>(Ingest::VT_REF_TYPE, ref_type, SourceRef::NONE);
+  }
+  #[inline]
+  pub fn add_ref_(&mut self, ref_: ::flatbuffers::WIPOffset<::flatbuffers::UnionWIPOffset>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Ingest::VT_REF_, ref_);
+  }
+  #[inline]
+  pub fn add_traits(&mut self, traits: Traits) {
+    self.fbb_.push_slot::<Traits>(Ingest::VT_TRAITS, traits, Default::default());
+  }
+  #[inline]
+  pub fn add_default_traits(&mut self, default_traits: Traits) {
+    self.fbb_.push_slot::<Traits>(Ingest::VT_DEFAULT_TRAITS, default_traits, Traits::Money);
+  }
+  #[inline]
+  pub fn add_history(&mut self, history: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , Traits>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Ingest::VT_HISTORY, history);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> IngestBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    IngestBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<Ingest<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for Ingest<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("Ingest");
+      ds.field("title", &self.title());
+      ds.field("ref_type", &self.ref_type());
+      match self.ref_type() {
+        SourceRef::MailRef => {
+          if let Some(x) = self.ref__as_mail_ref() {
+            ds.field("ref_", &x)
+          } else {
+            ds.field("ref_", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        SourceRef::FileRef => {
+          if let Some(x) = self.ref__as_file_ref() {
+            ds.field("ref_", &x)
+          } else {
+            ds.field("ref_", &"InvalidFlatbuffer: Union discriminant does not match value.")
+          }
+        },
+        _ => {
+          let x: Option<()> = None;
+          ds.field("ref_", &x)
+        },
+      };
+      ds.field("traits", &self.traits());
+      ds.field("default_traits", &self.default_traits());
+      ds.field("history", &self.history());
       ds.finish()
   }
 }

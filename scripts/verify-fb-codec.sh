@@ -6,7 +6,8 @@
 #   npm codegen  (`@plonklabs/flatbed-client`, reflection read from the `.bfbs`)
 #
 # For each representative type (strings, 64-bit ints, bools, nested tables,
-# vectors of tables/strings, enums and vectors of enums):
+# vectors of tables/strings, enums and vectors of enums, a union, and combined
+# bit_flags):
 #   Rust encodes  → each TS codec decodes and asserts   (Rust → TS)
 #   each TS codec encodes → Rust decodes and asserts     (TS → Rust)
 #   the two TS codecs produce byte-identical output      (npm ≡ Rust codegen)
@@ -22,7 +23,7 @@ if ! command -v npx >/dev/null 2>&1; then
   exit 0
 fi
 
-TYPES="TestResponse UserRequest AddressBook LogEvent Defaulted"
+TYPES="TestResponse UserRequest AddressBook LogEvent Defaulted Ingest"
 SCHEMAS="crates/flatbed/schemas"
 BFBS="crates/flatbed/src/generated/test.bfbs"
 PKG="clients/ts/flatbed-client"
@@ -62,6 +63,13 @@ function sample(ty: string): any {
     case "AddressBook": return { owner: "Ada", addresses: [address(), address()], contact_names: ["Bob", "Carol"] };
     case "LogEvent": return { message: "disk full", severity: Severity.Error, history: [Severity.Info, Severity.Warning, Severity.Error] };
     case "Defaulted": return { count: 25, flag: true, ratio: 1.5, level: Severity.Warning };
+    case "Ingest": return {
+      title: "Invoice",
+      ref: { type: "MailRef", value: { account: "acc", message_id: "18f" } },
+      traits: ["Money", "NeedsDecision", "Gmail"],
+      default_traits: ["Client"],
+      history: [[], ["Client", "Money"]],
+    };
     default: throw new Error("unknown type " + ty);
   }
 }

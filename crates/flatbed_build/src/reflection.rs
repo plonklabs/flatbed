@@ -12,7 +12,7 @@
 //! reflection schema sorts entries alphabetically for binary search, but
 //! the committed `*_flatbed.rs` snapshots were written in source order.
 
-use flatbuffers_reflection::reflection::{BaseType, Schema, Type};
+use flatbuffers_reflection::reflection::{BaseType, EnumVal, KeyValue, Schema, Type};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -81,13 +81,42 @@ pub(crate) struct Field {
 /// this matches source order. For schemas with explicit values out of source
 /// order, the variant-name serde adapters still round-trip correctly because
 /// the adapter is keyed by variant name, not position.
+///
+/// A union is reflected as an enum too (its discriminator), so it shares this
+/// shape with `kind` set to [`EnumKind::Union`]; its implicit `NONE` variant is
+/// left out of `variants`.
 #[derive(Default)]
 pub(crate) struct Enum {
     pub(crate) name: String,
     pub(crate) variants: Vec<String>,
     /// The declared integer value of each variant, parallel to `variants`.
+    /// For a `bit_flags` enum this is the flag's mask (`1 << position`).
     pub(crate) values: Vec<i64>,
     pub(crate) underlying: String,
+    pub(crate) kind: EnumKind,
+}
+
+/// What a reflected enum stands for.
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EnumKind {
+    /// A plain enum: a value is exactly one variant.
+    #[default]
+    Plain,
+    /// A `(bit_flags)` enum: a value is any OR of its variants.
+    BitFlags,
+    /// A union discriminator; the payload is the table type of each variant,
+    /// parallel to `Enum.variants`.
+    Union(Vec<String>),
+}
+
+impl Enum {
+    /// The table type each variant of a union carries; empty for an enum.
+    pub(crate) fn union_tables(&self) -> &[String] {
+        match &self.kind {
+            EnumKind::Union(tables) => tables,
+            _ => &[],
+        }
+    }
 }
 
 pub(crate) type TablesByNamespace = HashMap<String, Vec<Table>>;
@@ -147,7 +176,15 @@ pub(crate) fn build_reflected_schema(
         }
         let (ns, bare) = split_namespace(obj.name());
 
-        let mut sorted_fields: Vec<_> = obj.fields().iter().collect();
+        // A union field reflects as two: a hidden `<name>_type` discriminator
+        // (`UType`, always at the id just before the value) and the value
+        // itself (`Union`). The codegen models the pair as one field, keyed by
+        // the value's id.
+        let mut sorted_fields: Vec<_> = obj
+            .fields()
+            .iter()
+            .filter(|f| f.type_().base_type() != BaseType::UType)
+            .collect();
         sorted_fields.sort_by_key(|f| f.id());
         let fields: Vec<Field> = sorted_fields
             .iter()
@@ -176,10 +213,26 @@ pub(crate) fn build_reflected_schema(
 
     for en in schema.enums() {
         let (ns, bare) = split_namespace(en.name());
-        let mut sorted_vals: Vec<_> = en.values().iter().collect();
+        let mut sorted_vals: Vec<_> = en
+            .values()
+            .iter()
+            .filter(|v| !(en.is_union() && v.value() == 0))
+            .collect();
         sorted_vals.sort_by_key(|v| v.value());
         let variants: Vec<String> = sorted_vals.iter().map(|v| v.name().to_string()).collect();
         let values: Vec<i64> = sorted_vals.iter().map(|v| v.value()).collect();
+        let kind = if en.is_union() {
+            EnumKind::Union(
+                sorted_vals
+                    .iter()
+                    .map(|v| union_variant_table(en.name(), v, schema))
+                    .collect(),
+            )
+        } else if has_attribute(en.attributes(), "bit_flags") {
+            EnumKind::BitFlags
+        } else {
+            EnumKind::Plain
+        };
         let key = sort_key(
             en.declaration_file(),
             &bare,
@@ -192,6 +245,7 @@ pub(crate) fn build_reflected_schema(
                 variants,
                 values,
                 underlying: enum_underlying_fbs(en.underlying_type().base_type()),
+                kind,
             },
             key,
         ));
@@ -213,6 +267,28 @@ pub(crate) fn build_reflected_schema(
         .collect();
 
     Ok((tables_sorted, enums_sorted))
+}
+
+/// The bare table name a union variant carries. Only tables are supported:
+/// flatc also accepts structs and strings as union members, which have no
+/// plain-struct counterpart here.
+fn union_variant_table(union_name: &str, variant: &EnumVal, schema: &Schema) -> String {
+    let member = variant
+        .union_type()
+        .filter(|t| t.base_type() == BaseType::Obj)
+        .map(|t| schema.objects().get(t.index() as usize))
+        .filter(|obj| !obj.is_struct());
+    let Some(obj) = member else {
+        panic!(
+            "union '{union_name}' variant '{}' is not a table; flatbed_build codegen supports only table union members",
+            variant.name()
+        );
+    };
+    bare_name(obj.name()).to_string()
+}
+
+fn has_attribute<'a>(attrs: Option<impl IntoIterator<Item = KeyValue<'a>>>, key: &str) -> bool {
+    attrs.is_some_and(|a| a.into_iter().any(|kv| kv.key() == key))
 }
 
 /// Map an enum's underlying `BaseType` (always an integer) to the fbs scalar
@@ -286,7 +362,10 @@ fn reflected_field_default(
     schema: &Schema,
 ) -> Option<String> {
     let bt = ty.base_type();
-    if bt == BaseType::Vector || bt == BaseType::String || bt == BaseType::Obj {
+    if matches!(
+        bt,
+        BaseType::Vector | BaseType::String | BaseType::Obj | BaseType::Union
+    ) {
         return None;
     }
     let idx = ty.index();
@@ -301,6 +380,18 @@ fn reflected_field_default(
         }
         let en = schema.enums().get(idx as usize);
         let bare_enum = bare_name(en.name());
+        // flatc's Rust generator drops a `bit_flags` default naming several
+        // flags (`= "A C"`) and reads an absent field as the empty set, while
+        // other languages read it as the declared mask — the same bytes would
+        // decode differently per language. A single flag is a variant value
+        // and resolves like any enum default below.
+        if has_attribute(en.attributes(), "bit_flags") && (dv as u64).count_ones() > 1 {
+            panic!(
+                "field '{}' declares a multi-flag default for bit_flags enum '{}', which flatc's Rust code does not honour; declare at most one flag",
+                field.name(),
+                en.name()
+            );
+        }
         // flatc rejects schemas where a declared enum default doesn't match
         // an actual variant value, so this `find` is unreachable on any
         // bfbs flatc produced. Falling through silently (via `?`) would
@@ -404,6 +495,9 @@ fn reflection_type_to_fbs_string(ty: &Type, schema: &Schema) -> String {
             scalar_or_obj_to_fbs_string(ty.element(), idx, schema)
         );
     }
+    if bt == BaseType::Union {
+        return bare_name(schema.enums().get(idx as usize).name()).to_string();
+    }
     scalar_or_obj_to_fbs_string(bt, idx, schema)
 }
 
@@ -433,7 +527,7 @@ fn scalar_or_obj_to_fbs_string(bt: BaseType, idx: i32, schema: &Schema) -> Strin
             bare_name(obj.name()).to_string()
         }
         other => panic!(
-            "unsupported FlatBuffer BaseType in flatbed_build codegen: {:?}. Unions, structs, arrays, and Vector64 are not yet supported by the high-level codegen.",
+            "unsupported FlatBuffer BaseType in flatbed_build codegen: {:?}. Structs, arrays, and Vector64 are not yet supported by the high-level codegen.",
             other
         ),
     }
@@ -815,5 +909,65 @@ table Defaults {
         // indistinguishable in reflection from no-default, and the Rust
         // behaviour is the same either way — stays None.
         assert_eq!(by_name["zero_level"], None);
+    }
+
+    #[test]
+    fn test_union_and_bit_flags_reflection() {
+        // A union field reflects as a hidden `<name>_type` discriminator plus
+        // the value; the adapter keeps only the value, typed by the union name.
+        // A `bit_flags` enum carries each flag's mask, not its bit position.
+        let tmp = TempDir::new("union_bit_flags");
+        let root = write_temp_fbs(
+            tmp.path(),
+            "u.fbs",
+            r#"
+namespace t;
+enum Traits : ulong (bit_flags) { Client, Money = 5, Gmail }
+table MailRef { id: string; }
+union SourceRef { MailRef, Alias: MailRef }
+table Item { ref: SourceRef; traits: Traits = Money; }
+"#,
+        );
+        let bfbs = compile_bfbs(&root, tmp.path());
+        let bytes = std::fs::read(&bfbs).unwrap();
+        let schema = root_as_schema(&bytes).unwrap();
+        let (tables_by_ns, enums_by_ns) = build_reflected_schema(&schema, tmp.path()).unwrap();
+
+        let item = tables_by_ns["t"].iter().find(|t| t.name == "Item").unwrap();
+        let fields: Vec<(&str, &str, u16)> = item
+            .fields
+            .iter()
+            .map(|f| (f.name.as_str(), f.fbs_type.as_str(), f.id))
+            .collect();
+        assert_eq!(fields, [("ref", "SourceRef", 1), ("traits", "Traits", 2)]);
+        assert_eq!(item.fields[1].default.as_deref(), Some("Traits::Money"));
+
+        let enums = &enums_by_ns["t"];
+        let traits = enums.iter().find(|e| e.name == "Traits").unwrap();
+        assert_eq!(traits.kind, EnumKind::BitFlags);
+        assert_eq!(traits.values, [1, 32, 64]);
+        let union = enums.iter().find(|e| e.name == "SourceRef").unwrap();
+        assert_eq!(union.variants, ["MailRef", "Alias"]);
+        assert_eq!(union.values, [1, 2]);
+        assert_eq!(union.union_tables(), ["MailRef", "MailRef"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "multi-flag default")]
+    fn test_multi_flag_default_is_rejected() {
+        let tmp = TempDir::new("multi_flag_default");
+        let root = write_temp_fbs(
+            tmp.path(),
+            "m.fbs",
+            r#"
+namespace t;
+enum Traits : ubyte (bit_flags) { Client, Money }
+table Item { traits: Traits = "Client Money"; }
+"#,
+        );
+        let bfbs = compile_bfbs(&root, tmp.path());
+        let bytes = std::fs::read(&bfbs).unwrap();
+        let schema = root_as_schema(&bytes).unwrap();
+        let _ = build_reflected_schema(&schema, tmp.path());
     }
 }

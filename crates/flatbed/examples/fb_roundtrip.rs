@@ -11,7 +11,8 @@
 mod generated;
 
 use generated::test::{
-    Address, AddressBook, Defaulted, LogEvent, Severity, TestResponse, UserRequest,
+    Address, AddressBook, Defaulted, Ingest, LogEvent, MailRef, Severity, SourceRef, TestResponse,
+    Traits, UserRequest,
 };
 
 fn address() -> Address {
@@ -57,6 +58,17 @@ fn encode(ty: &str) -> Vec<u8> {
             level: Severity::Warning,
         }
         .to_flatbuffer(),
+        "Ingest" => Ingest {
+            title: Some("Invoice".to_string()),
+            ref_: Some(SourceRef::MailRef(MailRef {
+                account: Some("acc".to_string()),
+                message_id: Some("18f".to_string()),
+            })),
+            traits: Traits::Money | Traits::NeedsDecision | Traits::Gmail,
+            default_traits: Traits::Client,
+            history: Some(vec![Traits::empty(), Traits::Client | Traits::Money]),
+        }
+        .to_flatbuffer(),
         other => panic!("unknown type {other}"),
     }
 }
@@ -83,6 +95,10 @@ fn decode_and_check(ty: &str, bytes: &[u8]) {
         "Defaulted" => assert_eq!(
             Defaulted::from_flatbuffer(bytes).unwrap(),
             Defaulted::from_flatbuffer(&encode(ty)).unwrap()
+        ),
+        "Ingest" => assert_eq!(
+            Ingest::from_flatbuffer(bytes).unwrap(),
+            Ingest::from_flatbuffer(&encode(ty)).unwrap()
         ),
         other => panic!("unknown type {other}"),
     }

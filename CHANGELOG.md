@@ -9,6 +9,34 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+### Added
+
+- Codegen supports FlatBuffer unions of tables. A union field becomes
+  `Option<Union>`, a Rust enum with one tuple variant per member, encoded with
+  flatc's own discriminator + value layout. In JSON it is flatc's two sibling
+  keys, `"<field>_type": "<Variant>"` and `"<field>": { … }`; an absent union
+  writes neither, and `"NONE"` reads as absent.
+- Codegen supports `(bit_flags)` enums. The field is flatc's `bitflags` type;
+  in JSON it is the list of set flag names in declaration order (`[]` for
+  none). An unknown name fails deserialization; set bits the schema doesn't
+  name are kept by the FlatBuffer codec and fail JSON serialization.
+- OpenAPI: a `bit_flags` enum component is an array of its flag names; a union
+  component is a `oneOf` of its member tables, and a union field adds the
+  `<field>_type` string-enum discriminator beside it. `flatbed::UnionSchema`
+  registers unions; `EnumSchema` gains `bit_flags: bool`.
+
+### Changed
+
+- `validate_type_registry` reports a bare name shared across namespaces by
+  any two of a table, enum, or union, since they share one OpenAPI component
+  namespace. `TypeConflict.kind` is replaced by `first_kind` and
+  `second_kind`.
+- Table fields named after a Rust keyword (`ref`, `type`, …) generate flatc's
+  escaped identifier (`ref_`) and keep the schema name on the JSON wire.
+- `@plonklabs/flatbed-client` and `flatbed gen-fb-plugin` emit unions as
+  `{ type, value }` and `bit_flags` fields as lists of flag names, in both the
+  FlatBuffer and JSON codecs; 64-bit `bit_flags` enums are accepted.
+
 ## [0.0.5] — 2026-10-17
 
 ### Added
