@@ -150,3 +150,14 @@ table ListedItemsFeed (paginated) {
 }
 
 root_type TestRequest;
+
+// `ListItemsRequest`'s fields followed by one more, so each table decodes the
+// other's bytes.
+table ListItemsRequestV2 (paginated) {
+  page: string;
+  page_size: uint;
+  owner: string;
+  status: ItemStatus;
+  order: ItemOrder;
+  label: string;
+}

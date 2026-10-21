@@ -705,6 +705,21 @@ pub mod test {
         pub total: u32,
     }
 
+    #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct ListItemsRequestV2 {
+        pub page: Option<String>,
+        pub page_size: u32,
+        pub owner: Option<String>,
+        #[schema(value_type = String)]
+        #[serde(with = "_itemstatus_serde", default)]
+        pub status: ItemStatus,
+        #[schema(value_type = String)]
+        #[serde(with = "_itemorder_serde", default)]
+        pub order: ItemOrder,
+        pub label: Option<String>,
+    }
+
     impl TestRequest {
         /// Convert this struct to FlatBuffer binary format
         pub fn to_flatbuffer(&self) -> Vec<u8> {
@@ -2288,6 +2303,126 @@ pub mod test {
         ] }
     }
 
+    impl ListItemsRequestV2 {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::ListItemsRequestV2>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::ListItemsRequestV2<'a>> {
+            let page_offset = self.page.as_ref().map(|s| builder.create_string(s));
+            let owner_offset = self.owner.as_ref().map(|s| builder.create_string(s));
+            let label_offset = self.label.as_ref().map(|s| builder.create_string(s));
+            super::__fb::test::ListItemsRequestV2::create(
+                builder,
+                &super::__fb::test::ListItemsRequestV2Args {
+                    page: page_offset,
+                    page_size: self.page_size,
+                    owner: owner_offset,
+                    status: self.status,
+                    order: self.order,
+                    label: label_offset,
+                },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::ListItemsRequestV2) -> Self {
+            Self {
+                page: fb.page().map(|s| s.to_string()),
+                page_size: fb.page_size(),
+                owner: fb.owner().map(|s| s.to_string()),
+                status: fb.status(),
+                order: fb.order(),
+                label: fb.label().map(|s| s.to_string()),
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for ListItemsRequestV2 {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
+            ::flatbed::FieldInfo {
+                name: "page",
+                fbs_type: "string",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "page_size",
+                fbs_type: "uint32",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "owner",
+                fbs_type: "string",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "status",
+                fbs_type: "ItemStatus",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "order",
+                fbs_type: "ItemOrder",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "label",
+                fbs_type: "string",
+                required: false,
+            },
+        ];
+
+        const SCHEMA_NAME: &'static str = "ListItemsRequestV2";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for ListItemsRequestV2 {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::ListItemsRequestV2<'_> {
+        type Json = ListItemsRequestV2;
+    }
+
+    impl ::flatbed::HasPlainStruct for ListItemsRequestV2 {
+        type Plain = ListItemsRequestV2;
+        type FlatBuffer<'a> = super::__fb::test::ListItemsRequestV2<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "ListItemsRequestV2", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "page", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "page_size", fbs_type: "uint32", field_id: 1, required: true },
+            ::flatbed::TypeFieldInfo { name: "owner", fbs_type: "string", field_id: 2, required: false },
+            ::flatbed::TypeFieldInfo { name: "status", fbs_type: "ItemStatus", field_id: 3, required: true },
+            ::flatbed::TypeFieldInfo { name: "order", fbs_type: "ItemOrder", field_id: 4, required: true },
+            ::flatbed::TypeFieldInfo { name: "label", fbs_type: "string", field_id: 5, required: false },
+        ] }
+    }
+
     impl ::flatbed::PageRequest for ListItemsRequest {
         fn take_page(&mut self) -> (Option<String>, u32) {
             (self.page.take(), ::std::mem::take(&mut self.page_size))
@@ -2335,6 +2470,16 @@ pub mod test {
                 }),
                 total: Default::default(),
             }
+        }
+    }
+
+    impl ::flatbed::PageRequest for ListItemsRequestV2 {
+        fn take_page(&mut self) -> (Option<String>, u32) {
+            (self.page.take(), ::std::mem::take(&mut self.page_size))
+        }
+
+        fn set_page_size(&mut self, page_size: u32) {
+            self.page_size = page_size;
         }
     }
 }

@@ -237,6 +237,59 @@ The [`raw-response`](examples/raw-response) example returns CSV and SVG from
 handlers; the [`static-assets`](examples/static-assets) example serves a bundled
 `dist/` alongside a JSON API.
 
+## Paginated lists (optional)
+
+With the `pagination` feature, flatbed owns the page shape, the cursor, and
+page-size policy; the service owns its filters, its order, and its storage.
+Mark a request/response pair `(paginated)` in the schema (declare
+`attribute "paginated";` and a `Page` table in your own `.fbs`):
+
+```fbs
+table Page { next_page: string; previous_page: string; }
+
+table ListFeedbackRequest (paginated) {
+  page: string;          // opaque cursor
+  page_size: uint;       // 0 = the pager's default; capped at its max
+  author: string;        // every other field is a filter
+  order: FeedbackOrder;
+}
+
+table ListFeedbackResponse (paginated) {
+  items: [Feedback];
+  page: Page;
+  applied: ListFeedbackRequest;   // optional: the filters this page used
+}
+```
+
+Build one `Pager` at boot, keep it in your context, and call it from an
+ordinary `POST` route (a `GET` route decodes its body from `{}`):
+
+```rust
+let pager = Pager::new(secret).default_page_size(50).max_page_size(200);
+
+#[route("/feedback/list")]
+async fn list_feedback(
+    req: Request<ListFeedbackRequest, Arc<AppCtx>>,
+) -> Result<Response<ListFeedbackResponse>, FlatbedRouteError> {
+    let caller = req.header("x-user-id").unwrap_or_default().as_bytes().to_vec();
+    let page = req.ctx.pager.page(&req, &caller, |q| req.ctx.repo.list(q)).await?;
+    Ok(Response::ok(page))
+}
+```
+
+The closure gets a `ListQuery { request, direction, after, limit }` and returns
+up to `limit` rows, each paired with its key `K` (any serde type). `K` must be
+a strict total order matching the `ORDER BY` of every order the request can
+select — end it with a unique tie-breaker — and immutable per row. For
+`Direction::Backward` flip the `ORDER BY` and the comparison; flatbed reverses
+the rows back. A cursor is signed (HMAC-SHA256 over the method, the concrete
+path, and the caller binding), **not encrypted**, and works across JSON and
+FlatBuffer calls. A bad cursor is `400 INVALID_CURSOR`; a cursor sent with
+filters is `400 CURSOR_WITH_FILTERS`. Appending a filter field keeps old
+cursors valid; changing the shape of `K` invalidates them. Optional number
+filters are enums whose first variant is `Any = 0`. The same call works in a
+`#[nats_route]`, bound to the concrete subject.
+
 ## Answering NATS subjects (optional)
 
 With the `nats` feature, `#[nats_route]` answers core-NATS request-reply on a
@@ -400,7 +453,7 @@ a no-op.
 
 | Crate | Purpose |
 |---|---|
-| [`flatbed`](crates/flatbed) | HTTP server, route registry, optional telemetry / OpenAPI / NATS / Kubernetes feature gates |
+| [`flatbed`](crates/flatbed) | HTTP server, route registry, optional telemetry / OpenAPI / NATS / Kubernetes / pagination feature gates |
 | [`flatbed_macros`](crates/flatbed_macros) | `#[route]`, `#[nats_route]`, and `#[flatbed::main]` procedural macros |
 | [`flatbed_build`](crates/flatbed_build) | Build-time FlatBuffer codegen and the `flatbed` CLI tool (`cargo install flatbed_build` ships the binary) |
 

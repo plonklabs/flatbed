@@ -102,6 +102,11 @@ pub mod hyper;
 pub mod readiness;
 pub use readiness::{Readiness, ReadinessGate};
 
+#[cfg(feature = "pagination")]
+pub mod pagination;
+#[cfg(feature = "pagination")]
+pub use pagination::{Direction, ListQuery, Pager, CURSOR_WITH_FILTERS, INVALID_CURSOR};
+
 // Worker supervision
 mod supervisor;
 pub use supervisor::{worker_states, RestartPolicy, WorkerState};
