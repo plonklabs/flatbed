@@ -9,6 +9,25 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+## [0.0.7] — 2026-10-21
+
+### Added
+
+- Cursor pagination. A table marked `(paginated)` in the schema is a list
+  request (`page: string`, `page_size: uint`, every other field a typed
+  filter) or, when it carries a `Page` field (`next_page`, `previous_page`),
+  a list response. Codegen implements the new `flatbed::PageRequest` and
+  `flatbed::PageResponse<R>` traits for them, and fails the build with a
+  message naming the table when the shape is wrong. List routes are `POST`.
+- `pagination` feature (new optional dependencies `hmac`, `sha2`, `base64`):
+  `Pager::page` turns a request and a fetch closure over `ListQuery` into a
+  `PageResponse`, with `Direction::Forward` / `Backward` paging and a
+  default/maximum `page_size`. Cursors are opaque, HMAC-signed, and bound to
+  the route and caller; a bad cursor answers `400 INVALID_CURSOR`, and a
+  cursor combined with any filter answers `400 CURSOR_WITH_FILTERS`.
+- `@plonklabs/flatbed-client` emits paginated list calls for `(paginated)`
+  operations.
+
 ## [0.0.6] — 2026-10-21
 
 ### Added
@@ -166,7 +185,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.6...HEAD
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.7...HEAD
+[0.0.7]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.6...flatbed-v0.0.7
 [0.0.6]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.5...flatbed-v0.0.6
 [0.0.5]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.4...flatbed-v0.0.5
 [0.0.4]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.3...flatbed-v0.0.4
