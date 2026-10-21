@@ -74,6 +74,15 @@ test("reads declared defaults for scalars, bools, and enums", () => {
   assert.deepEqual(field(d, "level").default, { kind: "int", value: 1n });
 });
 
+test("reads the (paginated) table attribute", () => {
+  const schema = fixture();
+  assert.deepEqual(
+    schema.tables.filter((t) => t.paginated === true).map((t) => t.name),
+    ["ListItemsRequest", "ListItemsResponse", "ListedItemsFeed"],
+  );
+  assert.equal("paginated" in table(schema, "Page"), false);
+});
+
 test("rejects a 64-bit enum, which can't be a number-backed TS enum", () => {
   const bytes = readFileSync(fileURLToPath(new URL("./__fixtures__/big-enum.bfbs", import.meta.url)));
   assert.throws(() => readBfbs(bytes), /64-bit underlying type/);

@@ -5,6 +5,7 @@ export {
   type ClientConfig,
 } from "./client.js";
 export { FlatbedError } from "./error.js";
+export { paginate, type Page, type PageParts } from "./page.js";
 export {
   fetchTransport,
   type Transport,
