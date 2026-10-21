@@ -150,3 +150,14 @@ table ListedItemsFeed (paginated) {
 }
 
 root_type TestRequest;
+
+// `ListItemsRequest` with one appended field: the same table at a later
+// schema version, for cursors minted before the field existed.
+table ListItemsRequestV2 (paginated) {
+  page: string;
+  page_size: uint;
+  owner: string;
+  status: ItemStatus;
+  order: ItemOrder;
+  label: string;
+}
