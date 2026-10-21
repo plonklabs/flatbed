@@ -77,8 +77,6 @@ table Defaulted {
   level: Severity = Warning;
 }
 
-// Exercises the `bit_flags` codegen path: a value is any OR of the flags,
-// and crosses JSON as the list of the set flags' names.
 enum Traits : ulong (bit_flags) {
   Client,
   Money,
@@ -95,8 +93,6 @@ table FileRef {
   path: string;
 }
 
-// Exercises the union codegen path. The field is named `ref`, a Rust
-// keyword, so it also pins the identifier escaping flatc applies.
 union SourceRef { MailRef, FileRef }
 
 table Ingest {

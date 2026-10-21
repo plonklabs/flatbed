@@ -1,5 +1,5 @@
 import type { CodecRoots, FbsEnum, FbsField, FbsSchema, FbsTable, FbsType, FbsUnion } from "./model.js";
-import { reachableTables } from "./reachable.js";
+import { reachableTables, referenced } from "./reachable.js";
 import { HEADER } from "./util.js";
 import { SCALAR_OPS, type ScalarOps } from "./wire.js";
 
@@ -243,17 +243,6 @@ const decodeRootFn = (t: FbsTable): string =>
   `export function decode${t.name}Root(bytes: Uint8Array): ${t.name} {\n` +
   "  const bb = new flatbuffers.ByteBuffer(bytes);\n" +
   `  return decode${t.name}(bb, bb.__indirect(bb.position()));\n}\n\n`;
-
-/** The names of every `kind` type the tables' fields reference, vectors included. */
-const referenced = (tables: readonly FbsTable[], kind: "enum" | "flags" | "union"): ReadonlySet<string> => {
-  const names = new Set<string>();
-  const visit = (t: FbsType): void => {
-    if (t.kind === kind) names.add(t.name);
-    if (t.kind === "vector") visit(t.element);
-  };
-  tables.forEach((table) => table.fields.forEach((f) => visit(f.type)));
-  return names;
-};
 
 const flagsTableFn = (e: FbsEnum): string =>
   `const ${e.name}_FLAGS: Readonly<Record<${e.name}, bigint>> = {\n` +

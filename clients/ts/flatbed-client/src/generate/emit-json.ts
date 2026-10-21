@@ -1,5 +1,5 @@
 import type { CodecRoots, FbsEnum, FbsField, FbsSchema, FbsTable, FbsType, FbsUnion } from "./model.js";
-import { reachableTables } from "./reachable.js";
+import { reachableTables, referenced } from "./reachable.js";
 import { HEADER } from "./util.js";
 
 // The JSON wire shape is the server's serde output: enums are variant-name
@@ -119,18 +119,6 @@ const decodeJsonFn = (t: FbsTable): string =>
   `export function decode${t.name}Json(bytes: Uint8Array): ${t.name} {\n` +
   `  return fromWire${t.name}(JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>);\n}\n\n`;
 
-// Both toWire and fromWire name the enum at runtime (`Name[...]`), so a table on
-// either side needs its enums as value imports; import only those referenced.
-const referenced = (tables: readonly FbsTable[], kind: "enum" | "flags" | "union"): ReadonlySet<string> => {
-  const names = new Set<string>();
-  const visit = (t: FbsType): void => {
-    if (t.kind === kind) names.add(t.name);
-    if (t.kind === "vector") visit(t.element);
-  };
-  tables.forEach((table) => table.fields.forEach((f) => visit(f.type)));
-  return names;
-};
-
 /**
  * Emit the JSON encode/decode that matches the server's serde wire shape. A
  * table gets a `toWire…`/`encode…Json` when it's reachable from a request body
@@ -159,6 +147,8 @@ export const emitJson = (schema: FbsSchema, roots: CodecRoots): string => {
         (encodedUnions.has(u.name) ? toWireUnionFn(u) : "") + (decodedUnions.has(u.name) ? fromWireUnionFn(u) : ""),
     )
     .join("");
+  // Both toWire and fromWire name the enum at runtime (`Name[...]`), so a table on
+  // either side needs its enums as value imports; import only those referenced.
   const enumSet = referenced(emitted, "enum");
   const enums = schema.enums.filter((e) => enumSet.has(e.name)).map((e) => e.name);
   // Flags are only named in a decode-side `as` cast; unions in their helpers.

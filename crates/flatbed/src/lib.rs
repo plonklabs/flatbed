@@ -2306,7 +2306,9 @@ pub struct TypeConflict {
     pub name: String,
     pub first_namespace: String,
     pub second_namespace: String,
-    /// `"type"`, `"enum"`, or `"union"` — which registry the collision is in.
+    /// `"type"`, `"enum"`, or `"union"` — which registry the second
+    /// registration is in. The first may be in another: tables, enums, and
+    /// unions share one OpenAPI component namespace.
     pub kind: &'static str,
 }
 
@@ -2322,39 +2324,36 @@ impl std::fmt::Display for TypeConflict {
 
 impl std::error::Error for TypeConflict {}
 
-/// Validate that every registered type and enum has a unique bare name.
+/// Validate that every registered type, enum, and union has a unique bare name.
 ///
-/// [`get_type_schema`] and [`get_enum_schema`] key on the bare name, so two
-/// same-named types in different namespaces shadow each other in the lookup —
-/// and anything built from the registry would silently use whichever won the
-/// insert race. This surfaces the collision as an error instead, at startup
-/// before the server binds.
+/// [`get_type_schema`] and [`get_enum_schema`] key on the bare name, and the
+/// OpenAPI components are named by it across all three registries, so two
+/// same-named items in different namespaces shadow each other — and anything
+/// built from the registry would silently use whichever won the insert race.
+/// This surfaces the collision as an error instead, at startup before the
+/// server binds.
 pub fn validate_type_registry() -> Result<(), TypeConflict> {
     let types = inventory::iter::<TypeSchema>
         .into_iter()
-        .map(|t| (t.name, t.namespace));
-    find_name_collision("type", types)?;
+        .map(|t| (t.name, t.namespace, "type"));
     let enums = inventory::iter::<EnumSchema>
         .into_iter()
-        .map(|e| (e.name, e.namespace));
-    find_name_collision("enum", enums)?;
+        .map(|e| (e.name, e.namespace, "enum"));
     let unions = inventory::iter::<UnionSchema>
         .into_iter()
-        .map(|u| (u.name, u.namespace));
-    find_name_collision("union", unions)?;
-    Ok(())
+        .map(|u| (u.name, u.namespace, "union"));
+    find_name_collision(types.chain(enums).chain(unions))
 }
 
 /// Return a [`TypeConflict`] if the same bare name appears under two different
-/// namespaces in `entries` (`(name, namespace)` pairs). Repeats of an
+/// namespaces in `entries` (`(name, namespace, kind)` triples). Repeats of an
 /// identical `(name, namespace)` are not a conflict — only a name shared
 /// across namespaces is, since that's what makes a bare-name lookup ambiguous.
 fn find_name_collision<'a>(
-    kind: &'static str,
-    entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    entries: impl IntoIterator<Item = (&'a str, &'a str, &'static str)>,
 ) -> Result<(), TypeConflict> {
     let mut seen: HashMap<&str, &str> = HashMap::new();
-    for (name, namespace) in entries {
+    for (name, namespace, kind) in entries {
         if let Some(prev) = seen.insert(name, namespace) {
             if prev != namespace {
                 return Err(TypeConflict {
@@ -3155,8 +3154,12 @@ mod tests {
 
     #[test]
     fn find_name_collision_flags_same_name_across_namespaces() {
-        let entries = [("Foo", "v_1"), ("Bar", "v_1"), ("Foo", "v_2")];
-        let err = find_name_collision("type", entries)
+        let entries = [
+            ("Foo", "v_1", "type"),
+            ("Bar", "v_1", "type"),
+            ("Foo", "v_2", "type"),
+        ];
+        let err = find_name_collision(entries)
             .expect_err("a name shared across namespaces must be a conflict");
         assert_eq!(err.name, "Foo");
         assert_eq!(err.kind, "type");
@@ -3166,16 +3169,29 @@ mod tests {
 
     #[test]
     fn find_name_collision_accepts_unique_names() {
-        let entries = [("Foo", "v_1"), ("Bar", "v_1"), ("Baz", "v_2")];
-        assert!(find_name_collision("type", entries).is_ok());
+        let entries = [
+            ("Foo", "v_1", "type"),
+            ("Bar", "v_1", "enum"),
+            ("Baz", "v_2", "union"),
+        ];
+        assert!(find_name_collision(entries).is_ok());
+    }
+
+    #[test]
+    fn find_name_collision_flags_a_name_shared_across_registries() {
+        let entries = [("Foo", "v_1", "enum"), ("Foo", "v_2", "union")];
+        let err = find_name_collision(entries)
+            .expect_err("an enum and a union sharing a bare name collide as components");
+        assert_eq!(err.kind, "union");
+        assert_eq!(err.first_namespace, "v_1");
     }
 
     #[test]
     fn find_name_collision_ignores_identical_reregistration() {
         // The same (name, namespace) appearing twice is a harmless duplicate,
         // not an ambiguous lookup — only a name split across namespaces is.
-        let entries = [("Foo", "v_1"), ("Foo", "v_1")];
-        assert!(find_name_collision("enum", entries).is_ok());
+        let entries = [("Foo", "v_1", "enum"), ("Foo", "v_1", "enum")];
+        assert!(find_name_collision(entries).is_ok());
     }
 
     #[test]

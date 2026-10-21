@@ -31,3 +31,14 @@ export const reachableTables = (schema: FbsSchema, roots: Iterable<string>): Rea
   [...roots].forEach(visit);
   return seen;
 };
+
+/** The names of every `kind` type the tables' fields reference, vectors included. */
+export const referenced = (tables: readonly FbsTable[], kind: "enum" | "flags" | "union"): ReadonlySet<string> => {
+  const names = new Set<string>();
+  const visit = (t: FbsType): void => {
+    if (t.kind === kind) names.add(t.name);
+    if (t.kind === "vector") visit(t.element);
+  };
+  tables.forEach((table) => table.fields.forEach((f) => visit(f.type)));
+  return names;
+};
