@@ -1,4 +1,5 @@
-import type { FbsSchema, Operation } from "./model.js";
+import { defaultLiteral, flagsDefault } from "./emit-json.js";
+import type { FbsEnum, FbsField, FbsSchema, FbsTable, Operation } from "./model.js";
 import { camelCase, isValidTsIdentifier, paramIdent, pascalCase, pathParams } from "./identifiers.js";
 import { HEADER } from "./util.js";
 
@@ -61,11 +62,55 @@ export const checkTypes = (schema: FbsSchema, ops: readonly Operation[]): void =
   });
 };
 
+/** The table a paginated response carries its cursors in. */
+const PAGE_TABLE = "Page";
+
+/**
+ * How a list operation maps onto a `Page`: its request table, and the response
+ * fields holding the items, the cursors, and (optionally) the applied request.
+ */
+interface ListShape {
+  readonly request: FbsTable;
+  readonly items: { readonly field: string; readonly type: string };
+  readonly page: string;
+  readonly applied?: { readonly field: string; readonly type: string };
+}
+
+const tableOf = (f: FbsField): string | undefined => (f.type.kind === "table" ? f.type.name : undefined);
+
+const itemsOf = (f: FbsField): string | undefined =>
+  f.type.kind === "vector" && f.type.element.kind === "table" ? f.type.element.name : undefined;
+
+const hasPageField = (t: FbsTable): boolean => t.fields.some((f) => tableOf(f) === PAGE_TABLE);
+
+/**
+ * The list shape of an operation whose request and response are both
+ * `(paginated)` tables — a paginated table with a `Page` field is a response,
+ * any other paginated table a request — or `undefined` for any other operation.
+ */
+const listShape = (schema: FbsSchema, op: Operation): ListShape | undefined => {
+  const tables = new Map(schema.tables.map((t) => [t.name, t]));
+  const isRequest = (t: FbsTable | undefined): t is FbsTable => t?.paginated === true && !hasPageField(t);
+  const request = tables.get(effectiveRequestType(op) ?? "");
+  const response = tables.get(op.responseType ?? "");
+  if (!isRequest(request) || response?.paginated !== true) return undefined;
+  const items = response.fields.find((f) => itemsOf(f) !== undefined);
+  const page = response.fields.find((f) => tableOf(f) === PAGE_TABLE);
+  const applied = response.fields.find((f) => isRequest(tables.get(tableOf(f) ?? "")));
+  if (items === undefined || page === undefined) return undefined;
+  return {
+    request,
+    items: { field: items.name, type: itemsOf(items)! },
+    page: page.name,
+    ...(applied !== undefined ? { applied: { field: applied.name, type: tableOf(applied)! } } : {}),
+  };
+};
+
 /** The `args` object type — only the keys the operation actually has. */
-const argType = (op: Operation, params: readonly string[]): string | undefined => {
+const argType = (op: Operation, params: readonly string[], list: boolean): string | undefined => {
   const req = effectiveRequestType(op);
   const parts = [
-    ...(req !== undefined ? [`body: ${req}`] : []),
+    ...(req !== undefined ? [list ? `body: Omit<${req}, "page">` : `body: ${req}`] : []),
     ...(params.length > 0
       ? [`pathParams: { ${params.map((p) => `${paramIdent(p)}: string`).join("; ")} }`]
       : []),
@@ -95,13 +140,13 @@ const pathExpr = (op: Operation): string => {
   return expr === "" ? '""' : expr;
 };
 
-const call = (op: Operation, fmt: "fb" | "json"): string => {
+const call = (op: Operation, fmt: "fb" | "json", body = "args.body"): string => {
   const req = effectiveRequestType(op);
   const encode =
     req !== undefined
       ? fmt === "json"
-        ? `json.encode${req}Json(args.body)`
-        : `codec.encode${req}Root(args.body)`
+        ? `json.encode${req}Json(${body})`
+        : `codec.encode${req}Root(${body})`
       : "new Uint8Array()";
   const decode =
     op.responseType !== undefined
@@ -113,35 +158,94 @@ const call = (op: Operation, fmt: "fb" | "json"): string => {
   return `request(config, "${op.method}", ${pathExpr(op)}, ${encode}, ${decode}, ${contentType})`;
 };
 
-const method = (op: Operation): string => {
-  const arg = argType(op, pathParams(op.path));
-  const returns = op.responseType ?? "Uint8Array";
-  const name = methodName(op);
-  if (!op.supportsJson) {
-    return `  ${name}: (${arg !== undefined ? `args: ${arg}` : ""}): Promise<${returns}> =>\n    ${call(op, "fb")},\n`;
-  }
-  const sig = [arg !== undefined ? `args: ${arg}` : "", 'opts?: { as?: "json" | "flatbuffer" }']
-    .filter((s) => s !== "")
-    .join(", ");
+const OPTS = 'opts?: { as?: "json" | "flatbuffer" }';
+
+// Optional kinds (strings, tables, vectors, unions) have no default to send.
+const fieldDefault = (enums: ReadonlyMap<string, FbsEnum>, f: FbsField): string | undefined => {
+  if (f.type.kind === "enum") return `${defaultLiteral(f)} as ${f.type.name}`;
+  if (f.type.kind === "flags") return flagsDefault(enums, f);
+  return f.type.kind === "scalar" ? defaultLiteral(f) : undefined;
+};
+
+const cursorFields = (shape: ListShape): readonly FbsField[] =>
+  shape.request.fields.filter((f) => f.name !== "page" && f.name !== "page_size");
+
+/** The enum types a list call's cursor body names in a cast. */
+const cursorEnums = (shape: ListShape): readonly string[] =>
+  cursorFields(shape).flatMap((f) => (f.type.kind === "enum" ? [f.type.name] : []));
+
+// The body a cursor is sent in: `page` and the caller's `page_size`, every
+// other field at its schema default. The server rejects a cursor sent with any
+// filter set, and JSON requires the numeric fields to be present.
+const cursorBody = (schema: FbsSchema, shape: ListShape): string => {
+  const enums = new Map(schema.enums.map((e) => [e.name, e]));
+  const rest = cursorFields(shape).flatMap((f) => {
+    const value = fieldDefault(enums, f);
+    return value !== undefined ? [`${f.name}: ${value}`] : [];
+  });
+  return `{ ${["page", "page_size: args.body.page_size", ...rest].join(", ")} }`;
+};
+
+const listMethod = (schema: FbsSchema, op: Operation, shape: ListShape): string => {
+  const sig = [`args: ${argType(op, pathParams(op.path), true)!}`, ...(op.supportsJson ? [OPTS] : [])].join(", ");
+  const generics = `${shape.items.type}, ${shape.applied?.type ?? "never"}`;
+  const send = op.supportsJson
+    ? `(opts?.as === "json"\n` +
+      `          ? ${call(op, "json", "body")}\n` +
+      `          : ${call(op, "fb", "body")})`
+    : call(op, "fb", "body");
+  const parts = [
+    `items: res.${shape.items.field}`,
+    `page: res.${shape.page}`,
+    ...(shape.applied !== undefined ? [`applied: res.${shape.applied.field}`] : []),
+  ].join(", ");
   return (
-    `  ${name}: (${sig}): Promise<${returns}> =>\n` +
-    `    opts?.as === "json"\n` +
-    `      ? ${call(op, "json")}\n` +
-    `      : ${call(op, "fb")},\n`
+    `  ${methodName(op)}: (${sig}): Promise<FlatbedPage<${generics}>> =>\n` +
+    `    paginate<${shape.request.name}, ${generics}>(\n` +
+    `      (body) =>\n` +
+    `        ${send}.then((res) => ({ ${parts} })),\n` +
+    `      args.body,\n` +
+    `      (page) => (${cursorBody(schema, shape)}),\n` +
+    `    ),\n`
   );
 };
 
+const method =
+  (schema: FbsSchema) =>
+  (op: Operation): string => {
+    const shape = listShape(schema, op);
+    if (shape !== undefined) return listMethod(schema, op, shape);
+    const arg = argType(op, pathParams(op.path), false);
+    const returns = op.responseType ?? "Uint8Array";
+    const name = methodName(op);
+    if (!op.supportsJson) {
+      return `  ${name}: (${arg !== undefined ? `args: ${arg}` : ""}): Promise<${returns}> =>\n    ${call(op, "fb")},\n`;
+    }
+    const sig = [arg !== undefined ? `args: ${arg}` : "", OPTS].filter((s) => s !== "").join(", ");
+    return (
+      `  ${name}: (${sig}): Promise<${returns}> =>\n` +
+      `    opts?.as === "json"\n` +
+      `      ? ${call(op, "json")}\n` +
+      `      : ${call(op, "fb")},\n`
+    );
+  };
+
 /**
  * Emit a `createFlatbedClient(config)` factory whose object has one method per
- * operation. Method names are emitted verbatim, so the caller must have already
- * validated them (unique, valid identifiers).
+ * operation; an operation whose request and response are `(paginated)` tables
+ * becomes a list call resolving to a `Page`. Method names are emitted verbatim,
+ * so the caller must have already validated them (unique, valid identifiers).
  */
-export const emitClient = (ops: readonly Operation[]): string => {
-  const importTypes = [
-    ...new Set(
-      ops.flatMap((op) => [effectiveRequestType(op), op.responseType].filter((t) => t !== undefined)),
-    ),
-  ].sort();
+export const emitClient = (ops: readonly Operation[], schema: FbsSchema): string => {
+  const shapes = ops.flatMap((op) => listShape(schema, op) ?? []);
+  // A list call names its request, item, applied, and cursor-enum types, but
+  // never its response type.
+  const namedTypes = (op: Operation): readonly string[] => {
+    const shape = listShape(schema, op);
+    if (shape === undefined) return [effectiveRequestType(op), op.responseType].filter((t) => t !== undefined);
+    return [shape.request.name, shape.items.type, ...(shape.applied !== undefined ? [shape.applied.type] : []), ...cursorEnums(shape)];
+  };
+  const importTypes = [...new Set(ops.flatMap(namedTypes))].sort();
   const typed = (op: Operation): boolean =>
     effectiveRequestType(op) !== undefined || op.responseType !== undefined;
   const usesCodec = ops.some(typed);
@@ -155,6 +259,8 @@ export const emitClient = (ops: readonly Operation[]): string => {
     "type ClientConfig",
     ...(hasOps ? ["FLATBUFFERS_CONTENT_TYPE"] : []),
     ...(anyJson ? ["JSON_CONTENT_TYPE"] : []),
+    // Aliased: the schema declares its own `Page` table.
+    ...(shapes.length > 0 ? ["paginate", "type Page as FlatbedPage"] : []),
   ];
   return (
     HEADER +
@@ -163,7 +269,7 @@ export const emitClient = (ops: readonly Operation[]): string => {
     (usesJsonCodec ? 'import * as json from "./json-codec.js";\n' : "") +
     (importTypes.length > 0 ? `import type { ${importTypes.join(", ")} } from "./types.js";\n` : "") +
     "\nexport const createFlatbedClient = (config: ClientConfig) => ({\n" +
-    ops.map(method).join("") +
+    ops.map(method(schema)).join("") +
     "});\n"
   );
 };

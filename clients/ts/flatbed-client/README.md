@@ -53,6 +53,25 @@ const api = createFlatbedClient({
 });
 ```
 
+## Paginated lists
+
+An operation whose request and response are `(paginated)` tables becomes a list
+call: `body` takes the filters and `page_size` (never `page`), and it resolves to
+a `Page`:
+
+```ts
+const first = await api.listItems({ body: { page_size: 20, owner: "ann", status: ItemStatus.Open, order: ItemOrder.Newest } });
+first.items;        // the response's item vector
+first.applied;      // the request the server applied, when the response echoes it
+first.nextPage;     // raw cursors, e.g. for links; undefined at the ends
+first.previousPage;
+const second = await first.next?.(); // undefined on the last page
+```
+
+`next()`/`previous()` send only the cursor and the same `page_size` — a cursor
+already carries the filters it was minted with, and the server rejects a cursor
+sent alongside a filter. To change filters, call the list again without a cursor.
+
 ## Choosing the wire format
 
 Every call sends FlatBuffer by default. Pass `{ as: "json" }` as a second

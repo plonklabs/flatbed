@@ -38,8 +38,8 @@ const SCALARS = new Map<BaseType, ScalarType>([
   [BaseType.Double, "float64"],
 ]);
 
-const hasAttribute = (en: Enum, key: string): boolean =>
-  times(en.attributesLength(), (i) => en.attributes(i)!).some((kv) => kv.key() === key);
+const hasAttribute = (decl: Enum | Object_, key: string): boolean =>
+  times(decl.attributesLength(), (i) => decl.attributes(i)!).some((kv) => kv.key() === key);
 
 // An integer base type with `index >= 0` references an enum; `Obj` references a
 // table; `Union` references a union. Everything else is a plain scalar or
@@ -109,6 +109,7 @@ const readTable =
       .filter((f) => f.type()!.baseType() !== BaseType.UType)
       .map(readField(schema))
       .toSorted((a, b) => a.id - b.id),
+    ...(hasAttribute(obj, "paginated") ? { paginated: true as const } : {}),
   });
 
 const readEnum = (en: Enum): FbsEnum => {

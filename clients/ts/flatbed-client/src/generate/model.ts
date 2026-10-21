@@ -45,10 +45,14 @@ export interface FbsField {
   readonly default: FbsDefault;
 }
 
-/** A FlatBuffer table, its fields ordered by wire id. */
+/**
+ * A FlatBuffer table, its fields ordered by wire id. `paginated` is set when
+ * the table carries the schema's `(paginated)` attribute.
+ */
 export interface FbsTable {
   readonly name: string;
   readonly fields: readonly FbsField[];
+  readonly paginated?: true;
 }
 
 /** One enum variant and its wire value. */

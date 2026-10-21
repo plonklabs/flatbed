@@ -41,7 +41,7 @@ export const generateFiles = ({ spec, bfbs }: GenerateInput): GeneratedFiles => 
     "types.ts": emitTypes(schema),
     "codec.ts": emitCodec(schema, roots),
     "json-codec.ts": emitJson(schema, roots),
-    "client.ts": emitClient(ops),
+    "client.ts": emitClient(ops, schema),
     "index.ts": emitIndex(),
   };
 };

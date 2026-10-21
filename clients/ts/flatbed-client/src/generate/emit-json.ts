@@ -37,7 +37,7 @@ const optional = (t: FbsType): boolean =>
   t.kind === "string" || t.kind === "table" || t.kind === "vector";
 
 /** The flag names set in a field's default mask, as a TS array literal. */
-const flagsDefault = (enums: ReadonlyMap<string, FbsEnum>, f: FbsField): string => {
+export const flagsDefault = (enums: ReadonlyMap<string, FbsEnum>, f: FbsField): string => {
   const mask = f.default.kind === "int" ? f.default.value : 0n;
   const members = f.type.kind === "flags" ? (enums.get(f.type.name)?.members ?? []) : [];
   return JSON.stringify(members.filter((m) => (mask & m.value) !== 0n).map((m) => m.name));
@@ -46,7 +46,7 @@ const flagsDefault = (enums: ReadonlyMap<string, FbsEnum>, f: FbsField): string 
 // A scalar/enum absent from the JSON decodes to its declared default — the same
 // value the FlatBuffer path yields for an omitted field, and it keeps
 // `BigInt(undefined)` from throwing on a missing 64-bit field.
-const defaultLiteral = (f: FbsField): string => {
+export const defaultLiteral = (f: FbsField): string => {
   const { type: t, default: d } = f;
   if (t.kind === "scalar" && t.scalar === "bool") return d.kind === "int" && d.value !== 0n ? "true" : "false";
   if (d.kind === "int") return is64(t) ? `${d.value}n` : `${d.value}`;
