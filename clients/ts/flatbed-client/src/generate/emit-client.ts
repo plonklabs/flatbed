@@ -167,19 +167,19 @@ const fieldDefault = (enums: ReadonlyMap<string, FbsEnum>, f: FbsField): string 
   return f.type.kind === "scalar" ? defaultLiteral(f) : undefined;
 };
 
-const cursorFields = (shape: ListShape): readonly FbsField[] =>
+const filterFields = (shape: ListShape): readonly FbsField[] =>
   shape.request.fields.filter((f) => f.name !== "page" && f.name !== "page_size");
 
 /** The enum types a list call's cursor body names in a cast. */
 const cursorEnums = (shape: ListShape): readonly string[] =>
-  cursorFields(shape).flatMap((f) => (f.type.kind === "enum" ? [f.type.name] : []));
+  filterFields(shape).flatMap((f) => (f.type.kind === "enum" ? [f.type.name] : []));
 
 // The body a cursor is sent in: `page` and the caller's `page_size`, every
 // other field at its schema default. The server rejects a cursor sent with any
 // filter set, and JSON requires the numeric fields to be present.
 const cursorBody = (schema: FbsSchema, shape: ListShape): string => {
   const enums = new Map(schema.enums.map((e) => [e.name, e]));
-  const rest = cursorFields(shape).flatMap((f) => {
+  const rest = filterFields(shape).flatMap((f) => {
     const value = fieldDefault(enums, f);
     return value !== undefined ? [`${f.name}: ${value}`] : [];
   });
