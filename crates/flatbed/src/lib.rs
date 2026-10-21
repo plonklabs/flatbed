@@ -767,7 +767,7 @@ pub trait PageRequest: ToFlatBuffer + FromFlatBuffer + Default + PartialEq + Clo
     /// and `page_size` as `0`.
     fn take_page(&mut self) -> (Option<String>, u32);
 
-    /// Set `page_size`.
+    /// Overwrite `page_size`, leaving every filter untouched.
     fn set_page_size(&mut self, page_size: u32);
 }
 
@@ -784,6 +784,8 @@ pub trait PageResponse<R: PageRequest>: ToFlatBuffer {
 
     /// Build a page. An absent cursor marks that end of the list; `applied`
     /// is stored when the response has a field for it and dropped otherwise.
+    /// Any other field of the response is left at its schema default; set it
+    /// on the returned value.
     fn from_page(
         items: Vec<Self::Item>,
         next_page: Option<String>,

@@ -105,10 +105,6 @@ table Ingest {
   history: [Traits];
 }
 
-// Pagination: a request carrying the cursor and size beside its filters, and
-// a response carrying the items, the cursors, and the request the page was
-// made from. `ListedItemsFeed` has no such field, so it pairs with any
-// paginated request.
 table Page {
   next_page: string;
   previous_page: string;
@@ -146,6 +142,7 @@ table ListItemsResponse (paginated) {
   applied: ListItemsRequest;
 }
 
+// No paginated-request field, so it pairs with any paginated request.
 table ListedItemsFeed (paginated) {
   items: [ListedItem];
   page: Page;
