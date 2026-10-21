@@ -16,6 +16,8 @@ pub mod test {
     use ::flatbed::utoipa;
     use utoipa::ToSchema;
 
+    pub use super::__fb::test::ItemOrder;
+    pub use super::__fb::test::ItemStatus;
     pub use super::__fb::test::Severity;
     pub use super::__fb::test::Traits;
 
@@ -180,6 +182,192 @@ pub mod test {
             .transpose()
         }
     }
+    #[doc(hidden)]
+    pub mod _itemorder_serde {
+        use super::ItemOrder;
+        use ::flatbed::serde::{Deserialize, Deserializer, Serialize, Serializer};
+        const VALID_NAMES: &[&str] = &["Newest", "Oldest"];
+        pub fn serialize<S: Serializer>(v: &ItemOrder, s: S) -> Result<S::Ok, S::Error> {
+            let name: &'static str = {
+                if *v == ItemOrder::Newest {
+                    "Newest"
+                } else if *v == ItemOrder::Oldest {
+                    "Oldest"
+                } else {
+                    return Err(<S::Error as ::flatbed::serde::ser::Error>::custom(format!(
+                        "unknown ItemOrder variant: {:?}",
+                        v.0
+                    )));
+                }
+            };
+            name.serialize(s)
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<ItemOrder, D::Error> {
+            let raw = String::deserialize(d)?;
+            match raw.as_str() {
+                "Newest" => Ok(ItemOrder::Newest),
+                "Oldest" => Ok(ItemOrder::Oldest),
+                other => Err(<D::Error as ::flatbed::serde::de::Error>::unknown_variant(
+                    other,
+                    VALID_NAMES,
+                )),
+            }
+        }
+    }
+    #[doc(hidden)]
+    pub mod _itemorder_opt_vec_serde {
+        use super::ItemOrder;
+        use ::flatbed::serde::{Deserialize, Deserializer, Serialize, Serializer};
+        const VALID_NAMES: &[&str] = &["Newest", "Oldest"];
+        fn variant_to_name<S: Serializer>(v: &ItemOrder) -> Result<&'static str, S::Error> {
+            let name: &'static str = {
+                if *v == ItemOrder::Newest {
+                    "Newest"
+                } else if *v == ItemOrder::Oldest {
+                    "Oldest"
+                } else {
+                    return Err(<S::Error as ::flatbed::serde::ser::Error>::custom(format!(
+                        "unknown ItemOrder variant: {:?}",
+                        v.0
+                    )));
+                }
+            };
+            Ok(name)
+        }
+        pub fn serialize<S: Serializer>(
+            v: &Option<Vec<ItemOrder>>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            match v {
+                Some(items) => {
+                    let names: Result<Vec<&'static str>, S::Error> =
+                        items.iter().map(variant_to_name::<S>).collect();
+                    Some(names?).serialize(s)
+                }
+                None => Option::<Vec<&'static str>>::None.serialize(s),
+            }
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<Vec<ItemOrder>>, D::Error> {
+            let raw: Option<Vec<String>> = Option::deserialize(d)?;
+            match raw {
+                Some(names) => {
+                    let parsed: Result<Vec<ItemOrder>, D::Error> = names
+                        .into_iter()
+                        .map(|raw| match raw.as_str() {
+                            "Newest" => Ok(ItemOrder::Newest),
+                            "Oldest" => Ok(ItemOrder::Oldest),
+                            other => {
+                                Err(<D::Error as ::flatbed::serde::de::Error>::unknown_variant(
+                                    other,
+                                    VALID_NAMES,
+                                ))
+                            }
+                        })
+                        .collect();
+                    parsed.map(Some)
+                }
+                None => Ok(None),
+            }
+        }
+    }
+    #[doc(hidden)]
+    pub mod _itemstatus_serde {
+        use super::ItemStatus;
+        use ::flatbed::serde::{Deserialize, Deserializer, Serialize, Serializer};
+        const VALID_NAMES: &[&str] = &["Any", "Open", "Closed"];
+        pub fn serialize<S: Serializer>(v: &ItemStatus, s: S) -> Result<S::Ok, S::Error> {
+            let name: &'static str = {
+                if *v == ItemStatus::Any {
+                    "Any"
+                } else if *v == ItemStatus::Open {
+                    "Open"
+                } else if *v == ItemStatus::Closed {
+                    "Closed"
+                } else {
+                    return Err(<S::Error as ::flatbed::serde::ser::Error>::custom(format!(
+                        "unknown ItemStatus variant: {:?}",
+                        v.0
+                    )));
+                }
+            };
+            name.serialize(s)
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<ItemStatus, D::Error> {
+            let raw = String::deserialize(d)?;
+            match raw.as_str() {
+                "Any" => Ok(ItemStatus::Any),
+                "Open" => Ok(ItemStatus::Open),
+                "Closed" => Ok(ItemStatus::Closed),
+                other => Err(<D::Error as ::flatbed::serde::de::Error>::unknown_variant(
+                    other,
+                    VALID_NAMES,
+                )),
+            }
+        }
+    }
+    #[doc(hidden)]
+    pub mod _itemstatus_opt_vec_serde {
+        use super::ItemStatus;
+        use ::flatbed::serde::{Deserialize, Deserializer, Serialize, Serializer};
+        const VALID_NAMES: &[&str] = &["Any", "Open", "Closed"];
+        fn variant_to_name<S: Serializer>(v: &ItemStatus) -> Result<&'static str, S::Error> {
+            let name: &'static str = {
+                if *v == ItemStatus::Any {
+                    "Any"
+                } else if *v == ItemStatus::Open {
+                    "Open"
+                } else if *v == ItemStatus::Closed {
+                    "Closed"
+                } else {
+                    return Err(<S::Error as ::flatbed::serde::ser::Error>::custom(format!(
+                        "unknown ItemStatus variant: {:?}",
+                        v.0
+                    )));
+                }
+            };
+            Ok(name)
+        }
+        pub fn serialize<S: Serializer>(
+            v: &Option<Vec<ItemStatus>>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            match v {
+                Some(items) => {
+                    let names: Result<Vec<&'static str>, S::Error> =
+                        items.iter().map(variant_to_name::<S>).collect();
+                    Some(names?).serialize(s)
+                }
+                None => Option::<Vec<&'static str>>::None.serialize(s),
+            }
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<Vec<ItemStatus>>, D::Error> {
+            let raw: Option<Vec<String>> = Option::deserialize(d)?;
+            match raw {
+                Some(names) => {
+                    let parsed: Result<Vec<ItemStatus>, D::Error> = names
+                        .into_iter()
+                        .map(|raw| match raw.as_str() {
+                            "Any" => Ok(ItemStatus::Any),
+                            "Open" => Ok(ItemStatus::Open),
+                            "Closed" => Ok(ItemStatus::Closed),
+                            other => {
+                                Err(<D::Error as ::flatbed::serde::de::Error>::unknown_variant(
+                                    other,
+                                    VALID_NAMES,
+                                ))
+                            }
+                        })
+                        .collect();
+                    parsed.map(Some)
+                }
+                None => Ok(None),
+            }
+        }
+    }
 
     ::flatbed::inventory::submit! {
         ::flatbed::EnumSchema { name: "Severity", namespace: "test", variants: &["Info", "Warning", "Error"], bit_flags: false }
@@ -187,6 +375,14 @@ pub mod test {
 
     ::flatbed::inventory::submit! {
         ::flatbed::EnumSchema { name: "Traits", namespace: "test", variants: &["Client", "Money", "NeedsDecision", "Gmail"], bit_flags: true }
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::EnumSchema { name: "ItemOrder", namespace: "test", variants: &["Newest", "Oldest"], bit_flags: false }
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::EnumSchema { name: "ItemStatus", namespace: "test", variants: &["Any", "Open", "Closed"], bit_flags: false }
     }
 
     #[derive(Clone, Debug, PartialEq, ToSchema)]
@@ -459,6 +655,54 @@ pub mod test {
         ) -> Result<Option<super::SourceRef>, D::Error> {
             super::_sourceref_union_serde::deserialize(d, "ref_type", "ref")
         }
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct Page {
+        pub next_page: Option<String>,
+        pub previous_page: Option<String>,
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct ListedItem {
+        pub id: Option<String>,
+        pub owner: Option<String>,
+        pub created_at: i64,
+        #[schema(value_type = String)]
+        #[serde(with = "_itemstatus_serde", default)]
+        pub status: ItemStatus,
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct ListItemsRequest {
+        pub page: Option<String>,
+        pub page_size: u32,
+        pub owner: Option<String>,
+        #[schema(value_type = String)]
+        #[serde(with = "_itemstatus_serde", default)]
+        pub status: ItemStatus,
+        #[schema(value_type = String)]
+        #[serde(with = "_itemorder_serde", default)]
+        pub order: ItemOrder,
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct ListItemsResponse {
+        pub items: Option<Vec<ListedItem>>,
+        pub page: Option<Page>,
+        pub applied: Option<ListItemsRequest>,
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct ListedItemsFeed {
+        pub items: Option<Vec<ListedItem>>,
+        pub page: Option<Page>,
+        pub total: u32,
     }
 
     impl TestRequest {
@@ -1537,5 +1781,560 @@ pub mod test {
             ::flatbed::TypeFieldInfo { name: "default_traits", fbs_type: "Traits", field_id: 4, required: true },
             ::flatbed::TypeFieldInfo { name: "history", fbs_type: "[Traits]", field_id: 5, required: false },
         ] }
+    }
+
+    impl Page {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::Page>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::Page<'a>> {
+            let next_page_offset = self.next_page.as_ref().map(|s| builder.create_string(s));
+            let previous_page_offset = self
+                .previous_page
+                .as_ref()
+                .map(|s| builder.create_string(s));
+            super::__fb::test::Page::create(
+                builder,
+                &super::__fb::test::PageArgs {
+                    next_page: next_page_offset,
+                    previous_page: previous_page_offset,
+                },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::Page) -> Self {
+            Self {
+                next_page: fb.next_page().map(|s| s.to_string()),
+                previous_page: fb.previous_page().map(|s| s.to_string()),
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for Page {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
+            ::flatbed::FieldInfo {
+                name: "next_page",
+                fbs_type: "string",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "previous_page",
+                fbs_type: "string",
+                required: false,
+            },
+        ];
+
+        const SCHEMA_NAME: &'static str = "Page";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for Page {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::Page<'_> {
+        type Json = Page;
+    }
+
+    impl ::flatbed::HasPlainStruct for Page {
+        type Plain = Page;
+        type FlatBuffer<'a> = super::__fb::test::Page<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "Page", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "next_page", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "previous_page", fbs_type: "string", field_id: 1, required: false },
+        ] }
+    }
+
+    impl ListedItem {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::ListedItem>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::ListedItem<'a>> {
+            let id_offset = self.id.as_ref().map(|s| builder.create_string(s));
+            let owner_offset = self.owner.as_ref().map(|s| builder.create_string(s));
+            super::__fb::test::ListedItem::create(
+                builder,
+                &super::__fb::test::ListedItemArgs {
+                    id: id_offset,
+                    owner: owner_offset,
+                    created_at: self.created_at,
+                    status: self.status,
+                },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::ListedItem) -> Self {
+            Self {
+                id: fb.id().map(|s| s.to_string()),
+                owner: fb.owner().map(|s| s.to_string()),
+                created_at: fb.created_at(),
+                status: fb.status(),
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for ListedItem {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
+            ::flatbed::FieldInfo {
+                name: "id",
+                fbs_type: "string",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "owner",
+                fbs_type: "string",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "created_at",
+                fbs_type: "int64",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "status",
+                fbs_type: "ItemStatus",
+                required: true,
+            },
+        ];
+
+        const SCHEMA_NAME: &'static str = "ListedItem";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for ListedItem {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::ListedItem<'_> {
+        type Json = ListedItem;
+    }
+
+    impl ::flatbed::HasPlainStruct for ListedItem {
+        type Plain = ListedItem;
+        type FlatBuffer<'a> = super::__fb::test::ListedItem<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "ListedItem", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "id", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "owner", fbs_type: "string", field_id: 1, required: false },
+            ::flatbed::TypeFieldInfo { name: "created_at", fbs_type: "int64", field_id: 2, required: true },
+            ::flatbed::TypeFieldInfo { name: "status", fbs_type: "ItemStatus", field_id: 3, required: true },
+        ] }
+    }
+
+    impl ListItemsRequest {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::ListItemsRequest>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::ListItemsRequest<'a>> {
+            let page_offset = self.page.as_ref().map(|s| builder.create_string(s));
+            let owner_offset = self.owner.as_ref().map(|s| builder.create_string(s));
+            super::__fb::test::ListItemsRequest::create(
+                builder,
+                &super::__fb::test::ListItemsRequestArgs {
+                    page: page_offset,
+                    page_size: self.page_size,
+                    owner: owner_offset,
+                    status: self.status,
+                    order: self.order,
+                },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::ListItemsRequest) -> Self {
+            Self {
+                page: fb.page().map(|s| s.to_string()),
+                page_size: fb.page_size(),
+                owner: fb.owner().map(|s| s.to_string()),
+                status: fb.status(),
+                order: fb.order(),
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for ListItemsRequest {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
+            ::flatbed::FieldInfo {
+                name: "page",
+                fbs_type: "string",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "page_size",
+                fbs_type: "uint32",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "owner",
+                fbs_type: "string",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "status",
+                fbs_type: "ItemStatus",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "order",
+                fbs_type: "ItemOrder",
+                required: true,
+            },
+        ];
+
+        const SCHEMA_NAME: &'static str = "ListItemsRequest";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for ListItemsRequest {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::ListItemsRequest<'_> {
+        type Json = ListItemsRequest;
+    }
+
+    impl ::flatbed::HasPlainStruct for ListItemsRequest {
+        type Plain = ListItemsRequest;
+        type FlatBuffer<'a> = super::__fb::test::ListItemsRequest<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "ListItemsRequest", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "page", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "page_size", fbs_type: "uint32", field_id: 1, required: true },
+            ::flatbed::TypeFieldInfo { name: "owner", fbs_type: "string", field_id: 2, required: false },
+            ::flatbed::TypeFieldInfo { name: "status", fbs_type: "ItemStatus", field_id: 3, required: true },
+            ::flatbed::TypeFieldInfo { name: "order", fbs_type: "ItemOrder", field_id: 4, required: true },
+        ] }
+    }
+
+    impl ListItemsResponse {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::ListItemsResponse>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::ListItemsResponse<'a>> {
+            let items_offset = self.items.as_ref().map(|v| {
+                let offsets: Vec<_> = v.iter().map(|t| t.build_flatbuffer(builder)).collect();
+                builder.create_vector(&offsets)
+            });
+            let page_offset = self.page.as_ref().map(|t| t.build_flatbuffer(builder));
+            let applied_offset = self.applied.as_ref().map(|t| t.build_flatbuffer(builder));
+            super::__fb::test::ListItemsResponse::create(
+                builder,
+                &super::__fb::test::ListItemsResponseArgs {
+                    items: items_offset,
+                    page: page_offset,
+                    applied: applied_offset,
+                },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::ListItemsResponse) -> Self {
+            Self {
+                items: fb
+                    .items()
+                    .map(|v| v.iter().map(|t| ListedItem::from_fb(&t)).collect()),
+                page: fb.page().map(|t| Page::from_fb(&t)),
+                applied: fb.applied().map(|t| ListItemsRequest::from_fb(&t)),
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for ListItemsResponse {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
+            ::flatbed::FieldInfo {
+                name: "items",
+                fbs_type: "[ListedItem]",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "page",
+                fbs_type: "Page",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "applied",
+                fbs_type: "ListItemsRequest",
+                required: false,
+            },
+        ];
+
+        const SCHEMA_NAME: &'static str = "ListItemsResponse";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for ListItemsResponse {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::ListItemsResponse<'_> {
+        type Json = ListItemsResponse;
+    }
+
+    impl ::flatbed::HasPlainStruct for ListItemsResponse {
+        type Plain = ListItemsResponse;
+        type FlatBuffer<'a> = super::__fb::test::ListItemsResponse<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "ListItemsResponse", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "items", fbs_type: "[ListedItem]", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "page", fbs_type: "Page", field_id: 1, required: false },
+            ::flatbed::TypeFieldInfo { name: "applied", fbs_type: "ListItemsRequest", field_id: 2, required: false },
+        ] }
+    }
+
+    impl ListedItemsFeed {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::ListedItemsFeed>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::ListedItemsFeed<'a>> {
+            let items_offset = self.items.as_ref().map(|v| {
+                let offsets: Vec<_> = v.iter().map(|t| t.build_flatbuffer(builder)).collect();
+                builder.create_vector(&offsets)
+            });
+            let page_offset = self.page.as_ref().map(|t| t.build_flatbuffer(builder));
+            super::__fb::test::ListedItemsFeed::create(
+                builder,
+                &super::__fb::test::ListedItemsFeedArgs {
+                    items: items_offset,
+                    page: page_offset,
+                    total: self.total,
+                },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::ListedItemsFeed) -> Self {
+            Self {
+                items: fb
+                    .items()
+                    .map(|v| v.iter().map(|t| ListedItem::from_fb(&t)).collect()),
+                page: fb.page().map(|t| Page::from_fb(&t)),
+                total: fb.total(),
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for ListedItemsFeed {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
+            ::flatbed::FieldInfo {
+                name: "items",
+                fbs_type: "[ListedItem]",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "page",
+                fbs_type: "Page",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "total",
+                fbs_type: "uint32",
+                required: true,
+            },
+        ];
+
+        const SCHEMA_NAME: &'static str = "ListedItemsFeed";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for ListedItemsFeed {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::ListedItemsFeed<'_> {
+        type Json = ListedItemsFeed;
+    }
+
+    impl ::flatbed::HasPlainStruct for ListedItemsFeed {
+        type Plain = ListedItemsFeed;
+        type FlatBuffer<'a> = super::__fb::test::ListedItemsFeed<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "ListedItemsFeed", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "items", fbs_type: "[ListedItem]", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "page", fbs_type: "Page", field_id: 1, required: false },
+            ::flatbed::TypeFieldInfo { name: "total", fbs_type: "uint32", field_id: 2, required: true },
+        ] }
+    }
+
+    impl ::flatbed::PageRequest for ListItemsRequest {
+        fn take_page(&mut self) -> (Option<String>, u32) {
+            (self.page.take(), ::std::mem::take(&mut self.page_size))
+        }
+
+        fn set_page_size(&mut self, page_size: u32) {
+            self.page_size = page_size;
+        }
+    }
+
+    impl ::flatbed::PageResponse<ListItemsRequest> for ListItemsResponse {
+        type Item = ListedItem;
+
+        fn from_page(
+            items: Vec<ListedItem>,
+            next_page: Option<String>,
+            previous_page: Option<String>,
+            applied: ListItemsRequest,
+        ) -> Self {
+            Self {
+                items: Some(items),
+                page: Some(Page {
+                    next_page,
+                    previous_page,
+                }),
+                applied: Some(applied),
+            }
+        }
+    }
+
+    impl<R: ::flatbed::PageRequest> ::flatbed::PageResponse<R> for ListedItemsFeed {
+        type Item = ListedItem;
+
+        fn from_page(
+            items: Vec<ListedItem>,
+            next_page: Option<String>,
+            previous_page: Option<String>,
+            _applied: R,
+        ) -> Self {
+            Self {
+                items: Some(items),
+                page: Some(Page {
+                    next_page,
+                    previous_page,
+                }),
+                total: Default::default(),
+            }
+        }
     }
 }

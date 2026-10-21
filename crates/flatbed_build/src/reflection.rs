@@ -36,9 +36,13 @@ pub(crate) const BFBS_ROOT_PREFIX: &str = "//";
 /// (flatc assigns IDs sequentially in declaration order). The struct lives
 /// here as an owned shadow type so the codegen consumers can take
 /// `&[Table]` without holding a borrow on the bfbs bytes.
+///
+/// `paginated` is set when the table carries the user-declared
+/// `(paginated)` attribute.
 pub(crate) struct Table {
     pub(crate) name: String,
     pub(crate) fields: Vec<Field>,
+    pub(crate) paginated: bool,
 }
 
 /// Codegen view of a single table field.
@@ -205,10 +209,12 @@ pub(crate) fn build_reflected_schema(
             &file_index_by_name,
             &file_order_index,
         );
-        tables_by_ns
-            .entry(ns)
-            .or_default()
-            .push((Table { name: bare, fields }, key));
+        let table = Table {
+            name: bare,
+            fields,
+            paginated: has_attribute(obj.attributes(), "paginated"),
+        };
+        tables_by_ns.entry(ns).or_default().push((table, key));
     }
 
     for en in schema.enums() {
@@ -950,6 +956,30 @@ table Item { ref: SourceRef; traits: Traits = Money; }
         assert_eq!(union.variants, ["MailRef", "Alias"]);
         assert_eq!(union.values, [1, 2]);
         assert_eq!(union.union_tables(), ["MailRef", "MailRef"]);
+    }
+
+    #[test]
+    fn test_user_attribute_reaches_reflection() {
+        let tmp = TempDir::new("user_attribute");
+        let root = write_temp_fbs(
+            tmp.path(),
+            "p.fbs",
+            r#"
+attribute "paginated";
+namespace t;
+table Listed (paginated) { page: string; page_size: uint; }
+table Plain { x: int; }
+"#,
+        );
+        let bfbs = compile_bfbs(&root, tmp.path());
+        let bytes = std::fs::read(&bfbs).unwrap();
+        let schema = root_as_schema(&bytes).unwrap();
+        let (tables_by_ns, _) = build_reflected_schema(&schema, tmp.path()).unwrap();
+        let paginated: Vec<(&str, bool)> = tables_by_ns["t"]
+            .iter()
+            .map(|t| (t.name.as_str(), t.paginated))
+            .collect();
+        assert_eq!(paginated, [("Listed", true), ("Plain", false)]);
     }
 
     #[test]

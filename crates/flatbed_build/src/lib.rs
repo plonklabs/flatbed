@@ -86,6 +86,37 @@
 //!   `"ref_type": "MailRef", "ref": { … }`. An absent union has neither key
 //!   (`"ref_type": "NONE"` also reads as absent).
 //!
+//! # Pagination
+//!
+//! A schema that declares `attribute "paginated";` can mark list tables
+//! `(paginated)`. flatbed ships no `.fbs` for this: includes resolve only
+//! inside the service's own schema directory, so the service declares the
+//! attribute and a `Page` table itself. The build fails if a paginated table
+//! breaks its shape:
+//!
+//! ```fbs
+//! attribute "paginated";
+//!
+//! table Page { next_page: string; previous_page: string; }  // exactly these
+//!
+//! table ListFeedbackRequest (paginated) {
+//!   page: string;       // required: the opaque cursor
+//!   page_size: uint;    // required, no declared default
+//!   status: Status;     // every other field is a typed filter
+//!   order: Order;
+//! }
+//!
+//! table ListFeedbackResponse (paginated) {
+//!   items: [Feedback];               // exactly one vector of tables
+//!   page: Page;                      // exactly one `Page` field
+//!   applied: ListFeedbackRequest;    // at most one paginated-request field
+//! }
+//! ```
+//!
+//! A paginated table with a `Page` field is a response and implements
+//! `flatbed::PageResponse`; any other is a request and implements
+//! `flatbed::PageRequest`.
+//!
 //! # How the codegen sees the schema
 //!
 //! The high-level codegen is fed by flatc's canonical reflection output. For

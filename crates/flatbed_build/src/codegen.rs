@@ -379,7 +379,164 @@ fn generate_plain_struct_module(
         generate_type_schema_registration(output, table, namespace, &table_names, &union_names);
     }
 
+    for table in tables.iter().filter(|t| t.paginated) {
+        if table.fields.iter().any(|f| f.fbs_type == PAGE_TABLE) {
+            generate_page_response_impl(output, table, tables);
+        } else {
+            generate_page_request_impl(output, table);
+        }
+    }
+
     output.push_str("}\n"); // close namespace module
+}
+
+/// The table a paginated response carries its cursors in.
+const PAGE_TABLE: &str = "Page";
+
+/// Emit `flatbed::PageRequest` for a `(paginated)` table without a `Page`
+/// field, after checking it carries the two page fields.
+fn generate_page_request_impl(output: &mut String, table: &Table) {
+    let name = &table.name;
+    let field = |field: &str| table.fields.iter().find(|f| f.name == field);
+    if !field("page").is_some_and(|f| f.fbs_type == "string") {
+        panic!(
+            "paginated request '{name}' needs a `page: string` field (a paginated response needs a `{PAGE_TABLE}` field)"
+        );
+    }
+    let Some(page_size) = field("page_size").filter(|f| f.fbs_type == "uint32") else {
+        panic!("paginated request '{name}' needs a `page_size: uint` field");
+    };
+    if page_size.default.is_some() {
+        panic!(
+            "`page_size` of paginated request '{name}' must not declare a default: 0 already asks for the service's default size"
+        );
+    }
+    output.push_str(&format!(
+        concat!(
+            "    impl ::flatbed::PageRequest for {name} {{\n",
+            "        fn take_page(&mut self) -> (Option<String>, u32) {{\n",
+            "            (self.page.take(), ::std::mem::take(&mut self.page_size))\n",
+            "        }}\n\n",
+            "        fn set_page_size(&mut self, page_size: u32) {{\n",
+            "            self.page_size = page_size;\n",
+            "        }}\n",
+            "    }}\n\n",
+        ),
+        name = name,
+    ));
+}
+
+/// Emit `flatbed::PageResponse` for a `(paginated)` table with a `Page` field,
+/// after checking its shape: exactly one `Page` field, exactly one vector of
+/// tables (the items), and at most one field typed as a paginated request
+/// (the request the page was made from). Without that field the impl covers
+/// every request type.
+fn generate_page_response_impl(output: &mut String, table: &Table, tables: &[Table]) {
+    let name = &table.name;
+    check_page_table(tables);
+    let table_names: Vec<String> = tables.iter().map(|t| t.name.clone()).collect();
+    let is_request = |fbs_type: &str| {
+        tables.iter().any(|t| {
+            t.name == fbs_type && t.paginated && !t.fields.iter().any(|f| f.fbs_type == PAGE_TABLE)
+        })
+    };
+
+    let pages = table
+        .fields
+        .iter()
+        .filter(|f| f.fbs_type == PAGE_TABLE)
+        .count();
+    if pages != 1 {
+        panic!("paginated response '{name}' needs exactly one `{PAGE_TABLE}` field, found {pages}");
+    }
+    let items: Vec<&Field> = table
+        .fields
+        .iter()
+        .filter(|f| is_table_vector(&f.fbs_type, &table_names))
+        .collect();
+    let [items] = items[..] else {
+        panic!(
+            "paginated response '{name}' needs exactly one vector of tables (its items), found {}",
+            items.len()
+        );
+    };
+    let applied: Vec<&Field> = table
+        .fields
+        .iter()
+        .filter(|f| is_request(&f.fbs_type))
+        .collect();
+    if applied.len() > 1 {
+        panic!(
+            "paginated response '{name}' has {} fields typed as a paginated request; at most one is allowed",
+            applied.len()
+        );
+    }
+    let applied = applied.first().copied();
+
+    let (generics, request) = match applied {
+        Some(f) => (String::new(), f.fbs_type.clone()),
+        None => ("<R: ::flatbed::PageRequest>".to_string(), "R".to_string()),
+    };
+    let applied_param = if applied.is_some() {
+        "applied"
+    } else {
+        "_applied"
+    };
+    let item = vector_inner_type(&items.fbs_type);
+    let mut fields = String::new();
+    for field in &table.fields {
+        let value = if field.name == items.name {
+            "Some(items)".to_string()
+        } else if field.fbs_type == PAGE_TABLE {
+            format!("Some({PAGE_TABLE} {{ next_page, previous_page }})")
+        } else if applied.is_some_and(|a| a.name == field.name) {
+            "Some(applied)".to_string()
+        } else {
+            field
+                .default
+                .clone()
+                .unwrap_or("Default::default()".to_string())
+        };
+        fields.push_str(&format!(
+            "                {}: {value},\n",
+            rust_ident(&field.name)
+        ));
+    }
+    output.push_str(&format!(
+        concat!(
+            "    impl{generics} ::flatbed::PageResponse<{request}> for {name} {{\n",
+            "        type Item = {item};\n\n",
+            "        fn from_page(items: Vec<{item}>, next_page: Option<String>, previous_page: Option<String>, {applied_param}: {request}) -> Self {{\n",
+            "            Self {{\n",
+            "{fields}",
+            "            }}\n",
+            "        }}\n",
+            "    }}\n\n",
+        ),
+        generics = generics,
+        request = request,
+        name = name,
+        item = item,
+        applied_param = applied_param,
+        fields = fields,
+    ));
+}
+
+/// A paginated response's `Page` table must be exactly
+/// `next_page: string; previous_page: string;`.
+fn check_page_table(tables: &[Table]) {
+    let Some(page) = tables.iter().find(|t| t.name == PAGE_TABLE) else {
+        panic!("paginated responses need a `{PAGE_TABLE}` table in the same namespace");
+    };
+    let mut shape: Vec<(&str, &str)> = page
+        .fields
+        .iter()
+        .map(|f| (f.name.as_str(), f.fbs_type.as_str()))
+        .collect();
+    shape.sort();
+    if shape != [("next_page", "string"), ("previous_page", "string")] {
+        panic!("table `{PAGE_TABLE}` must be exactly `next_page: string; previous_page: string;`");
+    }
 }
 
 /// Emit an `inventory::submit!` registering this table in the runtime type
@@ -1152,6 +1309,7 @@ mod tests {
             vec![
                 Table {
                     name: "Address".to_string(),
+                    paginated: false,
                     fields: vec![Field {
                         name: "zip".to_string(),
                         fbs_type: "int32".to_string(),
@@ -1161,6 +1319,7 @@ mod tests {
                 },
                 Table {
                     name: "User".to_string(),
+                    paginated: false,
                     fields: vec![Field {
                         name: "home".to_string(),
                         fbs_type: "Address".to_string(),
@@ -1205,6 +1364,7 @@ mod tests {
             "v_1".to_string(),
             vec![Table {
                 name: "TestType".to_string(),
+                paginated: false,
                 fields: vec![Field {
                     name: "value".to_string(),
                     fbs_type: "string".to_string(),
@@ -1244,6 +1404,7 @@ mod tests {
             vec![
                 Table {
                     name: "Address".to_string(),
+                    paginated: false,
                     fields: vec![Field {
                         name: "city".to_string(),
                         fbs_type: "string".to_string(),
@@ -1253,6 +1414,7 @@ mod tests {
                 },
                 Table {
                     name: "AddressBook".to_string(),
+                    paginated: false,
                     fields: vec![Field {
                         name: "entries".to_string(),
                         fbs_type: "[Address]".to_string(),
@@ -1280,6 +1442,7 @@ mod tests {
             "v_1".to_string(),
             vec![Table {
                 name: "Stats".to_string(),
+                paginated: false,
                 fields: vec![Field {
                     name: "values".to_string(),
                     fbs_type: "[int32]".to_string(),
@@ -1302,6 +1465,7 @@ mod tests {
             "v_1".to_string(),
             vec![Table {
                 name: "RegistryEndpoints".to_string(),
+                paginated: false,
                 fields: vec![Field {
                     name: "endpoints".to_string(),
                     fbs_type: "[string]".to_string(),
@@ -1347,6 +1511,7 @@ mod tests {
             "v_1".to_string(),
             vec![Table {
                 name: "BoxPortInfo".to_string(),
+                paginated: false,
                 fields: vec![
                     Field {
                         name: "name".to_string(),
@@ -1436,6 +1601,7 @@ mod tests {
             vec![
                 Table {
                     name: "Defaulted".to_string(),
+                    paginated: false,
                     fields: vec![
                         Field {
                             name: "port".to_string(),
@@ -1453,6 +1619,7 @@ mod tests {
                 },
                 Table {
                     name: "Plain".to_string(),
+                    paginated: false,
                     fields: vec![Field {
                         name: "value".to_string(),
                         fbs_type: "uint16".to_string(),
@@ -1492,6 +1659,7 @@ mod tests {
             "v_1".to_string(),
             vec![Table {
                 name: "Cfg".to_string(),
+                paginated: false,
                 fields: vec![Field {
                     name: "mode".to_string(),
                     fbs_type: "Level".to_string(),
@@ -1531,6 +1699,7 @@ mod tests {
             "v_1".to_string(),
             vec![Table {
                 name: "LogEvent".to_string(),
+                paginated: false,
                 fields: vec![Field {
                     name: "history".to_string(),
                     fbs_type: "[Severity]".to_string(),
@@ -1573,5 +1742,136 @@ mod tests {
         // for tables.
         assert!(module.contains("builder.create_vector(v)"));
         assert!(module.contains("v.iter().collect()"));
+    }
+
+    fn table(name: &str, paginated: bool, fields: &[(&str, &str)]) -> Table {
+        Table {
+            name: name.to_string(),
+            paginated,
+            fields: fields
+                .iter()
+                .zip(0..)
+                .map(|((name, fbs_type), id)| Field {
+                    name: name.to_string(),
+                    fbs_type: fbs_type.to_string(),
+                    id,
+                    ..Default::default()
+                })
+                .collect(),
+        }
+    }
+
+    const PAGE: (&str, &str) = ("page", "string");
+    const PAGE_SIZE: (&str, &str) = ("page_size", "uint32");
+
+    /// A `Page` table, an item table, and a paginated request, plus `extra`.
+    fn paginated_module(extra: Vec<Table>) -> String {
+        let mut tables = vec![
+            table(
+                "Page",
+                false,
+                &[("next_page", "string"), ("previous_page", "string")],
+            ),
+            table("Item", false, &[("id", "string")]),
+            table("ListReq", true, &[PAGE, PAGE_SIZE, ("owner", "string")]),
+        ];
+        tables.extend(extra);
+        let schemas = HashMap::from([("v".to_string(), tables)]);
+        generate_flatbed_module(&schemas, &HashMap::new(), "test")
+    }
+
+    #[test]
+    fn test_paginated_tables_emit_page_trait_impls() {
+        let module = paginated_module(vec![
+            table(
+                "ListResp",
+                true,
+                &[
+                    ("items", "[Item]"),
+                    ("page", "Page"),
+                    ("applied", "ListReq"),
+                ],
+            ),
+            table(
+                "Feed",
+                true,
+                &[("items", "[Item]"), ("page", "Page"), ("total", "uint32")],
+            ),
+        ]);
+
+        assert!(module.contains("impl ::flatbed::PageRequest for ListReq {"));
+        assert!(module.contains("(self.page.take(), ::std::mem::take(&mut self.page_size))"));
+        assert!(module.contains("impl ::flatbed::PageResponse<ListReq> for ListResp {"));
+        assert!(module.contains("applied: Some(applied),"));
+        assert!(module
+            .contains("impl<R: ::flatbed::PageRequest> ::flatbed::PageResponse<R> for Feed {"));
+        assert!(module.contains("_applied: R) -> Self {"));
+        assert!(module.contains("total: Default::default(),"));
+        assert!(!module.contains("PageRequest for Item "));
+    }
+
+    #[test]
+    #[should_panic(expected = "paginated request 'Bad' needs a `page: string` field")]
+    fn test_paginated_request_without_page_is_rejected() {
+        paginated_module(vec![table("Bad", true, &[PAGE_SIZE, ("owner", "string")])]);
+    }
+
+    #[test]
+    #[should_panic(expected = "paginated request 'Bad' needs a `page_size: uint` field")]
+    fn test_paginated_request_with_non_uint_page_size_is_rejected() {
+        paginated_module(vec![table("Bad", true, &[PAGE, ("page_size", "int32")])]);
+    }
+
+    #[test]
+    #[should_panic(expected = "needs exactly one vector of tables (its items), found 0")]
+    fn test_paginated_response_without_items_is_rejected() {
+        paginated_module(vec![table(
+            "Bad",
+            true,
+            &[("page", "Page"), ("ids", "[string]")],
+        )]);
+    }
+
+    #[test]
+    #[should_panic(expected = "needs exactly one vector of tables (its items), found 2")]
+    fn test_paginated_response_with_two_item_vectors_is_rejected() {
+        paginated_module(vec![table(
+            "Bad",
+            true,
+            &[("items", "[Item]"), ("more", "[Item]"), ("page", "Page")],
+        )]);
+    }
+
+    #[test]
+    #[should_panic(expected = "has 2 fields typed as a paginated request")]
+    fn test_paginated_response_with_two_applied_fields_is_rejected() {
+        paginated_module(vec![table(
+            "Bad",
+            true,
+            &[
+                ("items", "[Item]"),
+                ("page", "Page"),
+                ("applied", "ListReq"),
+                ("also", "ListReq"),
+            ],
+        )]);
+    }
+
+    #[test]
+    #[should_panic(expected = "table `Page` must be exactly")]
+    fn test_wrong_page_shape_is_rejected() {
+        let schemas = HashMap::from([(
+            "v".to_string(),
+            vec![
+                table(
+                    "Page",
+                    false,
+                    &[("next_page", "string"), ("cursor", "string")],
+                ),
+                table("Item", false, &[("id", "string")]),
+                table("Resp", true, &[("items", "[Item]"), ("page", "Page")]),
+            ],
+        )]);
+        generate_flatbed_module(&schemas, &HashMap::new(), "test");
     }
 }

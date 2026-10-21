@@ -108,6 +108,10 @@ name = "flatbuffer_union_bit_flags"
 required-features = ["openapi"]
 
 [[test]]
+name = "pagination_codegen"
+required-features = ["openapi"]
+
+[[test]]
 name = "type_registry"
 required-features = ["openapi"]
 

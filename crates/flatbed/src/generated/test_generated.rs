@@ -240,6 +240,178 @@ impl<'a> ::flatbuffers::Verifiable for SourceRef {
 impl ::flatbuffers::SimpleToVerifyInSlice for SourceRef {}
 pub struct SourceRefUnionTableOffset {}
 
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ITEM_ORDER: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ITEM_ORDER: i8 = 1;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ITEM_ORDER: [ItemOrder; 2] = [
+  ItemOrder::Newest,
+  ItemOrder::Oldest,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct ItemOrder(pub i8);
+#[allow(non_upper_case_globals)]
+impl ItemOrder {
+  pub const Newest: Self = Self(0);
+  pub const Oldest: Self = Self(1);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 1;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Newest,
+    Self::Oldest,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Newest => Some("Newest"),
+      Self::Oldest => Some("Oldest"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for ItemOrder {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for ItemOrder {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for ItemOrder {
+    type Output = ItemOrder;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for ItemOrder {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for ItemOrder {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for ItemOrder {}
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MIN_ITEM_STATUS: i8 = 0;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+pub const ENUM_MAX_ITEM_STATUS: i8 = 2;
+#[deprecated(since = "2.0.0", note = "Use associated constants instead. This will no longer be generated in 2021.")]
+#[allow(non_camel_case_types)]
+pub const ENUM_VALUES_ITEM_STATUS: [ItemStatus; 3] = [
+  ItemStatus::Any,
+  ItemStatus::Open,
+  ItemStatus::Closed,
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[repr(transparent)]
+pub struct ItemStatus(pub i8);
+#[allow(non_upper_case_globals)]
+impl ItemStatus {
+  pub const Any: Self = Self(0);
+  pub const Open: Self = Self(1);
+  pub const Closed: Self = Self(2);
+
+  pub const ENUM_MIN: i8 = 0;
+  pub const ENUM_MAX: i8 = 2;
+  pub const ENUM_VALUES: &'static [Self] = &[
+    Self::Any,
+    Self::Open,
+    Self::Closed,
+  ];
+  /// Returns the variant's name or "" if unknown.
+  pub fn variant_name(self) -> Option<&'static str> {
+    match self {
+      Self::Any => Some("Any"),
+      Self::Open => Some("Open"),
+      Self::Closed => Some("Closed"),
+      _ => None,
+    }
+  }
+}
+impl ::core::fmt::Debug for ItemStatus {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter) -> ::core::fmt::Result {
+    if let Some(name) = self.variant_name() {
+      f.write_str(name)
+    } else {
+      f.write_fmt(format_args!("<UNKNOWN {:?}>", self.0))
+    }
+  }
+}
+impl<'a> ::flatbuffers::Follow<'a> for ItemStatus {
+  type Inner = Self;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    let b = unsafe { ::flatbuffers::read_scalar_at::<i8>(buf, loc) };
+    Self(b)
+  }
+}
+
+impl ::flatbuffers::Push for ItemStatus {
+    type Output = ItemStatus;
+    #[inline]
+    unsafe fn push(&self, dst: &mut [u8], _written_len: usize) {
+        unsafe { ::flatbuffers::emplace_scalar::<i8>(dst, self.0) };
+    }
+}
+
+impl ::flatbuffers::EndianScalar for ItemStatus {
+  type Scalar = i8;
+  #[inline]
+  fn to_little_endian(self) -> i8 {
+    self.0.to_le()
+  }
+  #[inline]
+  #[allow(clippy::wrong_self_convention)]
+  fn from_little_endian(v: i8) -> Self {
+    let b = i8::from_le(v);
+    Self(b)
+  }
+}
+
+impl<'a> ::flatbuffers::Verifiable for ItemStatus {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    i8::run_verifier(v, pos)
+  }
+}
+
+impl ::flatbuffers::SimpleToVerifyInSlice for ItemStatus {}
 pub enum TestRequestOffset {}
 #[derive(Copy, Clone, PartialEq)]
 
@@ -1738,6 +1910,690 @@ impl ::core::fmt::Debug for Ingest<'_> {
       ds.field("traits", &self.traits());
       ds.field("default_traits", &self.default_traits());
       ds.field("history", &self.history());
+      ds.finish()
+  }
+}
+pub enum PageOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct Page<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for Page<'a> {
+  type Inner = Page<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> Page<'a> {
+  pub const VT_NEXT_PAGE: ::flatbuffers::VOffsetT = 4;
+  pub const VT_PREVIOUS_PAGE: ::flatbuffers::VOffsetT = 6;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    Page { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args PageArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<Page<'bldr>> {
+    let mut builder = PageBuilder::new(_fbb);
+    if let Some(x) = args.previous_page { builder.add_previous_page(x); }
+    if let Some(x) = args.next_page { builder.add_next_page(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn next_page(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Page::VT_NEXT_PAGE, None)}
+  }
+  #[inline]
+  pub fn previous_page(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(Page::VT_PREVIOUS_PAGE, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for Page<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("next_page", Self::VT_NEXT_PAGE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("previous_page", Self::VT_PREVIOUS_PAGE, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct PageArgs<'a> {
+    pub next_page: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub previous_page: Option<::flatbuffers::WIPOffset<&'a str>>,
+}
+impl<'a> Default for PageArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    PageArgs {
+      next_page: None,
+      previous_page: None,
+    }
+  }
+}
+
+pub struct PageBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> PageBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_next_page(&mut self, next_page: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Page::VT_NEXT_PAGE, next_page);
+  }
+  #[inline]
+  pub fn add_previous_page(&mut self, previous_page: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(Page::VT_PREVIOUS_PAGE, previous_page);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> PageBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    PageBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<Page<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for Page<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("Page");
+      ds.field("next_page", &self.next_page());
+      ds.field("previous_page", &self.previous_page());
+      ds.finish()
+  }
+}
+pub enum ListedItemOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ListedItem<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ListedItem<'a> {
+  type Inner = ListedItem<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ListedItem<'a> {
+  pub const VT_ID: ::flatbuffers::VOffsetT = 4;
+  pub const VT_OWNER: ::flatbuffers::VOffsetT = 6;
+  pub const VT_CREATED_AT: ::flatbuffers::VOffsetT = 8;
+  pub const VT_STATUS: ::flatbuffers::VOffsetT = 10;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ListedItem { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ListedItemArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ListedItem<'bldr>> {
+    let mut builder = ListedItemBuilder::new(_fbb);
+    builder.add_created_at(args.created_at);
+    if let Some(x) = args.owner { builder.add_owner(x); }
+    if let Some(x) = args.id { builder.add_id(x); }
+    builder.add_status(args.status);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn id(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ListedItem::VT_ID, None)}
+  }
+  #[inline]
+  pub fn owner(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ListedItem::VT_OWNER, None)}
+  }
+  #[inline]
+  pub fn created_at(&self) -> i64 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<i64>(ListedItem::VT_CREATED_AT, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn status(&self) -> ItemStatus {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<ItemStatus>(ListedItem::VT_STATUS, Some(ItemStatus::Any)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ListedItem<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("id", Self::VT_ID, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("owner", Self::VT_OWNER, false)?
+     .visit_field::<i64>("created_at", Self::VT_CREATED_AT, false)?
+     .visit_field::<ItemStatus>("status", Self::VT_STATUS, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ListedItemArgs<'a> {
+    pub id: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub owner: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub created_at: i64,
+    pub status: ItemStatus,
+}
+impl<'a> Default for ListedItemArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ListedItemArgs {
+      id: None,
+      owner: None,
+      created_at: 0,
+      status: ItemStatus::Any,
+    }
+  }
+}
+
+pub struct ListedItemBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ListedItemBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_id(&mut self, id: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ListedItem::VT_ID, id);
+  }
+  #[inline]
+  pub fn add_owner(&mut self, owner: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ListedItem::VT_OWNER, owner);
+  }
+  #[inline]
+  pub fn add_created_at(&mut self, created_at: i64) {
+    self.fbb_.push_slot::<i64>(ListedItem::VT_CREATED_AT, created_at, 0);
+  }
+  #[inline]
+  pub fn add_status(&mut self, status: ItemStatus) {
+    self.fbb_.push_slot::<ItemStatus>(ListedItem::VT_STATUS, status, ItemStatus::Any);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ListedItemBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ListedItemBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ListedItem<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ListedItem<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ListedItem");
+      ds.field("id", &self.id());
+      ds.field("owner", &self.owner());
+      ds.field("created_at", &self.created_at());
+      ds.field("status", &self.status());
+      ds.finish()
+  }
+}
+pub enum ListItemsRequestOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ListItemsRequest<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ListItemsRequest<'a> {
+  type Inner = ListItemsRequest<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ListItemsRequest<'a> {
+  pub const VT_PAGE: ::flatbuffers::VOffsetT = 4;
+  pub const VT_PAGE_SIZE: ::flatbuffers::VOffsetT = 6;
+  pub const VT_OWNER: ::flatbuffers::VOffsetT = 8;
+  pub const VT_STATUS: ::flatbuffers::VOffsetT = 10;
+  pub const VT_ORDER: ::flatbuffers::VOffsetT = 12;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ListItemsRequest { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ListItemsRequestArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ListItemsRequest<'bldr>> {
+    let mut builder = ListItemsRequestBuilder::new(_fbb);
+    if let Some(x) = args.owner { builder.add_owner(x); }
+    builder.add_page_size(args.page_size);
+    if let Some(x) = args.page { builder.add_page(x); }
+    builder.add_order(args.order);
+    builder.add_status(args.status);
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn page(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ListItemsRequest::VT_PAGE, None)}
+  }
+  #[inline]
+  pub fn page_size(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ListItemsRequest::VT_PAGE_SIZE, Some(0)).unwrap()}
+  }
+  #[inline]
+  pub fn owner(&self) -> Option<&'a str> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<&str>>(ListItemsRequest::VT_OWNER, None)}
+  }
+  #[inline]
+  pub fn status(&self) -> ItemStatus {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<ItemStatus>(ListItemsRequest::VT_STATUS, Some(ItemStatus::Any)).unwrap()}
+  }
+  #[inline]
+  pub fn order(&self) -> ItemOrder {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<ItemOrder>(ListItemsRequest::VT_ORDER, Some(ItemOrder::Newest)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ListItemsRequest<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("page", Self::VT_PAGE, false)?
+     .visit_field::<u32>("page_size", Self::VT_PAGE_SIZE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<&str>>("owner", Self::VT_OWNER, false)?
+     .visit_field::<ItemStatus>("status", Self::VT_STATUS, false)?
+     .visit_field::<ItemOrder>("order", Self::VT_ORDER, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ListItemsRequestArgs<'a> {
+    pub page: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub page_size: u32,
+    pub owner: Option<::flatbuffers::WIPOffset<&'a str>>,
+    pub status: ItemStatus,
+    pub order: ItemOrder,
+}
+impl<'a> Default for ListItemsRequestArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ListItemsRequestArgs {
+      page: None,
+      page_size: 0,
+      owner: None,
+      status: ItemStatus::Any,
+      order: ItemOrder::Newest,
+    }
+  }
+}
+
+pub struct ListItemsRequestBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ListItemsRequestBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_page(&mut self, page: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ListItemsRequest::VT_PAGE, page);
+  }
+  #[inline]
+  pub fn add_page_size(&mut self, page_size: u32) {
+    self.fbb_.push_slot::<u32>(ListItemsRequest::VT_PAGE_SIZE, page_size, 0);
+  }
+  #[inline]
+  pub fn add_owner(&mut self, owner: ::flatbuffers::WIPOffset<&'b  str>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ListItemsRequest::VT_OWNER, owner);
+  }
+  #[inline]
+  pub fn add_status(&mut self, status: ItemStatus) {
+    self.fbb_.push_slot::<ItemStatus>(ListItemsRequest::VT_STATUS, status, ItemStatus::Any);
+  }
+  #[inline]
+  pub fn add_order(&mut self, order: ItemOrder) {
+    self.fbb_.push_slot::<ItemOrder>(ListItemsRequest::VT_ORDER, order, ItemOrder::Newest);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ListItemsRequestBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ListItemsRequestBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ListItemsRequest<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ListItemsRequest<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ListItemsRequest");
+      ds.field("page", &self.page());
+      ds.field("page_size", &self.page_size());
+      ds.field("owner", &self.owner());
+      ds.field("status", &self.status());
+      ds.field("order", &self.order());
+      ds.finish()
+  }
+}
+pub enum ListItemsResponseOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ListItemsResponse<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ListItemsResponse<'a> {
+  type Inner = ListItemsResponse<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ListItemsResponse<'a> {
+  pub const VT_ITEMS: ::flatbuffers::VOffsetT = 4;
+  pub const VT_PAGE: ::flatbuffers::VOffsetT = 6;
+  pub const VT_APPLIED: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ListItemsResponse { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ListItemsResponseArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ListItemsResponse<'bldr>> {
+    let mut builder = ListItemsResponseBuilder::new(_fbb);
+    if let Some(x) = args.applied { builder.add_applied(x); }
+    if let Some(x) = args.page { builder.add_page(x); }
+    if let Some(x) = args.items { builder.add_items(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn items(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ListedItem<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ListedItem>>>>(ListItemsResponse::VT_ITEMS, None)}
+  }
+  #[inline]
+  pub fn page(&self) -> Option<Page<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Page>>(ListItemsResponse::VT_PAGE, None)}
+  }
+  #[inline]
+  pub fn applied(&self) -> Option<ListItemsRequest<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<ListItemsRequest>>(ListItemsResponse::VT_APPLIED, None)}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ListItemsResponse<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ListedItem>>>>("items", Self::VT_ITEMS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Page>>("page", Self::VT_PAGE, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<ListItemsRequest>>("applied", Self::VT_APPLIED, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ListItemsResponseArgs<'a> {
+    pub items: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ListedItem<'a>>>>>,
+    pub page: Option<::flatbuffers::WIPOffset<Page<'a>>>,
+    pub applied: Option<::flatbuffers::WIPOffset<ListItemsRequest<'a>>>,
+}
+impl<'a> Default for ListItemsResponseArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ListItemsResponseArgs {
+      items: None,
+      page: None,
+      applied: None,
+    }
+  }
+}
+
+pub struct ListItemsResponseBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ListItemsResponseBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_items(&mut self, items: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ListedItem<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ListItemsResponse::VT_ITEMS, items);
+  }
+  #[inline]
+  pub fn add_page(&mut self, page: ::flatbuffers::WIPOffset<Page<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Page>>(ListItemsResponse::VT_PAGE, page);
+  }
+  #[inline]
+  pub fn add_applied(&mut self, applied: ::flatbuffers::WIPOffset<ListItemsRequest<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<ListItemsRequest>>(ListItemsResponse::VT_APPLIED, applied);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ListItemsResponseBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ListItemsResponseBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ListItemsResponse<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ListItemsResponse<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ListItemsResponse");
+      ds.field("items", &self.items());
+      ds.field("page", &self.page());
+      ds.field("applied", &self.applied());
+      ds.finish()
+  }
+}
+pub enum ListedItemsFeedOffset {}
+#[derive(Copy, Clone, PartialEq)]
+
+pub struct ListedItemsFeed<'a> {
+  pub _tab: ::flatbuffers::Table<'a>,
+}
+
+impl<'a> ::flatbuffers::Follow<'a> for ListedItemsFeed<'a> {
+  type Inner = ListedItemsFeed<'a>;
+  #[inline]
+  unsafe fn follow(buf: &'a [u8], loc: usize) -> Self::Inner {
+    Self { _tab: unsafe { ::flatbuffers::Table::new(buf, loc) } }
+  }
+}
+
+impl<'a> ListedItemsFeed<'a> {
+  pub const VT_ITEMS: ::flatbuffers::VOffsetT = 4;
+  pub const VT_PAGE: ::flatbuffers::VOffsetT = 6;
+  pub const VT_TOTAL: ::flatbuffers::VOffsetT = 8;
+
+  #[inline]
+  pub unsafe fn init_from_table(table: ::flatbuffers::Table<'a>) -> Self {
+    ListedItemsFeed { _tab: table }
+  }
+  #[allow(unused_mut)]
+  pub fn create<'bldr: 'args, 'args: 'mut_bldr, 'mut_bldr, A: ::flatbuffers::Allocator + 'bldr>(
+    _fbb: &'mut_bldr mut ::flatbuffers::FlatBufferBuilder<'bldr, A>,
+    args: &'args ListedItemsFeedArgs<'args>
+  ) -> ::flatbuffers::WIPOffset<ListedItemsFeed<'bldr>> {
+    let mut builder = ListedItemsFeedBuilder::new(_fbb);
+    builder.add_total(args.total);
+    if let Some(x) = args.page { builder.add_page(x); }
+    if let Some(x) = args.items { builder.add_items(x); }
+    builder.finish()
+  }
+
+
+  #[inline]
+  pub fn items(&self) -> Option<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ListedItem<'a>>>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ListedItem>>>>(ListedItemsFeed::VT_ITEMS, None)}
+  }
+  #[inline]
+  pub fn page(&self) -> Option<Page<'a>> {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<::flatbuffers::ForwardsUOffset<Page>>(ListedItemsFeed::VT_PAGE, None)}
+  }
+  #[inline]
+  pub fn total(&self) -> u32 {
+    // Safety:
+    // Created from valid Table for this object
+    // which contains a valid value in this slot
+    unsafe { self._tab.get::<u32>(ListedItemsFeed::VT_TOTAL, Some(0)).unwrap()}
+  }
+}
+
+impl ::flatbuffers::Verifiable for ListedItemsFeed<'_> {
+  #[inline]
+  fn run_verifier(
+    v: &mut ::flatbuffers::Verifier, pos: usize
+  ) -> Result<(), ::flatbuffers::InvalidFlatbuffer> {
+    v.visit_table(pos)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<::flatbuffers::Vector<'_, ::flatbuffers::ForwardsUOffset<ListedItem>>>>("items", Self::VT_ITEMS, false)?
+     .visit_field::<::flatbuffers::ForwardsUOffset<Page>>("page", Self::VT_PAGE, false)?
+     .visit_field::<u32>("total", Self::VT_TOTAL, false)?
+     .finish();
+    Ok(())
+  }
+}
+pub struct ListedItemsFeedArgs<'a> {
+    pub items: Option<::flatbuffers::WIPOffset<::flatbuffers::Vector<'a, ::flatbuffers::ForwardsUOffset<ListedItem<'a>>>>>,
+    pub page: Option<::flatbuffers::WIPOffset<Page<'a>>>,
+    pub total: u32,
+}
+impl<'a> Default for ListedItemsFeedArgs<'a> {
+  #[inline]
+  fn default() -> Self {
+    ListedItemsFeedArgs {
+      items: None,
+      page: None,
+      total: 0,
+    }
+  }
+}
+
+pub struct ListedItemsFeedBuilder<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> {
+  fbb_: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>,
+  start_: ::flatbuffers::WIPOffset<::flatbuffers::TableUnfinishedWIPOffset>,
+}
+impl<'a: 'b, 'b, A: ::flatbuffers::Allocator + 'a> ListedItemsFeedBuilder<'a, 'b, A> {
+  #[inline]
+  pub fn add_items(&mut self, items: ::flatbuffers::WIPOffset<::flatbuffers::Vector<'b , ::flatbuffers::ForwardsUOffset<ListedItem<'b >>>>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<_>>(ListedItemsFeed::VT_ITEMS, items);
+  }
+  #[inline]
+  pub fn add_page(&mut self, page: ::flatbuffers::WIPOffset<Page<'b >>) {
+    self.fbb_.push_slot_always::<::flatbuffers::WIPOffset<Page>>(ListedItemsFeed::VT_PAGE, page);
+  }
+  #[inline]
+  pub fn add_total(&mut self, total: u32) {
+    self.fbb_.push_slot::<u32>(ListedItemsFeed::VT_TOTAL, total, 0);
+  }
+  #[inline]
+  pub fn new(_fbb: &'b mut ::flatbuffers::FlatBufferBuilder<'a, A>) -> ListedItemsFeedBuilder<'a, 'b, A> {
+    let start = _fbb.start_table();
+    ListedItemsFeedBuilder {
+      fbb_: _fbb,
+      start_: start,
+    }
+  }
+  #[inline]
+  pub fn finish(self) -> ::flatbuffers::WIPOffset<ListedItemsFeed<'a>> {
+    let o = self.fbb_.end_table(self.start_);
+    ::flatbuffers::WIPOffset::new(o.value())
+  }
+}
+
+impl ::core::fmt::Debug for ListedItemsFeed<'_> {
+  fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+    let mut ds = f.debug_struct("ListedItemsFeed");
+      ds.field("items", &self.items());
+      ds.field("page", &self.page());
+      ds.field("total", &self.total());
       ds.finish()
   }
 }
