@@ -9,6 +9,8 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+## [0.0.6] — 2026-10-21
+
 ### Added
 
 - Codegen supports FlatBuffer unions of tables. A union field becomes
@@ -164,7 +166,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.5...HEAD
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.6...HEAD
+[0.0.6]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.5...flatbed-v0.0.6
 [0.0.5]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.4...flatbed-v0.0.5
 [0.0.4]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.3...flatbed-v0.0.4
 [0.0.3]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.2...flatbed-v0.0.3
