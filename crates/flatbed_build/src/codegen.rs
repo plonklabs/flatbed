@@ -4,6 +4,8 @@
 //! Each namespace becomes its own `pub mod` containing:
 //! - re-exports of flatc-generated enum types from the hidden `__fb` submodule
 //! - per-enum serde adapter modules that round-trip JSON as variant-name strings
+//!   (a list of flag names for a `bit_flags` enum)
+//! - per-union Rust enums with their FlatBuffer and serde conversions
 //! - plain Rust structs with serde + utoipa derives
 //! - inherent `to_flatbuffer` / `from_flatbuffer` helpers
 //! - `flatbed::ToFlatBuffer` / `HasJsonCompanion` / `HasPlainStruct` impls
@@ -12,7 +14,98 @@ use crate::fbs_types::{
     fbs_type_to_rust_type, is_enum_type, is_enum_vector, is_optional_type, is_table_type,
     is_table_vector, is_vector_type, vector_inner_type,
 };
-use crate::reflection::{Enum, EnumsByNamespace, Field, Table, TablesByNamespace};
+use crate::reflection::{Enum, EnumKind, EnumsByNamespace, Field, Table, TablesByNamespace};
+
+/// Names flatc's Rust generator escapes with a trailing `_` when it emits a
+/// field's accessor and `Args` member: Rust keywords, reserved words, primitive
+/// type names, and a few names its own generated code uses.
+const FLATC_RUST_KEYWORDS: &[&str] = &[
+    "as",
+    "break",
+    "const",
+    "continue",
+    "crate",
+    "else",
+    "enum",
+    "extern",
+    "false",
+    "fn",
+    "for",
+    "if",
+    "impl",
+    "in",
+    "let",
+    "loop",
+    "match",
+    "mod",
+    "move",
+    "mut",
+    "pub",
+    "ref",
+    "return",
+    "Self",
+    "self",
+    "static",
+    "struct",
+    "super",
+    "trait",
+    "true",
+    "type",
+    "unsafe",
+    "use",
+    "where",
+    "while",
+    "abstract",
+    "alignof",
+    "become",
+    "box",
+    "do",
+    "final",
+    "macro",
+    "offsetof",
+    "override",
+    "priv",
+    "proc",
+    "pure",
+    "sizeof",
+    "typeof",
+    "unsized",
+    "virtual",
+    "yield",
+    "std",
+    "usize",
+    "isize",
+    "u8",
+    "i8",
+    "u16",
+    "i16",
+    "u32",
+    "i32",
+    "u64",
+    "i64",
+    "u128",
+    "i128",
+    "f32",
+    "f64",
+    "follow",
+    "push",
+    "to_little_endian",
+    "from_little_endian",
+    "ENUM_MAX",
+    "ENUM_MIN",
+    "ENUM_VALUES",
+];
+
+/// The identifier flatc gives a field in Rust (`ref` → `ref_`). The plain
+/// struct uses the same identifier, so a field is spelled one way on both
+/// sides; its JSON key stays the schema name.
+fn rust_ident(name: &str) -> String {
+    if FLATC_RUST_KEYWORDS.contains(&name) {
+        format!("{name}_")
+    } else {
+        name.to_string()
+    }
+}
 
 /// Generate all-in-one flatbed module content with plain Rust structs as primary API
 ///
@@ -77,7 +170,16 @@ fn generate_plain_struct_module(
     enums: &[Enum],
 ) {
     let table_names: Vec<String> = tables.iter().map(|t| t.name.clone()).collect();
+    let (unions, enums): (Vec<&Enum>, Vec<&Enum>) = enums
+        .iter()
+        .partition(|e| matches!(e.kind, EnumKind::Union(_)));
     let enum_names: Vec<String> = enums.iter().map(|e| e.name.clone()).collect();
+    let union_names: Vec<String> = unions.iter().map(|u| u.name.clone()).collect();
+    let bit_flags_names: Vec<String> = enums
+        .iter()
+        .filter(|e| e.kind == EnumKind::BitFlags)
+        .map(|e| e.name.clone())
+        .collect();
 
     // Per-enum serde adapter modules use a lowercased name (`_severity_serde`,
     // `_severity_opt_vec_serde`). Two enums in the same namespace whose names
@@ -128,7 +230,11 @@ fn generate_plain_struct_module(
     // The FlatBuffer wire format is unaffected: bare-enum and `[Enum]`
     // fields still take the scalar / scalar-vector codegen path and
     // serialise as the underlying integer at the FB layer.
-    for enum_def in enums {
+    for enum_def in &enums {
+        if enum_def.kind == EnumKind::BitFlags {
+            generate_bit_flags_serde(output, enum_def);
+            continue;
+        }
         let name = &enum_def.name;
         let lower = name.to_lowercase();
         let variants = &enum_def.variants;
@@ -245,21 +351,32 @@ fn generate_plain_struct_module(
         output.push('\n');
     }
 
-    for enum_def in enums {
+    for enum_def in &enums {
         generate_enum_schema_registration(output, enum_def, namespace);
+    }
+
+    for union_def in &unions {
+        generate_union(output, union_def, namespace);
     }
 
     // Generate all plain structs first (forward declarations for nested references)
     for table in tables {
-        generate_plain_struct(output, table, &table_names, &enum_names);
+        generate_plain_struct(
+            output,
+            table,
+            &table_names,
+            &enum_names,
+            &bit_flags_names,
+            &union_names,
+        );
     }
 
     // Generate impl blocks with to_flatbuffer and from_flatbuffer methods
     for table in tables {
-        generate_plain_struct_impl(output, table, namespace, &table_names);
+        generate_plain_struct_impl(output, table, namespace, &table_names, &union_names);
         generate_default_impl(output, table);
-        generate_flatbed_trait_impls(output, table, namespace, &table_names);
-        generate_type_schema_registration(output, table, namespace, &table_names);
+        generate_flatbed_trait_impls(output, table, namespace, &table_names, &union_names);
+        generate_type_schema_registration(output, table, namespace, &table_names, &union_names);
     }
 
     output.push_str("}\n"); // close namespace module
@@ -272,6 +389,7 @@ fn generate_type_schema_registration(
     table: &Table,
     namespace: &str,
     table_names: &[String],
+    union_names: &[String],
 ) {
     output.push_str("    ::flatbed::inventory::submit! {\n");
     output.push_str(&format!(
@@ -279,8 +397,7 @@ fn generate_type_schema_registration(
         table.name, namespace
     ));
     for field in &table.fields {
-        let required =
-            !is_optional_type(&field.fbs_type) && !is_table_type(&field.fbs_type, table_names);
+        let required = is_required(&field.fbs_type, table_names, union_names);
         output.push_str(&format!(
             "            ::flatbed::TypeFieldInfo {{ name: \"{}\", fbs_type: \"{}\", field_id: {}, required: {} }},\n",
             field.name, field.fbs_type, field.id, required
@@ -301,10 +418,315 @@ fn generate_enum_schema_registration(output: &mut String, enum_def: &Enum, names
         .join(", ");
     output.push_str("    ::flatbed::inventory::submit! {\n");
     output.push_str(&format!(
-        "        ::flatbed::EnumSchema {{ name: \"{}\", namespace: \"{}\", variants: &[{}] }}\n",
-        enum_def.name, namespace, variants_csv
+        "        ::flatbed::EnumSchema {{ name: \"{}\", namespace: \"{}\", variants: &[{}], bit_flags: {} }}\n",
+        enum_def.name,
+        namespace,
+        variants_csv,
+        enum_def.kind == EnumKind::BitFlags
     ));
     output.push_str("    }\n\n");
+}
+
+/// Whether a field is always present on the wire: scalars and enums are;
+/// strings, vectors, tables, and unions can be absent.
+fn is_required(fbs_type: &str, table_names: &[String], union_names: &[String]) -> bool {
+    !is_optional_type(fbs_type)
+        && !is_table_type(fbs_type, table_names)
+        && !union_names.iter().any(|u| u == fbs_type)
+}
+
+fn quoted_csv(names: &[String]) -> String {
+    names
+        .iter()
+        .map(|n| format!("\"{n}\""))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Serde adapters for a `(bit_flags)` enum. A value crosses JSON as the list
+/// of its set flags' names, in declaration order (`["Client", "Gmail"]`); the
+/// empty set is `[]`. Bits the schema doesn't name make serialization fail
+/// rather than be dropped, and an unknown name fails deserialization, matching
+/// how a plain enum treats an undeclared value.
+fn generate_bit_flags_serde(output: &mut String, enum_def: &Enum) {
+    let name = &enum_def.name;
+    let lower = name.to_lowercase();
+    let valid_names_csv = quoted_csv(&enum_def.variants);
+    let flags = enum_def
+        .variants
+        .iter()
+        .map(|v| format!("(\"{v}\", {name}::{v})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    output.push_str(&format!(
+        concat!(
+            "    #[doc(hidden)]\n",
+            "    pub mod _{lower}_serde {{\n",
+            "        use super::{name};\n",
+            "        use ::flatbed::serde::{{de, ser, Deserialize, Deserializer, Serialize, Serializer}};\n",
+            "        const FLAGS: &[(&str, {name})] = &[{flags}];\n",
+            "        const VALID_NAMES: &[&str] = &[{valid_names_csv}];\n",
+            "        pub(super) fn to_names<E: ser::Error>(v: &{name}) -> Result<Vec<&'static str>, E> {{\n",
+            "            let unknown = v.bits() & !{name}::all().bits();\n",
+            "            if unknown != 0 {{\n",
+            "                return Err(E::custom(format!(\"unknown {name} bits: {{unknown:#x}}\")));\n",
+            "            }}\n",
+            "            Ok(FLAGS.iter().filter(|(_, f)| v.contains(*f)).map(|(n, _)| *n).collect())\n",
+            "        }}\n",
+            "        pub(super) fn from_names<E: de::Error>(names: &[String]) -> Result<{name}, E> {{\n",
+            "            names.iter().try_fold({name}::empty(), |acc, raw| {{\n",
+            "                let flag = FLAGS.iter().find(|(n, _)| n == raw).map(|(_, f)| *f);\n",
+            "                flag.map(|f| acc | f).ok_or_else(|| E::unknown_variant(raw, VALID_NAMES))\n",
+            "            }})\n",
+            "        }}\n",
+            "        pub fn serialize<S: Serializer>(v: &{name}, s: S) -> Result<S::Ok, S::Error> {{\n",
+            "            to_names::<S::Error>(v)?.serialize(s)\n",
+            "        }}\n",
+            "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<{name}, D::Error> {{\n",
+            "            from_names(&Vec::<String>::deserialize(d)?)\n",
+            "        }}\n",
+            "    }}\n",
+            "    #[doc(hidden)]\n",
+            "    pub mod _{lower}_opt_vec_serde {{\n",
+            "        use super::{name};\n",
+            "        use ::flatbed::serde::{{Deserialize, Deserializer, Serialize, Serializer}};\n",
+            "        pub fn serialize<S: Serializer>(v: &Option<Vec<{name}>>, s: S) -> Result<S::Ok, S::Error> {{\n",
+            "            let names: Option<Vec<Vec<&'static str>>> = v\n",
+            "                .as_ref()\n",
+            "                .map(|items| items.iter().map(super::_{lower}_serde::to_names::<S::Error>).collect())\n",
+            "                .transpose()?;\n",
+            "            names.serialize(s)\n",
+            "        }}\n",
+            "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<{name}>>, D::Error> {{\n",
+            "            let raw: Option<Vec<Vec<String>>> = Option::deserialize(d)?;\n",
+            "            raw.map(|items| items.iter().map(|n| super::_{lower}_serde::from_names(n)).collect())\n",
+            "                .transpose()\n",
+            "        }}\n",
+            "    }}\n",
+        ),
+        lower = lower,
+        name = name,
+        flags = flags,
+        valid_names_csv = valid_names_csv,
+    ));
+}
+
+/// Emit the plain Rust enum for a FlatBuffer union, its FlatBuffer
+/// conversions, its serde helper, and its registry entry.
+///
+/// The JSON shape follows flatc's: a union field `ref: SourceRef` crosses as
+/// two sibling keys of the enclosing object, `"ref_type": "MailRef"` naming
+/// the variant and `"ref": { … }` holding that table. An absent union has
+/// neither key. Because the keys are named after the field, the helper takes
+/// them as arguments and each union field gets a thin `with` module
+/// binding them.
+fn generate_union(output: &mut String, union_def: &Enum, namespace: &str) {
+    let name = &union_def.name;
+    let lower = name.to_lowercase();
+    let tables = union_def.union_tables();
+    let variants: Vec<(&String, &String)> = union_def.variants.iter().zip(tables).collect();
+
+    output.push_str(&format!(
+        "    #[derive(Clone, Debug, PartialEq, ToSchema)]\n    pub enum {name} {{\n"
+    ));
+    for (variant, table) in &variants {
+        output.push_str(&format!("        {variant}({table}),\n"));
+    }
+    output.push_str("    }\n\n");
+
+    let fb_union = format!("super::__fb::{namespace}::{name}");
+    let mut type_arms = String::new();
+    let mut build_arms = String::new();
+    let mut decode_arms = String::new();
+    let mut ser_arms = String::new();
+    let mut de_arms = String::new();
+    for (variant, table) in &variants {
+        type_arms.push_str(&format!(
+            "                Self::{variant}(_) => {fb_union}::{variant},\n"
+        ));
+        build_arms.push_str(&format!(
+            "                Self::{variant}(t) => t.build_flatbuffer(builder).as_union_value(),\n"
+        ));
+        decode_arms.push_str(&format!(
+            concat!(
+                "                {fb_union}::{variant} => {{\n",
+                "                    // SAFETY: the buffer was verified when its root was read, and the\n",
+                "                    // verifier checks a union's table against its discriminator.\n",
+                "                    let fb = unsafe {{ super::__fb::{namespace}::{table}::init_from_table(table) }};\n",
+                "                    Some(Self::{variant}({table}::from_fb(&fb)))\n",
+                "                }}\n",
+            ),
+            fb_union = fb_union,
+            namespace = namespace,
+            variant = variant,
+            table = table,
+        ));
+        ser_arms.push_str(&format!(
+            concat!(
+                "                Some({name}::{variant}(t)) => {{\n",
+                "                    map.serialize_entry(type_key, \"{variant}\")?;\n",
+                "                    map.serialize_entry(value_key, t)?;\n",
+                "                }}\n",
+            ),
+            name = name,
+            variant = variant,
+        ));
+        de_arms.push_str(&format!(
+            "                \"{variant}\" => {table}::deserialize(value).map(|t| Some({name}::{variant}(t))),\n"
+        ));
+    }
+
+    output.push_str(&format!(
+        concat!(
+            "    impl {name} {{\n",
+            "        #[doc(hidden)]\n",
+            "        pub fn union_type(&self) -> {fb_union} {{\n",
+            "            match self {{\n",
+            "{type_arms}",
+            "            }}\n",
+            "        }}\n\n",
+            "        #[doc(hidden)]\n",
+            "        pub fn build_flatbuffer(&self, builder: &mut FlatBufferBuilder<'_>) -> ::flatbed::flatbuffers::WIPOffset<::flatbed::flatbuffers::UnionWIPOffset> {{\n",
+            "            match self {{\n",
+            "{build_arms}",
+            "            }}\n",
+            "        }}\n\n",
+            "        /// `None` for an absent union and for a discriminator this schema\n",
+            "        /// doesn't declare (a newer writer's variant).\n",
+            "        #[doc(hidden)]\n",
+            "        pub fn from_fb(kind: {fb_union}, table: Option<::flatbed::flatbuffers::Table<'_>>) -> Option<Self> {{\n",
+            "            let table = table?;\n",
+            "            match kind {{\n",
+            "{decode_arms}",
+            "                _ => None,\n",
+            "            }}\n",
+            "        }}\n",
+            "    }}\n\n",
+        ),
+        name = name,
+        fb_union = fb_union,
+        type_arms = type_arms,
+        build_arms = build_arms,
+        decode_arms = decode_arms,
+    ));
+
+    let table_imports = {
+        let mut unique: Vec<&String> = tables.iter().collect();
+        unique.sort();
+        unique.dedup();
+        unique
+            .iter()
+            .map(|t| t.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    output.push_str(&format!(
+        concat!(
+            "    #[doc(hidden)]\n",
+            "    pub mod _{lower}_union_serde {{\n",
+            "        use super::{{{name}, {table_imports}}};\n",
+            "        use ::flatbed::serde::de::{{self, Error as _}};\n",
+            "        use ::flatbed::serde::ser::SerializeMap;\n",
+            "        use ::flatbed::serde::{{Deserialize, Deserializer, Serializer}};\n",
+            "        const VALID_NAMES: &[&str] = &[{valid_names_csv}];\n",
+            "        pub fn serialize<S: Serializer>(v: &Option<{name}>, type_key: &'static str, value_key: &'static str, s: S) -> Result<S::Ok, S::Error> {{\n",
+            "            let mut map = s.serialize_map(None)?;\n",
+            "            match v {{\n",
+            "{ser_arms}",
+            "                None => {{}}\n",
+            "            }}\n",
+            "            map.end()\n",
+            "        }}\n",
+            "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D, type_key: &'static str, value_key: &'static str) -> Result<Option<{name}>, D::Error> {{\n",
+            "            d.deserialize_map(Visitor {{ type_key, value_key }})\n",
+            "        }}\n",
+            "        struct Visitor {{\n",
+            "            type_key: &'static str,\n",
+            "            value_key: &'static str,\n",
+            "        }}\n",
+            "        impl<'de> de::Visitor<'de> for Visitor {{\n",
+            "            type Value = Option<{name}>;\n",
+            "            fn expecting(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {{\n",
+            "                write!(f, \"a {name} union as `{{}}` and `{{}}` keys\", self.type_key, self.value_key)\n",
+            "            }}\n",
+            "            fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {{\n",
+            "                let mut kind: Option<String> = None;\n",
+            "                let mut value: Option<::flatbed::serde_json::Value> = None;\n",
+            "                while let Some(key) = map.next_key::<String>()? {{\n",
+            "                    if key == self.type_key {{\n",
+            "                        kind = map.next_value()?;\n",
+            "                    }} else if key == self.value_key {{\n",
+            "                        value = Some(map.next_value::<::flatbed::serde_json::Value>()?).filter(|v| !v.is_null());\n",
+            "                    }} else {{\n",
+            "                        map.next_value::<de::IgnoredAny>()?;\n",
+            "                    }}\n",
+            "                }}\n",
+            "                let (kind, value) = match (kind, value) {{\n",
+            "                    (None, None) => return Ok(None),\n",
+            "                    (Some(kind), None) if kind == \"NONE\" => return Ok(None),\n",
+            "                    (Some(kind), Some(value)) => (kind, value),\n",
+            "                    (Some(_), None) => return Err(A::Error::missing_field(self.value_key)),\n",
+            "                    (None, Some(_)) => return Err(A::Error::missing_field(self.type_key)),\n",
+            "                }};\n",
+            "                let parsed = match kind.as_str() {{\n",
+            "{de_arms}",
+            "                    other => return Err(A::Error::unknown_variant(other, VALID_NAMES)),\n",
+            "                }};\n",
+            "                parsed.map_err(A::Error::custom)\n",
+            "            }}\n",
+            "        }}\n",
+            "    }}\n\n",
+        ),
+        lower = lower,
+        name = name,
+        table_imports = table_imports,
+        valid_names_csv = quoted_csv(&union_def.variants),
+        ser_arms = ser_arms,
+        de_arms = de_arms,
+    ));
+
+    let members_csv = variants
+        .iter()
+        .map(|(v, t)| format!("(\"{v}\", \"{t}\")"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    output.push_str("    ::flatbed::inventory::submit! {\n");
+    output.push_str(&format!(
+        "        ::flatbed::UnionSchema {{ name: \"{name}\", namespace: \"{namespace}\", variants: &[{members_csv}] }}\n"
+    ));
+    output.push_str("    }\n\n");
+}
+
+/// The `with` module a union field's serde attribute points at: binds the
+/// union's helper to this field's two JSON keys, `<field>_type` and `<field>`.
+fn generate_union_field_serde(output: &mut String, table: &Table, field: &Field) {
+    let union = &field.fbs_type;
+    output.push_str(&format!(
+        concat!(
+            "    #[doc(hidden)]\n",
+            "    pub mod {module} {{\n",
+            "        use ::flatbed::serde::{{Deserializer, Serializer}};\n",
+            "        pub fn serialize<S: Serializer>(v: &Option<super::{union}>, s: S) -> Result<S::Ok, S::Error> {{\n",
+            "            super::_{lower}_union_serde::serialize(v, \"{field}_type\", \"{field}\", s)\n",
+            "        }}\n",
+            "        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<super::{union}>, D::Error> {{\n",
+            "            super::_{lower}_union_serde::deserialize(d, \"{field}_type\", \"{field}\")\n",
+            "        }}\n",
+            "    }}\n\n",
+        ),
+        module = union_field_module(table, field),
+        union = union,
+        lower = union.to_lowercase(),
+        field = field.name,
+    ));
+}
+
+fn union_field_module(table: &Table, field: &Field) -> String {
+    format!(
+        "_{}_{}_union_field_serde",
+        table.name.to_lowercase(),
+        field.name
+    )
 }
 
 /// Generate plain struct definition (4 spaces indent, inside namespace module).
@@ -320,6 +742,8 @@ fn generate_plain_struct(
     table: &Table,
     table_names: &[String],
     enum_names: &[String],
+    bit_flags_names: &[String],
+    union_names: &[String],
 ) {
     let has_custom_default = table.fields.iter().any(|f| f.default.is_some());
     let derives = if has_custom_default {
@@ -345,7 +769,25 @@ fn generate_plain_struct(
     output.push_str(&format!("    pub struct {} {{\n", table.name));
 
     for field in &table.fields {
+        let ident = rust_ident(&field.name);
+        if union_names.contains(&field.fbs_type) {
+            // The union's two JSON keys sit beside the other fields, so the
+            // field is flattened into the enclosing object.
+            output.push_str("        #[schema(value_type = Object)]\n");
+            output.push_str(&format!(
+                "        #[serde(flatten, with = \"{}\")]\n",
+                union_field_module(table, field)
+            ));
+            output.push_str(&format!(
+                "        pub {ident}: Option<{}>,\n",
+                field.fbs_type
+            ));
+            continue;
+        }
         let rust_type = fbs_type_to_rust_type(&field.fbs_type, table_names, enum_names);
+        if ident != field.name {
+            output.push_str(&format!("        #[serde(rename = \"{}\")]\n", field.name));
+        }
 
         // Enum fields need:
         // 1. A `value_type` override on `ToSchema`. flatc emits enums as
@@ -365,7 +807,12 @@ fn generate_plain_struct(
             None => ", default".to_string(),
         };
         if is_enum_type(&field.fbs_type, enum_names) {
-            output.push_str("        #[schema(value_type = String)]\n");
+            let value_type = if bit_flags_names.contains(&field.fbs_type) {
+                "Vec<String>"
+            } else {
+                "String"
+            };
+            output.push_str(&format!("        #[schema(value_type = {value_type})]\n"));
             output.push_str(&format!(
                 "        #[serde(with = \"_{}_serde\"{enum_default})]\n",
                 field.fbs_type.to_lowercase()
@@ -373,7 +820,12 @@ fn generate_plain_struct(
         } else if is_enum_vector(&field.fbs_type, enum_names) {
             // `[Enum]` fields never carry a declared default.
             let inner = vector_inner_type(&field.fbs_type);
-            output.push_str("        #[schema(value_type = Vec<String>)]\n");
+            let value_type = if bit_flags_names.iter().any(|n| n == inner) {
+                "Vec<Vec<String>>"
+            } else {
+                "Vec<String>"
+            };
+            output.push_str(&format!("        #[schema(value_type = {value_type})]\n"));
             output.push_str(&format!(
                 "        #[serde(with = \"_{}_opt_vec_serde\", default)]\n",
                 inner.to_lowercase()
@@ -385,10 +837,16 @@ fn generate_plain_struct(
             ));
         }
 
-        output.push_str(&format!("        pub {}: {},\n", field.name, rust_type));
+        output.push_str(&format!("        pub {ident}: {rust_type},\n"));
     }
 
     output.push_str("    }\n\n");
+
+    for field in &table.fields {
+        if union_names.contains(&field.fbs_type) {
+            generate_union_field_serde(output, table, field);
+        }
+    }
 }
 
 /// Generate plain struct impl block with to_flatbuffer and from_flatbuffer methods.
@@ -407,6 +865,7 @@ fn generate_plain_struct_impl(
     table: &Table,
     namespace: &str,
     table_names: &[String],
+    union_names: &[String],
 ) {
     output.push_str(&format!("    impl {} {{\n", table.name));
 
@@ -438,10 +897,15 @@ fn generate_plain_struct_impl(
 
     // Create strings and nested tables first
     for field in &table.fields {
-        if field.fbs_type == "string" {
+        let name = &rust_ident(&field.name);
+        if union_names.contains(&field.fbs_type) {
+            output.push_str(&format!(
+                "            let {name}_offset = self.{name}.as_ref().map(|u| u.build_flatbuffer(builder));\n"
+            ));
+        } else if field.fbs_type == "string" {
             output.push_str(&format!(
                 "            let {}_offset = self.{}.as_ref().map(|s| builder.create_string(s));\n",
-                field.name, field.name
+                name, name
             ));
         } else if is_vector_type(&field.fbs_type) {
             let inner = vector_inner_type(&field.fbs_type);
@@ -453,7 +917,7 @@ fn generate_plain_struct_impl(
                         "                builder.create_vector(&offsets)\n",
                         "            }});\n",
                     ),
-                    field.name
+                    name
                 ));
             } else if is_table_vector(&field.fbs_type, table_names) {
                 // Table vector — recursively build each element, then write the
@@ -465,7 +929,7 @@ fn generate_plain_struct_impl(
                         "                builder.create_vector(&offsets)\n",
                         "            }});\n",
                     ),
-                    field.name
+                    name
                 ));
             } else {
                 // Scalar vector — FlatBuffers accepts a slice of primitives
@@ -474,13 +938,13 @@ fn generate_plain_struct_impl(
                 // works without any per-element conversion.
                 output.push_str(&format!(
                     "            let {0}_offset = self.{0}.as_ref().map(|v| builder.create_vector(v));\n",
-                    field.name
+                    name
                 ));
             }
         } else if is_table_type(&field.fbs_type, table_names) {
             output.push_str(&format!(
                 "            let {}_offset = self.{}.as_ref().map(|t| t.build_flatbuffer(builder));\n",
-                field.name, field.name
+                name, name
             ));
         }
     }
@@ -492,22 +956,24 @@ fn generate_plain_struct_impl(
     ));
 
     for field in &table.fields {
-        if field.fbs_type == "string"
+        let name = &rust_ident(&field.name);
+        if union_names.contains(&field.fbs_type) {
+            output.push_str(&format!(
+                "                {}: self.{name}.as_ref().map_or(super::__fb::{namespace}::{}::NONE, |u| u.union_type()),\n",
+                rust_ident(&format!("{}_type", field.name)),
+                field.fbs_type
+            ));
+            output.push_str(&format!("                {name}: {name}_offset,\n"));
+        } else if field.fbs_type == "string"
             || is_table_type(&field.fbs_type, table_names)
             || is_vector_type(&field.fbs_type)
         {
-            output.push_str(&format!(
-                "                {}: {}_offset,\n",
-                field.name, field.name
-            ));
+            output.push_str(&format!("                {}: {}_offset,\n", name, name));
         } else {
             // Scalar (primitive or enum) — emit directly. Enums are `Copy`
             // and live in the same category as primitives at the wire level,
             // so no `.clone()` is needed.
-            output.push_str(&format!(
-                "                {}: self.{},\n",
-                field.name, field.name
-            ));
+            output.push_str(&format!("                {}: self.{},\n", name, name));
         }
     }
 
@@ -523,42 +989,46 @@ fn generate_plain_struct_impl(
     output.push_str("            Self {\n");
 
     for field in &table.fields {
-        if field.fbs_type == "string" {
+        let name = &rust_ident(&field.name);
+        if union_names.contains(&field.fbs_type) {
+            output.push_str(&format!(
+                "                {name}: {}::from_fb(fb.{}(), fb.{name}()),\n",
+                field.fbs_type,
+                rust_ident(&format!("{}_type", field.name)),
+            ));
+        } else if field.fbs_type == "string" {
             output.push_str(&format!(
                 "                {}: fb.{}().map(|s| s.to_string()),\n",
-                field.name, field.name
+                name, name
             ));
         } else if is_vector_type(&field.fbs_type) {
             let inner = vector_inner_type(&field.fbs_type);
             if inner == "string" {
                 output.push_str(&format!(
                     "                {}: fb.{}().map(|v| v.iter().map(|s| s.to_string()).collect()),\n",
-                    field.name, field.name
+                    name, name
                 ));
             } else if is_table_vector(&field.fbs_type, table_names) {
                 // Table vector — iterate the FlatBuffer view, convert each
                 // element via the corresponding `from_fb` helper.
                 output.push_str(&format!(
                     "                {}: fb.{}().map(|v| v.iter().map(|t| {}::from_fb(&t)).collect()),\n",
-                    field.name, field.name, inner
+                    name, name, inner
                 ));
             } else {
                 // Scalar vector — iterate and collect into Vec<T>
                 output.push_str(&format!(
                     "                {}: fb.{}().map(|v| v.iter().collect()),\n",
-                    field.name, field.name
+                    name, name
                 ));
             }
         } else if is_table_type(&field.fbs_type, table_names) {
             output.push_str(&format!(
                 "                {}: fb.{}().map(|t| {}::from_fb(&t)),\n",
-                field.name, field.name, field.fbs_type
+                name, name, field.fbs_type
             ));
         } else {
-            output.push_str(&format!(
-                "                {}: fb.{}(),\n",
-                field.name, field.name
-            ));
+            output.push_str(&format!("                {}: fb.{}(),\n", name, name));
         }
     }
 
@@ -586,7 +1056,11 @@ fn generate_default_impl(output: &mut String, table: &Table) {
     output.push_str("            Self {\n");
     for field in &table.fields {
         let expr = field.default.as_deref().unwrap_or("Default::default()");
-        output.push_str(&format!("                {}: {},\n", field.name, expr));
+        output.push_str(&format!(
+            "                {}: {},\n",
+            rust_ident(&field.name),
+            expr
+        ));
     }
     output.push_str("            }\n");
     output.push_str("        }\n");
@@ -599,6 +1073,7 @@ fn generate_flatbed_trait_impls(
     table: &Table,
     namespace: &str,
     table_names: &[String],
+    union_names: &[String],
 ) {
     // ToFlatBuffer trait implementation
     output.push_str(&format!(
@@ -609,8 +1084,7 @@ fn generate_flatbed_trait_impls(
     // SCHEMA_FIELDS associated const
     output.push_str("        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[\n");
     for field in &table.fields {
-        let required =
-            !is_optional_type(&field.fbs_type) && !is_table_type(&field.fbs_type, table_names);
+        let required = is_required(&field.fbs_type, table_names, union_names);
         output.push_str(&format!(
             "            ::flatbed::FieldInfo {{ name: \"{}\", fbs_type: \"{}\", required: {} }},\n",
             field.name, field.fbs_type, required
@@ -709,7 +1183,7 @@ mod tests {
 
         // Enum registration.
         assert!(module.contains(
-            "::flatbed::EnumSchema { name: \"Severity\", namespace: \"v_1\", variants: &[\"Info\", \"Error\"] }"
+            "::flatbed::EnumSchema { name: \"Severity\", namespace: \"v_1\", variants: &[\"Info\", \"Error\"], bit_flags: false }"
         ));
         // Nested-only table registered, with the real field id preserved.
         assert!(module.contains("::flatbed::TypeSchema { name: \"Address\", namespace: \"v_1\""));

@@ -3,6 +3,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import * as flatbuffers from "flatbuffers";
+
 import { emitCodec } from "./emit-codec.js";
 import type { CodecRoots, FbsField, FbsSchema } from "./model.js";
 import { readBfbs } from "./read-bfbs.js";
@@ -170,3 +172,41 @@ test("round-trips vectors of tables, strings, and enums", () =>
     }),
     roundTrip("LogEvent", { message: "boom", severity: 2, history: [0, 1, 2] }),
   ]).then(() => undefined));
+
+const ingest = {
+  title: "Invoice",
+  ref: { type: "MailRef", value: { account: "acc", message_id: "18f" } },
+  traits: ["Money", "NeedsDecision", "Gmail"],
+  default_traits: ["Client"],
+  history: [[], ["Client", "Money"]],
+};
+
+test("round-trips a populated union and combined flags", () =>
+  Promise.all([
+    roundTrip("Ingest", ingest),
+    roundTrip("Ingest", { ...ingest, ref: { type: "FileRef", value: { path: "/tmp/a" } } }),
+  ]).then(() => undefined));
+
+test("an absent union and omitted flags decode to absent and the field defaults", () =>
+  codec.then((c) => {
+    const encode = c.encodeIngestRoot as unknown as (v: unknown) => Uint8Array;
+    const decode = c.decodeIngestRoot as unknown as (b: Uint8Array) => Record<string, unknown>;
+    assert.deepEqual(decode(encode({ traits: [], default_traits: ["Money"] })), {
+      title: undefined,
+      ref: undefined,
+      traits: [],
+      default_traits: ["Money"],
+      history: undefined,
+    });
+  }));
+
+test("decoding flag bits the schema doesn't name throws", () =>
+  codec.then((c) => {
+    const decode = c.decodeIngestRoot as unknown as (b: Uint8Array) => unknown;
+    // Ingest with only `traits` (id 3, uint64) set to Client | 1 << 40.
+    const builder = new flatbuffers.Builder();
+    builder.startObject(6);
+    builder.addFieldInt64(3, 1n | (1n << 40n), 0n);
+    builder.finish(builder.endObject());
+    assert.throws(() => decode(builder.asUint8Array()), /unknown Traits bits: 0x10000000000/);
+  }));

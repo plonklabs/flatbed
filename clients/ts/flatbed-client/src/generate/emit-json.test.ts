@@ -141,3 +141,37 @@ test("64-bit values above 2^53 lose precision on the JSON path", () =>
     const big = 9007199254740993n;
     assert.notEqual(decode(encode({ message: "x", value: big, success: true })).value, big);
   }));
+
+const ingest = {
+  title: "Invoice",
+  ref: { type: "MailRef", value: { account: "acc", message_id: "18f" } },
+  traits: ["Money", "NeedsDecision", "Gmail"],
+  default_traits: ["Client"],
+  history: [[], ["Client", "Money"]],
+};
+
+test("a union is a `<field>_type` key beside the value, and flags a list of names", () =>
+  wire("Ingest", ingest).then((w) => {
+    assert.deepEqual(w, {
+      title: "Invoice",
+      ref_type: "MailRef",
+      ref: { account: "acc", message_id: "18f" },
+      traits: ["Money", "NeedsDecision", "Gmail"],
+      default_traits: ["Client"],
+      history: [[], ["Client", "Money"]],
+    });
+  }));
+
+test("round-trips a populated union and combined flags", () => roundTrip("Ingest", ingest));
+
+test("an absent or NONE union decodes to undefined and missing flags to the field default", () =>
+  codec.then((c) => {
+    const decode = c.decodeIngestJson as unknown as (b: Uint8Array) => Record<string, unknown>;
+    const enc = (o: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(o));
+    const absent = decode(enc({}));
+    assert.equal(absent.ref, undefined);
+    assert.deepEqual(absent.traits, []);
+    assert.deepEqual(absent.default_traits, ["Money"]);
+    assert.equal(decode(enc({ ref_type: "NONE" })).ref, undefined);
+    assert.throws(() => decode(enc({ ref_type: "Bogus", ref: {} })), /unknown SourceRef variant: Bogus/);
+  }));

@@ -66,6 +66,12 @@ fn enums_are_registered_with_variants_in_value_order() {
     let sev = get_enum_schema("Severity").expect("Severity not registered");
     assert_eq!(sev.namespace, "test");
     assert_eq!(sev.variants, ["Info", "Warning", "Error"]);
+    assert!(!sev.bit_flags);
+    assert!(
+        get_enum_schema("Traits")
+            .expect("Traits not registered")
+            .bit_flags
+    );
 }
 
 #[test]

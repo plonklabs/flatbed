@@ -100,3 +100,47 @@ test("fields are ordered by wire id", () => {
     [...d.fields.map((f) => f.id)].sort((a, b) => a - b),
   );
 });
+
+test("reads a bit_flags enum with its flag masks and 64-bit width", () => {
+  const traits = fixture().enums.find((e) => e.name === "Traits");
+  assert.ok(traits);
+  assert.equal(traits.bitFlags, true);
+  assert.equal(traits.underlying, "uint64");
+  assert.deepEqual(
+    traits.members.map((m) => [m.name, m.value]),
+    [
+      ["Client", 1n],
+      ["Money", 2n],
+      ["NeedsDecision", 4n],
+      ["Gmail", 8n],
+    ],
+  );
+  const ingest = table(fixture(), "Ingest");
+  assert.deepEqual(field(ingest, "traits").type, { kind: "flags", name: "Traits" });
+  assert.deepEqual(field(ingest, "default_traits").default, { kind: "int", value: 2n });
+});
+
+test("reads a union, dropping NONE, and its field without the discriminator slot", () => {
+  const schema = fixture();
+  assert.deepEqual(schema.unions, [
+    {
+      name: "SourceRef",
+      members: [
+        { name: "MailRef", table: "MailRef", value: 1 },
+        { name: "FileRef", table: "FileRef", value: 2 },
+      ],
+    },
+  ]);
+  const ingest = table(schema, "Ingest");
+  assert.deepEqual(
+    ingest.fields.map((f) => [f.name, f.id]),
+    [
+      ["title", 0],
+      ["ref", 2],
+      ["traits", 3],
+      ["default_traits", 4],
+      ["history", 5],
+    ],
+  );
+  assert.deepEqual(field(ingest, "ref").type, { kind: "union", name: "SourceRef" });
+});

@@ -17,6 +17,7 @@ pub mod test {
     use utoipa::ToSchema;
 
     pub use super::__fb::test::Severity;
+    pub use super::__fb::test::Traits;
 
     #[doc(hidden)]
     pub mod _severity_serde {
@@ -114,9 +115,214 @@ pub mod test {
             }
         }
     }
+    #[doc(hidden)]
+    pub mod _traits_serde {
+        use super::Traits;
+        use ::flatbed::serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
+        const FLAGS: &[(&str, Traits)] = &[
+            ("Client", Traits::Client),
+            ("Money", Traits::Money),
+            ("NeedsDecision", Traits::NeedsDecision),
+            ("Gmail", Traits::Gmail),
+        ];
+        const VALID_NAMES: &[&str] = &["Client", "Money", "NeedsDecision", "Gmail"];
+        pub(super) fn to_names<E: ser::Error>(v: &Traits) -> Result<Vec<&'static str>, E> {
+            let unknown = v.bits() & !Traits::all().bits();
+            if unknown != 0 {
+                return Err(E::custom(format!("unknown Traits bits: {unknown:#x}")));
+            }
+            Ok(FLAGS
+                .iter()
+                .filter(|(_, f)| v.contains(*f))
+                .map(|(n, _)| *n)
+                .collect())
+        }
+        pub(super) fn from_names<E: de::Error>(names: &[String]) -> Result<Traits, E> {
+            names.iter().try_fold(Traits::empty(), |acc, raw| {
+                let flag = FLAGS.iter().find(|(n, _)| n == raw).map(|(_, f)| *f);
+                flag.map(|f| acc | f)
+                    .ok_or_else(|| E::unknown_variant(raw, VALID_NAMES))
+            })
+        }
+        pub fn serialize<S: Serializer>(v: &Traits, s: S) -> Result<S::Ok, S::Error> {
+            to_names::<S::Error>(v)?.serialize(s)
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Traits, D::Error> {
+            from_names(&Vec::<String>::deserialize(d)?)
+        }
+    }
+    #[doc(hidden)]
+    pub mod _traits_opt_vec_serde {
+        use super::Traits;
+        use ::flatbed::serde::{Deserialize, Deserializer, Serialize, Serializer};
+        pub fn serialize<S: Serializer>(v: &Option<Vec<Traits>>, s: S) -> Result<S::Ok, S::Error> {
+            let names: Option<Vec<Vec<&'static str>>> = v
+                .as_ref()
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(super::_traits_serde::to_names::<S::Error>)
+                        .collect()
+                })
+                .transpose()?;
+            names.serialize(s)
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<Vec<Traits>>, D::Error> {
+            let raw: Option<Vec<Vec<String>>> = Option::deserialize(d)?;
+            raw.map(|items| {
+                items
+                    .iter()
+                    .map(|n| super::_traits_serde::from_names(n))
+                    .collect()
+            })
+            .transpose()
+        }
+    }
 
     ::flatbed::inventory::submit! {
-        ::flatbed::EnumSchema { name: "Severity", namespace: "test", variants: &["Info", "Warning", "Error"] }
+        ::flatbed::EnumSchema { name: "Severity", namespace: "test", variants: &["Info", "Warning", "Error"], bit_flags: false }
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::EnumSchema { name: "Traits", namespace: "test", variants: &["Client", "Money", "NeedsDecision", "Gmail"], bit_flags: true }
+    }
+
+    #[derive(Clone, Debug, PartialEq, ToSchema)]
+    pub enum SourceRef {
+        MailRef(MailRef),
+        FileRef(FileRef),
+    }
+
+    impl SourceRef {
+        #[doc(hidden)]
+        pub fn union_type(&self) -> super::__fb::test::SourceRef {
+            match self {
+                Self::MailRef(_) => super::__fb::test::SourceRef::MailRef,
+                Self::FileRef(_) => super::__fb::test::SourceRef::FileRef,
+            }
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer(
+            &self,
+            builder: &mut FlatBufferBuilder<'_>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<::flatbed::flatbuffers::UnionWIPOffset> {
+            match self {
+                Self::MailRef(t) => t.build_flatbuffer(builder).as_union_value(),
+                Self::FileRef(t) => t.build_flatbuffer(builder).as_union_value(),
+            }
+        }
+
+        /// `None` for an absent union and for a discriminator this schema
+        /// doesn't declare (a newer writer's variant).
+        #[doc(hidden)]
+        pub fn from_fb(
+            kind: super::__fb::test::SourceRef,
+            table: Option<::flatbed::flatbuffers::Table<'_>>,
+        ) -> Option<Self> {
+            let table = table?;
+            match kind {
+                super::__fb::test::SourceRef::MailRef => {
+                    // SAFETY: the buffer was verified when its root was read, and the
+                    // verifier checks a union's table against its discriminator.
+                    let fb = unsafe { super::__fb::test::MailRef::init_from_table(table) };
+                    Some(Self::MailRef(MailRef::from_fb(&fb)))
+                }
+                super::__fb::test::SourceRef::FileRef => {
+                    // SAFETY: the buffer was verified when its root was read, and the
+                    // verifier checks a union's table against its discriminator.
+                    let fb = unsafe { super::__fb::test::FileRef::init_from_table(table) };
+                    Some(Self::FileRef(FileRef::from_fb(&fb)))
+                }
+                _ => None,
+            }
+        }
+    }
+
+    #[doc(hidden)]
+    pub mod _sourceref_union_serde {
+        use super::{FileRef, MailRef, SourceRef};
+        use ::flatbed::serde::de::{self, Error as _};
+        use ::flatbed::serde::ser::SerializeMap;
+        use ::flatbed::serde::{Deserialize, Deserializer, Serializer};
+        const VALID_NAMES: &[&str] = &["MailRef", "FileRef"];
+        pub fn serialize<S: Serializer>(
+            v: &Option<SourceRef>,
+            type_key: &'static str,
+            value_key: &'static str,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            let mut map = s.serialize_map(None)?;
+            match v {
+                Some(SourceRef::MailRef(t)) => {
+                    map.serialize_entry(type_key, "MailRef")?;
+                    map.serialize_entry(value_key, t)?;
+                }
+                Some(SourceRef::FileRef(t)) => {
+                    map.serialize_entry(type_key, "FileRef")?;
+                    map.serialize_entry(value_key, t)?;
+                }
+                None => {}
+            }
+            map.end()
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+            type_key: &'static str,
+            value_key: &'static str,
+        ) -> Result<Option<SourceRef>, D::Error> {
+            d.deserialize_map(Visitor {
+                type_key,
+                value_key,
+            })
+        }
+        struct Visitor {
+            type_key: &'static str,
+            value_key: &'static str,
+        }
+        impl<'de> de::Visitor<'de> for Visitor {
+            type Value = Option<SourceRef>;
+            fn expecting(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+                write!(
+                    f,
+                    "a SourceRef union as `{}` and `{}` keys",
+                    self.type_key, self.value_key
+                )
+            }
+            fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut kind: Option<String> = None;
+                let mut value: Option<::flatbed::serde_json::Value> = None;
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == self.type_key {
+                        kind = map.next_value()?;
+                    } else if key == self.value_key {
+                        value = Some(map.next_value::<::flatbed::serde_json::Value>()?)
+                            .filter(|v| !v.is_null());
+                    } else {
+                        map.next_value::<de::IgnoredAny>()?;
+                    }
+                }
+                let (kind, value) = match (kind, value) {
+                    (None, None) => return Ok(None),
+                    (Some(kind), None) if kind == "NONE" => return Ok(None),
+                    (Some(kind), Some(value)) => (kind, value),
+                    (Some(_), None) => return Err(A::Error::missing_field(self.value_key)),
+                    (None, Some(_)) => return Err(A::Error::missing_field(self.type_key)),
+                };
+                let parsed = match kind.as_str() {
+                    "MailRef" => MailRef::deserialize(value).map(|t| Some(SourceRef::MailRef(t))),
+                    "FileRef" => FileRef::deserialize(value).map(|t| Some(SourceRef::FileRef(t))),
+                    other => return Err(A::Error::unknown_variant(other, VALID_NAMES)),
+                };
+                parsed.map_err(A::Error::custom)
+            }
+        }
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::UnionSchema { name: "SourceRef", namespace: "test", variants: &[("MailRef", "MailRef"), ("FileRef", "FileRef")] }
     }
 
     #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
@@ -203,6 +409,56 @@ pub mod test {
         #[schema(value_type = String)]
         #[serde(with = "_severity_serde", default = "default_Defaulted_level")]
         pub level: Severity,
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct MailRef {
+        pub account: Option<String>,
+        pub message_id: Option<String>,
+    }
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct FileRef {
+        pub path: Option<String>,
+    }
+
+    fn default_Ingest_default_traits() -> Traits {
+        Traits::Money
+    }
+    #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, ToSchema)]
+    #[serde(crate = "::flatbed::serde")]
+    pub struct Ingest {
+        pub title: Option<String>,
+        #[schema(value_type = Object)]
+        #[serde(flatten, with = "_ingest_ref_union_field_serde")]
+        pub ref_: Option<SourceRef>,
+        #[schema(value_type = Vec<String>)]
+        #[serde(with = "_traits_serde", default)]
+        pub traits: Traits,
+        #[schema(value_type = Vec<String>)]
+        #[serde(with = "_traits_serde", default = "default_Ingest_default_traits")]
+        pub default_traits: Traits,
+        #[schema(value_type = Vec<Vec<String>>)]
+        #[serde(with = "_traits_opt_vec_serde", default)]
+        pub history: Option<Vec<Traits>>,
+    }
+
+    #[doc(hidden)]
+    pub mod _ingest_ref_union_field_serde {
+        use ::flatbed::serde::{Deserializer, Serializer};
+        pub fn serialize<S: Serializer>(
+            v: &Option<super::SourceRef>,
+            s: S,
+        ) -> Result<S::Ok, S::Error> {
+            super::_sourceref_union_serde::serialize(v, "ref_type", "ref", s)
+        }
+        pub fn deserialize<'de, D: Deserializer<'de>>(
+            d: D,
+        ) -> Result<Option<super::SourceRef>, D::Error> {
+            super::_sourceref_union_serde::deserialize(d, "ref_type", "ref")
+        }
     }
 
     impl TestRequest {
@@ -991,6 +1247,295 @@ pub mod test {
             ::flatbed::TypeFieldInfo { name: "flag", fbs_type: "bool", field_id: 1, required: true },
             ::flatbed::TypeFieldInfo { name: "ratio", fbs_type: "float64", field_id: 2, required: true },
             ::flatbed::TypeFieldInfo { name: "level", fbs_type: "Severity", field_id: 3, required: true },
+        ] }
+    }
+
+    impl MailRef {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::MailRef>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::MailRef<'a>> {
+            let account_offset = self.account.as_ref().map(|s| builder.create_string(s));
+            let message_id_offset = self.message_id.as_ref().map(|s| builder.create_string(s));
+            super::__fb::test::MailRef::create(
+                builder,
+                &super::__fb::test::MailRefArgs {
+                    account: account_offset,
+                    message_id: message_id_offset,
+                },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::MailRef) -> Self {
+            Self {
+                account: fb.account().map(|s| s.to_string()),
+                message_id: fb.message_id().map(|s| s.to_string()),
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for MailRef {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
+            ::flatbed::FieldInfo {
+                name: "account",
+                fbs_type: "string",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "message_id",
+                fbs_type: "string",
+                required: false,
+            },
+        ];
+
+        const SCHEMA_NAME: &'static str = "MailRef";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for MailRef {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::MailRef<'_> {
+        type Json = MailRef;
+    }
+
+    impl ::flatbed::HasPlainStruct for MailRef {
+        type Plain = MailRef;
+        type FlatBuffer<'a> = super::__fb::test::MailRef<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "MailRef", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "account", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "message_id", fbs_type: "string", field_id: 1, required: false },
+        ] }
+    }
+
+    impl FileRef {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::FileRef>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::FileRef<'a>> {
+            let path_offset = self.path.as_ref().map(|s| builder.create_string(s));
+            super::__fb::test::FileRef::create(
+                builder,
+                &super::__fb::test::FileRefArgs { path: path_offset },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::FileRef) -> Self {
+            Self {
+                path: fb.path().map(|s| s.to_string()),
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for FileRef {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[::flatbed::FieldInfo {
+            name: "path",
+            fbs_type: "string",
+            required: false,
+        }];
+
+        const SCHEMA_NAME: &'static str = "FileRef";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for FileRef {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::FileRef<'_> {
+        type Json = FileRef;
+    }
+
+    impl ::flatbed::HasPlainStruct for FileRef {
+        type Plain = FileRef;
+        type FlatBuffer<'a> = super::__fb::test::FileRef<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "FileRef", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "path", fbs_type: "string", field_id: 0, required: false },
+        ] }
+    }
+
+    impl Ingest {
+        /// Convert this struct to FlatBuffer binary format
+        pub fn to_flatbuffer(&self) -> Vec<u8> {
+            let mut builder = FlatBufferBuilder::new();
+            let root = self.build_flatbuffer(&mut builder);
+            builder.finish(root, None);
+            builder.finished_data().to_vec()
+        }
+
+        /// Parse from FlatBuffer binary format
+        pub fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            let fb = ::flatbed::flatbuffers::root::<super::__fb::test::Ingest>(&bytes)?;
+            Ok(Self::from_fb(&fb))
+        }
+
+        #[doc(hidden)]
+        pub fn build_flatbuffer<'a>(
+            &self,
+            builder: &mut FlatBufferBuilder<'a>,
+        ) -> ::flatbed::flatbuffers::WIPOffset<super::__fb::test::Ingest<'a>> {
+            let title_offset = self.title.as_ref().map(|s| builder.create_string(s));
+            let ref__offset = self.ref_.as_ref().map(|u| u.build_flatbuffer(builder));
+            let history_offset = self.history.as_ref().map(|v| builder.create_vector(v));
+            super::__fb::test::Ingest::create(
+                builder,
+                &super::__fb::test::IngestArgs {
+                    title: title_offset,
+                    ref_type: self
+                        .ref_
+                        .as_ref()
+                        .map_or(super::__fb::test::SourceRef::NONE, |u| u.union_type()),
+                    ref_: ref__offset,
+                    traits: self.traits,
+                    default_traits: self.default_traits,
+                    history: history_offset,
+                },
+            )
+        }
+
+        #[doc(hidden)]
+        pub fn from_fb(fb: &super::__fb::test::Ingest) -> Self {
+            Self {
+                title: fb.title().map(|s| s.to_string()),
+                ref_: SourceRef::from_fb(fb.ref_type(), fb.ref_()),
+                traits: fb.traits(),
+                default_traits: fb.default_traits(),
+                history: fb.history().map(|v| v.iter().collect()),
+            }
+        }
+    }
+
+    impl Default for Ingest {
+        fn default() -> Self {
+            Self {
+                title: Default::default(),
+                ref_: Default::default(),
+                traits: Default::default(),
+                default_traits: Traits::Money,
+                history: Default::default(),
+            }
+        }
+    }
+
+    impl ::flatbed::ToFlatBuffer for Ingest {
+        const SCHEMA_FIELDS: &'static [::flatbed::FieldInfo] = &[
+            ::flatbed::FieldInfo {
+                name: "title",
+                fbs_type: "string",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "ref",
+                fbs_type: "SourceRef",
+                required: false,
+            },
+            ::flatbed::FieldInfo {
+                name: "traits",
+                fbs_type: "Traits",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "default_traits",
+                fbs_type: "Traits",
+                required: true,
+            },
+            ::flatbed::FieldInfo {
+                name: "history",
+                fbs_type: "[Traits]",
+                required: false,
+            },
+        ];
+
+        const SCHEMA_NAME: &'static str = "Ingest";
+
+        fn to_flatbuffer(&self) -> Vec<u8> {
+            self.to_flatbuffer()
+        }
+    }
+
+    impl ::flatbed::FromFlatBuffer for Ingest {
+        fn from_flatbuffer(
+            bytes: &[u8],
+        ) -> Result<Self, ::flatbed::flatbuffers::InvalidFlatbuffer> {
+            Self::from_flatbuffer(bytes)
+        }
+    }
+
+    impl ::flatbed::HasJsonCompanion for super::__fb::test::Ingest<'_> {
+        type Json = Ingest;
+    }
+
+    impl ::flatbed::HasPlainStruct for Ingest {
+        type Plain = Ingest;
+        type FlatBuffer<'a> = super::__fb::test::Ingest<'a>;
+    }
+
+    ::flatbed::inventory::submit! {
+        ::flatbed::TypeSchema { name: "Ingest", namespace: "test", fields: &[
+            ::flatbed::TypeFieldInfo { name: "title", fbs_type: "string", field_id: 0, required: false },
+            ::flatbed::TypeFieldInfo { name: "ref", fbs_type: "SourceRef", field_id: 2, required: false },
+            ::flatbed::TypeFieldInfo { name: "traits", fbs_type: "Traits", field_id: 3, required: true },
+            ::flatbed::TypeFieldInfo { name: "default_traits", fbs_type: "Traits", field_id: 4, required: true },
+            ::flatbed::TypeFieldInfo { name: "history", fbs_type: "[Traits]", field_id: 5, required: false },
         ] }
     }
 }

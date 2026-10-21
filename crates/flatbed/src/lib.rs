@@ -578,11 +578,28 @@ pub struct TypeFieldInfo {
 
 /// A generated FlatBuffer enum, registered at compile time alongside
 /// [`TypeSchema`]. `variants` are listed in FlatBuffer value order.
+///
+/// A plain enum crosses JSON as one variant name; a `bit_flags` enum as the
+/// list of its set flags' names.
 #[derive(Clone, Copy, Debug)]
 pub struct EnumSchema {
     pub name: &'static str,
     pub namespace: &'static str,
     pub variants: &'static [&'static str],
+    pub bit_flags: bool,
+}
+
+/// A generated FlatBuffer union, registered at compile time alongside
+/// [`TypeSchema`]. `variants` pairs each variant name with the table it
+/// carries, in discriminator order (the implicit `NONE` is left out).
+///
+/// A table field `f` of a union type crosses JSON as two sibling keys:
+/// `f_type` (the variant name) and `f` (that variant's table).
+#[derive(Clone, Copy, Debug)]
+pub struct UnionSchema {
+    pub name: &'static str,
+    pub namespace: &'static str,
+    pub variants: &'static [(&'static str, &'static str)],
 }
 
 /// The FlatBuffer binary reflection (`.bfbs`) for a service's schemas, baked in
@@ -597,6 +614,7 @@ pub struct FlatbedSchema {
 
 inventory::collect!(TypeSchema);
 inventory::collect!(EnumSchema);
+inventory::collect!(UnionSchema);
 inventory::collect!(FlatbedSchema);
 
 /// The baked-in FlatBuffer reflection when a schema was compiled into this
@@ -2288,7 +2306,7 @@ pub struct TypeConflict {
     pub name: String,
     pub first_namespace: String,
     pub second_namespace: String,
-    /// `"type"` or `"enum"` — which registry the collision is in.
+    /// `"type"`, `"enum"`, or `"union"` — which registry the collision is in.
     pub kind: &'static str,
 }
 
@@ -2320,6 +2338,10 @@ pub fn validate_type_registry() -> Result<(), TypeConflict> {
         .into_iter()
         .map(|e| (e.name, e.namespace));
     find_name_collision("enum", enums)?;
+    let unions = inventory::iter::<UnionSchema>
+        .into_iter()
+        .map(|u| (u.name, u.namespace));
+    find_name_collision("union", unions)?;
     Ok(())
 }
 
@@ -2394,7 +2416,7 @@ pub fn validate_routes() -> Result<(), RouteConflict> {
 mod openapi_generation {
     use super::{
         get_routes, EnumSchema, FlatbedConfig, HttpMethod, RouteInfo, SchemaInfo, TypeFieldInfo,
-        TypeSchema,
+        TypeSchema, UnionSchema,
     };
     use std::collections::BTreeSet;
     use utoipa::openapi::{
@@ -2404,8 +2426,8 @@ mod openapi_generation {
         request_body::RequestBodyBuilder,
         response::ResponseBuilder,
         schema::{
-            AllOfBuilder, ArrayBuilder, KnownFormat, ObjectBuilder, Schema, SchemaFormat,
-            SchemaType, Type,
+            AllOfBuilder, ArrayBuilder, KnownFormat, ObjectBuilder, OneOfBuilder, Schema,
+            SchemaFormat, SchemaType, Type,
         },
         server::ServerBuilder,
         ComponentsBuilder, Deprecated, InfoBuilder, OpenApi, OpenApiBuilder, PathsBuilder, Ref,
@@ -2443,7 +2465,8 @@ mod openapi_generation {
         fbs
     }
 
-    /// Bare names of every registered table and enum (types, then enums).
+    /// Bare names of every registered table, and of every registered enum and
+    /// union — the non-table components a field references by `$ref`.
     fn registered_names() -> (BTreeSet<&'static str>, BTreeSet<&'static str>) {
         let types = crate::inventory::iter::<TypeSchema>
             .into_iter()
@@ -2452,6 +2475,11 @@ mod openapi_generation {
         let enums = crate::inventory::iter::<EnumSchema>
             .into_iter()
             .map(|e| e.name)
+            .chain(
+                crate::inventory::iter::<UnionSchema>
+                    .into_iter()
+                    .map(|u| u.name),
+            )
             .collect();
         (types, enums)
     }
@@ -2552,9 +2580,20 @@ mod openapi_generation {
         type_names: &BTreeSet<&str>,
         enum_names: &BTreeSet<&str>,
     ) {
+        let unions: std::collections::HashMap<&str, &UnionSchema> =
+            crate::inventory::iter::<UnionSchema>
+                .into_iter()
+                .map(|u| (u.name, u))
+                .collect();
         for ty in crate::inventory::iter::<TypeSchema> {
             let mut obj = ObjectBuilder::new().schema_type(SchemaType::new(Type::Object));
             for field in ty.fields {
+                if let Some(union) = unions.get(field.fbs_type) {
+                    obj = obj.property(
+                        format!("{}_type", field.name),
+                        union_type_property(union, field),
+                    );
+                }
                 obj = obj.property(field.name, property_schema(field, type_names, enum_names));
                 if field.required {
                     obj = obj.required(field.name);
@@ -2565,14 +2604,45 @@ mod openapi_generation {
         }
 
         for en in crate::inventory::iter::<EnumSchema> {
-            // Enums cross the JSON wire as their variant-name string.
-            let obj = ObjectBuilder::new()
+            // A plain enum crosses the JSON wire as its variant-name string; a
+            // `bit_flags` enum as the list of its set flags' names.
+            let names = ObjectBuilder::new()
                 .schema_type(SchemaType::new(Type::String))
                 .enum_values(Some(en.variants.iter().copied()))
                 .build();
-            *components_builder =
-                std::mem::take(components_builder).schema(en.name, Schema::Object(obj));
+            let schema = if en.bit_flags {
+                Schema::Array(ArrayBuilder::new().items(names).build())
+            } else {
+                Schema::Object(names)
+            };
+            *components_builder = std::mem::take(components_builder).schema(en.name, schema);
         }
+
+        for union in unions.values() {
+            // The union's value is the table its variant names.
+            let mut one_of = OneOfBuilder::new();
+            for (_, table) in union.variants {
+                one_of = one_of.item(Ref::from_schema_name(*table));
+            }
+            *components_builder = std::mem::take(components_builder)
+                .schema(union.name, Schema::OneOf(one_of.build()));
+        }
+    }
+
+    /// The `<field>_type` discriminator a union field carries beside its value:
+    /// the variant name, in the slot just before the value's.
+    fn union_type_property(union: &UnionSchema, field: &TypeFieldInfo) -> RefOr<Schema> {
+        let extensions = ExtensionsBuilder::new()
+            .add("x-fbs-type", format!("{}_type", union.name))
+            .add("x-fbs-id", field.field_id.saturating_sub(1))
+            .build();
+        RefOr::T(Schema::Object(
+            ObjectBuilder::new()
+                .schema_type(SchemaType::new(Type::String))
+                .enum_values(Some(union.variants.iter().map(|(variant, _)| *variant)))
+                .extensions(Some(extensions))
+                .build(),
+        ))
     }
 
     /// Convert our HttpMethod to utoipa's HttpMethod

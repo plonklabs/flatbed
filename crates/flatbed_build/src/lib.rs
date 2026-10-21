@@ -43,8 +43,9 @@
 //! | `[string]` | `Option<Vec<String>>` |
 //! | `Table` (single nested table) | `Option<Table>` |
 //! | `[Table]` (vector of tables) | `Option<Vec<Table>>` |
-//! | `Enum` (named enum) | bare `Enum` (no `Option`) |
+//! | `Enum` (named enum, including `(bit_flags)`) | bare `Enum` (no `Option`) |
 //! | `[Enum]` (vector of enum values) | `Option<Vec<Enum>>` |
+//! | `Union` (of tables) | `Option<Union>`, a Rust enum with one tuple variant per member |
 //!
 //! ```fbs
 //! enum Severity : byte { Info, Warning, Error }
@@ -65,10 +66,25 @@
 //! }
 //! ```
 //!
-//! Reference fields (strings, vectors, tables) are always `Option<…>` because
-//! FlatBuffers treats them as optional at the wire level. Scalars (including
-//! enums, which are wire-level fixed-width integers) are non-optional and
-//! round-trip through their default value when absent.
+//! Reference fields (strings, vectors, tables, unions) are always `Option<…>`
+//! because FlatBuffers treats them as optional at the wire level. Scalars
+//! (including enums, which are wire-level fixed-width integers) are
+//! non-optional and round-trip through their default value when absent.
+//!
+//! A field whose name flatc escapes in Rust (`ref`, `type`, `self`, …) gets
+//! flatc's spelling with a trailing `_` (`ref_`); its JSON key stays the
+//! schema name.
+//!
+//! # JSON shapes
+//!
+//! - A plain enum is its variant name: `"severity": "Warning"`.
+//! - A `(bit_flags)` enum is the list of its set flags' names, in declaration
+//!   order: `"traits": ["Money", "Gmail"]`; the empty set is `[]`. A name the
+//!   schema doesn't declare fails deserialization; a value carrying bits the
+//!   schema doesn't declare fails serialization (the binary codec keeps them).
+//! - A union field `ref: SourceRef` is two sibling keys, as in flatc's JSON:
+//!   `"ref_type": "MailRef", "ref": { … }`. An absent union has neither key
+//!   (`"ref_type": "NONE"` also reads as absent).
 //!
 //! # How the codegen sees the schema
 //!
@@ -97,8 +113,10 @@
 //!   against the local `.fbs` schemas.
 //!
 //! Not yet supported:
-//! - FlatBuffer unions and `struct` (fixed-layout) types — use a `table`
-//!   with the relevant fields instead.
+//! - FlatBuffer `struct` (fixed-layout) types — use a `table` with the
+//!   relevant fields instead — and union members that aren't tables.
+//! - A `(bit_flags)` default naming more than one flag (`= "A B"`): flatc's
+//!   Rust code drops it, so the codegen rejects it.
 //! - Cross-namespace field references in the high-level codegen. flatc
 //!   parses `field: other_ns.SomeType` cleanly and the reflection-driven
 //!   adapter buckets the referenced type under its own namespace, but the

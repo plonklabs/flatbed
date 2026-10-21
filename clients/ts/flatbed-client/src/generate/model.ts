@@ -17,11 +17,17 @@ export type ScalarType =
   | "float32"
   | "float64";
 
-/** A field's wire type, as a discriminated union. */
+/**
+ * A field's wire type, as a discriminated union. `flags` is a `bit_flags` enum
+ * (a value is any OR of its flags); `union` is a FlatBuffer union, whose
+ * discriminator occupies the slot just before the field's own id.
+ */
 export type FbsType =
   | { readonly kind: "scalar"; readonly scalar: ScalarType }
   | { readonly kind: "string" }
   | { readonly kind: "enum"; readonly name: string }
+  | { readonly kind: "flags"; readonly name: string }
+  | { readonly kind: "union"; readonly name: string }
   | { readonly kind: "table"; readonly name: string }
   | { readonly kind: "vector"; readonly element: FbsType };
 
@@ -51,17 +57,35 @@ export interface FbsEnumMember {
   readonly value: bigint;
 }
 
-/** A FlatBuffer enum: its backing integer scalar and its variants. */
+/**
+ * A FlatBuffer enum: its backing integer scalar and its variants. A `bitFlags`
+ * enum's member values are the flags' masks.
+ */
 export interface FbsEnum {
   readonly name: string;
   readonly underlying: ScalarType;
   readonly members: readonly FbsEnumMember[];
+  readonly bitFlags?: boolean;
+}
+
+/** One union variant: its name, the table it carries, and its discriminator. */
+export interface FbsUnionMember {
+  readonly name: string;
+  readonly table: string;
+  readonly value: number;
+}
+
+/** A FlatBuffer union of tables (the implicit `NONE` is left out). */
+export interface FbsUnion {
+  readonly name: string;
+  readonly members: readonly FbsUnionMember[];
 }
 
 /** The full wire schema read from a `.bfbs`. */
 export interface FbsSchema {
   readonly tables: readonly FbsTable[];
   readonly enums: readonly FbsEnum[];
+  readonly unions?: readonly FbsUnion[];
 }
 
 /**
