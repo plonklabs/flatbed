@@ -1,6 +1,6 @@
 {
   "name": "@plonklabs/flatbed-client",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Runtime and generator for FlatBuffer clients of flatbed services.",
   "type": "module",
   "license": "MIT OR Apache-2.0",
