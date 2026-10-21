@@ -1,5 +1,7 @@
 // Test FlatBuffer schema for flatbed integration tests
 
+attribute "paginated";
+
 namespace test;
 
 // Severity levels — exercises the enum codegen path. The first variant
@@ -101,6 +103,50 @@ table Ingest {
   traits: Traits;
   default_traits: Traits = Money;
   history: [Traits];
+}
+
+table Page {
+  next_page: string;
+  previous_page: string;
+}
+
+enum ItemOrder : byte {
+  Newest,
+  Oldest,
+}
+
+enum ItemStatus : byte {
+  Any = 0,
+  Open,
+  Closed,
+}
+
+table ListedItem {
+  id: string;
+  owner: string;
+  created_at: long;
+  status: ItemStatus;
+}
+
+table ListItemsRequest (paginated) {
+  page: string;
+  page_size: uint;
+  owner: string;
+  status: ItemStatus;
+  order: ItemOrder;
+}
+
+table ListItemsResponse (paginated) {
+  items: [ListedItem];
+  page: Page;
+  applied: ListItemsRequest;
+}
+
+// No paginated-request field, so it pairs with any paginated request.
+table ListedItemsFeed (paginated) {
+  items: [ListedItem];
+  page: Page;
+  total: uint;
 }
 
 root_type TestRequest;

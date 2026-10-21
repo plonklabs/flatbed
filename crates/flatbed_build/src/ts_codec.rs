@@ -630,10 +630,12 @@ mod tests {
             vec![
                 Table {
                     name: "Tag".to_string(),
+                    paginated: false,
                     fields: vec![field("label", "string", 0)],
                 },
                 Table {
                     name: "Item".to_string(),
+                    paginated: false,
                     fields: vec![
                         field("count", "uint32", 0),
                         field("priority", "Priority", 1),
@@ -693,6 +695,7 @@ mod tests {
             "v".to_string(),
             vec![Table {
                 name: "D".to_string(),
+                paginated: false,
                 fields: vec![
                     Field {
                         name: "count".to_string(),
@@ -744,6 +747,7 @@ mod tests {
             "v".to_string(),
             vec![Table {
                 name: "Gapped".to_string(),
+                paginated: false,
                 fields: vec![Field {
                     name: "x".to_string(),
                     fbs_type: "int32".to_string(),
@@ -777,10 +781,12 @@ mod tests {
             vec![
                 Table {
                     name: "Mail".to_string(),
+                    paginated: false,
                     fields: vec![field("id", "string", 0)],
                 },
                 Table {
                     name: "Doc".to_string(),
+                    paginated: false,
                     fields: vec![
                         field("ref", "Ref", 1),
                         Field {
