@@ -28,7 +28,9 @@ It writes five files into `--out`:
 - `index.ts` — a barrel re-exporting the folder.
 
 Pass `--openapi <file> --schema <file>` instead of `--server` to generate from
-saved files offline.
+saved files offline. A `.bfbs` you build yourself needs `flatc -b --schema
+--bfbs-builtins`: without `--bfbs-builtins`, flatc drops the `bit_flags`
+attribute and flag enums generate as plain enums (or fail, when 64-bit).
 
 ## Using the client
 
