@@ -122,7 +122,10 @@ const readEnum = (en: Enum): FbsEnum => {
   // number — the two can't reconcile, so reject rather than emit broken code.
   // A `bit_flags` enum is a list of flag names in TS, so any width works.
   if (!bitFlags && (underlying === "int64" || underlying === "uint64")) {
-    throw new Error(`enum ${en.name()} uses a 64-bit underlying type, which is not supported`);
+    throw new Error(
+      `enum ${en.name()} uses a 64-bit underlying type, which is only supported for a bit_flags enum; ` +
+        "if it is declared (bit_flags), rebuild the .bfbs with `flatc -b --schema --bfbs-builtins`",
+    );
   }
   if (bitFlags && underlying.startsWith("int")) {
     throw new Error(`bit_flags enum ${en.name()} must have an unsigned underlying type`);

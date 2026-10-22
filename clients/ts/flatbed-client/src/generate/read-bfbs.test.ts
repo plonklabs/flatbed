@@ -83,9 +83,9 @@ test("reads the (paginated) table attribute", () => {
   assert.equal("paginated" in table(schema, "Page"), false);
 });
 
-test("rejects a 64-bit enum, which can't be a number-backed TS enum", () => {
+test("rejects a 64-bit non-bit_flags enum, pointing at a .bfbs built without --bfbs-builtins", () => {
   const bytes = readFileSync(fileURLToPath(new URL("./__fixtures__/big-enum.bfbs", import.meta.url)));
-  assert.throws(() => readBfbs(bytes), /64-bit underlying type/);
+  assert.throws(() => readBfbs(bytes), /64-bit underlying type.*--bfbs-builtins/);
 });
 
 test("rejects two types that collide on their bare name across namespaces", () => {
