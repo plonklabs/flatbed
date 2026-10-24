@@ -45,7 +45,7 @@ change that produced it). Apply both to every diff.
 flatbed is a small Rust HTTP framework with three crates:
 `flatbed` (Hyper server, route registry, request/response
 types, optional `telemetry`/`openapi`/`nats`/`k8s` gates),
-`flatbed_macros` (`#[route]`, `#[worker]`, `#[flatbed::main]`),
+`flatbed_macros` (`#[route]`, `#[worker]`),
 and `flatbed_build` (FlatBuffer codegen + the `flatbed` CLI).
 Routes and workers are discovered at compile time via the
 `inventory` crate — declaring a module is enough, no

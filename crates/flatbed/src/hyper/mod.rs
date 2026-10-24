@@ -18,11 +18,12 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use flatbed::{route, Request, Response, FlatbedError};
+//! use flatbed::{Flatbed, FlatbedConfig};
 //!
-//! #[flatbed::main(bind = "0.0.0.0:8080")]
-//! async fn main() {
-//!     println!("Server started");
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+//!     Flatbed::run(FlatbedConfig::new("My API").port(8080), |_| async move { Ok(()) }).await?;
+//!     Ok(())
 //! }
 //! ```
 

@@ -454,7 +454,7 @@ a no-op.
 | Crate | Purpose |
 |---|---|
 | [`flatbed`](crates/flatbed) | HTTP server, route registry, optional telemetry / OpenAPI / NATS / Kubernetes / pagination feature gates |
-| [`flatbed_macros`](crates/flatbed_macros) | `#[route]`, `#[nats_route]`, and `#[flatbed::main]` procedural macros |
+| [`flatbed_macros`](crates/flatbed_macros) | `#[route]` and `#[nats_route]` procedural macros |
 | [`flatbed_build`](crates/flatbed_build) | Build-time FlatBuffer codegen and the `flatbed` CLI tool (`cargo install flatbed_build` ships the binary) |
 
 ## License

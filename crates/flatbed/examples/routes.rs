@@ -157,17 +157,5 @@ fn main() {
 
     println!("\nTotal routes: {}\n", routes.len());
 
-    // Note: This example just demonstrates route registration.
-    // For a full server example, use #[flatbed::main]:
-    //
-    // #[flatbed::main(bind = "0.0.0.0:8080")]
-    // async fn main() {
-    //     println!("Server started");
-    // }
     println!("Routes registered successfully!");
-    println!("\nTo run a server, use #[flatbed::main] macro:");
-    println!("  #[flatbed::main(bind = \"0.0.0.0:8080\")]");
-    println!("  async fn main() {{");
-    println!("      println!(\"Server started\");");
-    println!("  }}");
 }

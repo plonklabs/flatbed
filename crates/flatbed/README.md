@@ -321,19 +321,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 ```
 
-#### Legacy: `#[flatbed::main]` Macro (Deprecated)
-
-> **Note**: The `#[flatbed::main]` macro is deprecated. Use `Flatbed::run()` instead for more flexibility.
-
-```rust
-use flatbed::main;
-
-#[flatbed::main(bind = "0.0.0.0:8080")]
-async fn main() {
-    println!("Server started");
-}
-```
-
 The `Flatbed::run()` API provides:
 - Pre-server setup flexibility (telemetry, logging, diagnostics)
 - Content-type negotiation (JSON and FlatBuffer)
@@ -449,7 +436,7 @@ cargo test -p flatbed --features "openapi,telemetry"
 ## Architecture
 
 - **flatbed** (this crate): FlatBuffer utilities + hyper server + route registry
-- **flatbed_macros**: Procedural macro implementation for `#[route]` and `#[flatbed::main]`
+- **flatbed_macros**: Procedural macro implementation for `#[route]`
 - **flatbed_build**: Build-time code generation for FlatBuffer schemas. See its crate docs for the supported `.fbs` field types (scalars, strings, single nested tables, and vectors of any of those — including vectors of tables).
 
 The macro crate is separate because Rust requires `proc-macro` crates to only export procedural macros.
