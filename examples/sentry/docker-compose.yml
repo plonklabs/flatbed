@@ -1,0 +1,22 @@
+services:
+  app:
+    build:
+      # Repo root, so the ../../crates/flatbed path dependency resolves.
+      context: ../..
+      dockerfile: examples/sentry/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: local
+    depends_on:
+      - bugsink
+
+  bugsink:
+    image: bugsink/bugsink
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: local-example-only-not-a-secret-0123456789abcdef
+      CREATE_SUPERUSER: admin@example.com:admin
+      PORT: "8000"

@@ -114,6 +114,9 @@ pub use error_reporting::{
     ErrorReporter, PanicReport, PanicSite, RouteFailure, RouteRequest, Transport, WorkerFailure,
 };
 
+#[cfg(feature = "sentry")]
+pub mod sentry;
+
 mod supervisor;
 pub use supervisor::{worker_states, RestartPolicy, WorkerState};
 
