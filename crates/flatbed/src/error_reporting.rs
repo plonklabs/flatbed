@@ -40,9 +40,10 @@ use crate::FlatbedWorkerError;
 
 /// Receives the server failures flatbed observes.
 ///
-/// Every method is called synchronously on the task that observed the
-/// failure, so an implementation should hand the report off (queue, channel,
-/// background transport) rather than block on I/O.
+/// The report methods are called synchronously on the task that observed
+/// the failure, so an implementation should hand the report off (queue,
+/// channel, background transport) rather than block on I/O. `flush` runs on
+/// a blocking thread.
 pub trait ErrorReporter: Send + Sync + 'static {
     /// A route answered with a 5xx status. Never called for 4xx.
     fn route_error(&self, failure: &RouteFailure<'_>);
@@ -136,6 +137,9 @@ pub struct WorkerFailure<'a> {
     /// The worker will not be restarted again: its restart policy ran out.
     pub restarts_exhausted: bool,
 }
+
+/// Error code a route answers a caught handler panic with.
+pub(crate) const PANIC_CODE: &str = "PANIC";
 
 static REPORTER: OnceLock<Arc<dyn ErrorReporter>> = OnceLock::new();
 

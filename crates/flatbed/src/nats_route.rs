@@ -439,7 +439,7 @@ async fn dispatch(
             return reply_err(
                 encoding,
                 &request_id,
-                &FlatbedRouteError::internal("handler panicked").code("PANIC"),
+                &FlatbedRouteError::internal("handler panicked").code(error_reporting::PANIC_CODE),
             );
         }
     };

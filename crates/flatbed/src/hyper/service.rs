@@ -294,11 +294,7 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
                 error_reporting::route_error(&RouteFailure {
                     request: route,
                     status: err.status.as_u16(),
-                    code: Some(if err.code.is_empty() {
-                        "ERROR"
-                    } else {
-                        &err.code
-                    }),
+                    code: Some(wire_code(&err)),
                     message: &err.message,
                 });
             }
@@ -339,7 +335,8 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         Ok(Err(e)) => e,
         Err(panic) => {
             error_reporting::route_panic(route, &panic);
-            let err = FlatbedRouteError::internal("handler panicked").code("PANIC");
+            let err =
+                FlatbedRouteError::internal("handler panicked").code(error_reporting::PANIC_CODE);
             return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id);
         }
     };
@@ -538,11 +535,7 @@ fn build_route_error_response(
     is_flatbuffer: bool,
     request_id: &str,
 ) -> Response<Full<Bytes>> {
-    let error_code = if err.code.is_empty() {
-        "ERROR"
-    } else {
-        &err.code
-    };
+    let error_code = wire_code(err);
 
     let mut headers = HeaderMap::new();
     if let Ok(val) = HeaderValue::try_from(request_id) {
@@ -586,6 +579,15 @@ fn build_route_error_response(
                 .body(Full::new(Bytes::from("Failed to build response")))
                 .unwrap()
         })
+}
+
+/// The code put on the wire for `err`: its own, or `ERROR` when it set none.
+fn wire_code(err: &FlatbedRouteError) -> &str {
+    if err.code.is_empty() {
+        "ERROR"
+    } else {
+        &err.code
+    }
 }
 
 fn build_error_response(status: StatusCode, code: &str, message: &str) -> Response<Full<Bytes>> {
