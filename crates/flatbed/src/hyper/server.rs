@@ -180,8 +180,8 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             }
         }
 
-        // Flushed ahead of the drains: with none registered the epilogue below
-        // sleeps the whole budget, and anything after it races SIGKILL.
+        // The worker drains and the wait for in-flight connections can spend
+        // the whole shutdown budget, so a flush after them races SIGKILL.
         crate::error_reporting::flush(REPORTER_FLUSH_TIMEOUT).await;
 
         let budget = tokio::time::Duration::from_secs(self.shutdown_timeout_secs);
@@ -200,7 +200,6 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
     }
 }
 
-/// Longest graceful shutdown waits for the error reporter to flush.
 const REPORTER_FLUSH_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(2);
 
 /// Time left to in-flight connections after the worker drains have run.
