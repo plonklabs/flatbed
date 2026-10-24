@@ -130,10 +130,6 @@ pub use utoipa;
 #[doc(hidden)]
 pub use include_dir;
 
-// Re-export tokio for use in generated main macro code
-#[doc(hidden)]
-pub use tokio;
-
 /// Boxed, Send future alias for trait return types.
 ///
 /// Eliminates the need for `use std::future::Future; use std::pin::Pin;`
@@ -815,9 +811,6 @@ pub struct OpenApiRouteInfo {
 pub use flatbed_macros::route;
 
 pub use flatbed_macros::static_route;
-
-// Re-export the main macro from flatbed_macros
-pub use flatbed_macros::main;
 
 // Re-export inventory for use by the macro
 #[doc(hidden)]

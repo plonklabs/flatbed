@@ -5,7 +5,6 @@ use syn::{
     parse_macro_input, GenericArgument, Ident, ItemFn, LitBool, LitStr, PathArguments, Token, Type,
 };
 
-mod main_macro;
 mod nats_route;
 
 /// HTTP methods supported by the route macro
@@ -765,39 +764,6 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn nats_route(attr: TokenStream, item: TokenStream) -> TokenStream {
     nats_route::nats_route_impl(attr, item)
-}
-
-/// Entry point macro for flatbed applications
-///
-/// Sets up the tokio runtime, validates routes, builds the router,
-/// and starts the HTTP server.
-///
-/// # Attributes
-/// - `bind` (required): Socket address to bind to (e.g., "0.0.0.0:8080")
-/// - `context` (optional): Application context type
-/// - `init` (optional): Async function to initialize context
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use flatbed::main;
-///
-/// #[flatbed::main(bind = "0.0.0.0:8080")]
-/// async fn main() {
-///     println!("Server started");
-/// }
-///
-/// // With context:
-/// #[flatbed::main(
-///     bind = "0.0.0.0:8080",
-///     context = AppContext,
-///     init = init_context,
-/// )]
-/// async fn main() { }
-/// ```
-#[proc_macro_attribute]
-pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
-    main_macro::main_impl(attr, item)
 }
 
 enum StaticSourceArg {
