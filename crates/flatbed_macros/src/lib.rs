@@ -551,6 +551,9 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                 // Extract application context (if handler uses Request<T, C>)
                 #ctx_extraction
 
+                let request_method = request_parts.method.clone();
+                let request_path = request_parts.path.clone();
+
                 // Build the Request<T, C>
                 let request = ::flatbed::Request {
                     body: request_body,
@@ -611,6 +614,16 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                         } else {
                             &err.code
                         };
+
+                        ::flatbed::__report_http_route_error(
+                            request_method.as_str(),
+                            #path,
+                            &request_path,
+                            &request_id,
+                            err.status,
+                            error_code,
+                            &err.message,
+                        );
 
                         let mut headers = ::flatbed::HeaderMap::new();
                         if let Ok(val) = ::flatbed::HeaderValue::try_from(request_id.as_str()) {

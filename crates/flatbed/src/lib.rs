@@ -25,7 +25,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Deref;
-#[cfg(feature = "telemetry")]
 use std::sync::Arc;
 use std::sync::LazyLock;
 
@@ -108,6 +107,13 @@ pub mod pagination;
 pub use pagination::{Direction, ListQuery, Pager, CURSOR_WITH_FILTERS, INVALID_CURSOR};
 
 // Worker supervision
+mod error_reporting;
+#[doc(hidden)]
+pub use error_reporting::__report_http_route_error;
+pub use error_reporting::{
+    ErrorReporter, PanicReport, PanicSite, RouteFailure, RouteRequest, Transport, WorkerFailure,
+};
+
 mod supervisor;
 pub use supervisor::{worker_states, RestartPolicy, WorkerState};
 
@@ -195,6 +201,9 @@ pub struct FlatbedConfig {
     /// The boot function receives this config by value, so it can register a
     /// gate for anything it connects (see [`Readiness::gate`]).
     pub readiness: Readiness,
+    /// Receives the server failures flatbed observes (see
+    /// [`FlatbedConfig::with_error_reporter`]).
+    pub error_reporter: Option<Arc<dyn ErrorReporter>>,
     /// Telemetry service for health endpoints (when telemetry feature is enabled)
     #[cfg(feature = "telemetry")]
     pub telemetry: Option<Arc<dyn TelemetryService>>,
@@ -211,6 +220,7 @@ impl Default for FlatbedConfig {
             splash: None,
             before_request: None,
             readiness: Readiness::new(),
+            error_reporter: None,
             #[cfg(feature = "telemetry")]
             telemetry: None,
         }
@@ -231,7 +241,11 @@ impl fmt::Debug for FlatbedConfig {
                 "before_request",
                 &self.before_request.as_ref().map(|_| "<hook>"),
             )
-            .field("readiness", &self.readiness);
+            .field("readiness", &self.readiness)
+            .field(
+                "error_reporter",
+                &self.error_reporter.as_ref().map(|_| "<ErrorReporter>"),
+            );
         #[cfg(feature = "telemetry")]
         debug.field(
             "telemetry",
@@ -332,6 +346,18 @@ impl FlatbedConfig {
     /// Set the external URL for OpenAPI spec (e.g., public endpoint through Envoy/TLS).
     pub fn external_url(mut self, url: impl Into<String>) -> Self {
         self.external_url = Some(url.into());
+        self
+    }
+
+    /// Report server failures — 5xx route answers, caught panics, and worker
+    /// failures — to `reporter`, and flush it when graceful shutdown starts.
+    ///
+    /// Also makes `Flatbed::run` install a panic hook that captures
+    /// backtraces for the reports. The reporter is process-wide: when several
+    /// servers run in one process, the first one started with a reporter
+    /// supplies it for all of them.
+    pub fn with_error_reporter(mut self, reporter: Arc<dyn ErrorReporter>) -> Self {
+        self.error_reporter = Some(reporter);
         self
     }
 

@@ -15,6 +15,7 @@ use hyper::service::Service;
 use tokio::sync::{watch, RwLock};
 
 use super::router::Router;
+use crate::error_reporting::{self, RouteFailure, RouteRequest, Transport};
 use crate::{
     Error, FlatbedConfig, FlatbedRouteError, HeaderMap, HeaderName, HeaderValue, Method,
     RequestParts, ResponseParts,
@@ -279,8 +280,28 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
     // Set request ID from header or keep generated one
     request_parts = request_parts.with_request_id_from_header();
 
+    let route = RouteRequest {
+        transport: Transport::Http,
+        method: Some(&method),
+        route: route_entry.info.path,
+        path: &path,
+        request_id: &request_parts.request_id,
+    };
+
     if let Some(hook) = ctx.config.before_request.as_ref() {
         if let Err(err) = hook(&request_parts) {
+            if err.status.is_server_error() {
+                error_reporting::route_error(&RouteFailure {
+                    request: route,
+                    status: err.status.as_u16(),
+                    code: Some(if err.code.is_empty() {
+                        "ERROR"
+                    } else {
+                        &err.code
+                    }),
+                    message: &err.message,
+                });
+            }
             return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id);
         }
     }
@@ -312,23 +333,33 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         }
     };
 
-    // Call the handler
-    let handler = route_entry.handler;
-    match handler(request_parts.clone(), body_bytes, &content_type, app_ctx).await {
-        Ok(response_parts) => build_success_response(response_parts),
-        Err(e) => {
-            // Determine appropriate status code based on error type
-            let (status, code) = match &e {
-                Error::DeserializationError(_) => (StatusCode::BAD_REQUEST, "BAD_REQUEST"),
-                Error::SerializationError(_) => {
-                    (StatusCode::INTERNAL_SERVER_ERROR, "SERIALIZATION_ERROR")
-                }
-                Error::HandlerError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "HANDLER_ERROR"),
-                Error::Custom(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
-            };
-            build_error_response(status, code, &e.to_string())
+    let handled = (route_entry.handler)(request_parts.clone(), body_bytes, &content_type, app_ctx);
+    let e = match error_reporting::catch_panic(handled).await {
+        Ok(Ok(response_parts)) => return build_success_response(response_parts),
+        Ok(Err(e)) => e,
+        Err(panic) => {
+            error_reporting::route_panic(route, &panic);
+            let err = FlatbedRouteError::internal("handler panicked").code("PANIC");
+            return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id);
         }
+    };
+
+    let (status, code) = match &e {
+        Error::DeserializationError(_) => (StatusCode::BAD_REQUEST, "BAD_REQUEST"),
+        Error::SerializationError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "SERIALIZATION_ERROR"),
+        Error::HandlerError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "HANDLER_ERROR"),
+        Error::Custom(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
+    };
+    let message = e.to_string();
+    if status.is_server_error() {
+        error_reporting::route_error(&RouteFailure {
+            request: route,
+            status: status.as_u16(),
+            code: Some(code),
+            message: &message,
+        });
     }
+    build_error_response(status, code, &message)
 }
 
 fn is_get_or_head(method: &str) -> bool {

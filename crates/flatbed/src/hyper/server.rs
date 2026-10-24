@@ -83,6 +83,10 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             crate::supervisor::install_state_gauge(telemetry);
         }
 
+        if let Some(reporter) = self.service_ctx.config.error_reporter.as_ref() {
+            crate::error_reporting::install(reporter);
+        }
+
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
         // Spawn shutdown signal handler
@@ -176,6 +180,10 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             }
         }
 
+        // Flushed ahead of the drains: with none registered the epilogue below
+        // sleeps the whole budget, and anything after it races SIGKILL.
+        crate::error_reporting::flush(REPORTER_FLUSH_TIMEOUT).await;
+
         let budget = tokio::time::Duration::from_secs(self.shutdown_timeout_secs);
         let epilogue = CONNECTION_EPILOGUE.min(budget);
         let drain_budget = budget
@@ -191,6 +199,9 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
         Ok(())
     }
 }
+
+/// Longest graceful shutdown waits for the error reporter to flush.
+const REPORTER_FLUSH_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(2);
 
 /// Time left to in-flight connections after the worker drains have run.
 const CONNECTION_EPILOGUE: tokio::time::Duration = tokio::time::Duration::from_secs(2);

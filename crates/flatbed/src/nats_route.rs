@@ -28,9 +28,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use tracing::{error, info, warn};
 
+use crate::error_reporting::{self, RouteFailure, RouteRequest, Transport};
 use crate::nats::HasNatsClient;
 use crate::{
     FlatbedRouteError, FlatbedWorkerError, HeaderMap, HeaderName, HeaderValue, Response,
@@ -422,21 +423,39 @@ async fn dispatch(
         encoding,
     };
 
+    let request = RouteRequest {
+        transport: Transport::Nats,
+        method: None,
+        route: route.subject,
+        path: &message.subject,
+        request_id: &request_id,
+    };
+
     let handled = (route.handler)(parts, message.payload.to_vec(), ctx);
-    match std::panic::AssertUnwindSafe(handled).catch_unwind().await {
+    let reply = match error_reporting::catch_panic(handled).await {
         Ok(reply) => reply,
-        Err(_) => {
-            error!(
-                subject = %message.subject,
-                "nats_route handler panicked; answering with an error reply"
-            );
-            reply_err(
+        Err(panic) => {
+            error_reporting::route_panic(request, &panic);
+            return reply_err(
                 encoding,
                 &request_id,
                 &FlatbedRouteError::internal("handler panicked").code("PANIC"),
-            )
+            );
         }
+    };
+
+    let status = header_value(&reply.headers, ERROR_STATUS_HEADER)
+        .and_then(|status| status.parse::<u16>().ok())
+        .filter(|status| *status >= 500);
+    if let Some(status) = status {
+        error_reporting::route_error(&RouteFailure {
+            request,
+            status,
+            code: header_value(&reply.headers, ERROR_CODE_HEADER),
+            message: header_value(&reply.headers, ERROR_MESSAGE_HEADER).unwrap_or_default(),
+        });
     }
+    reply
 }
 
 /// Subscribe to a responder's subject and answer requests until the
@@ -578,6 +597,177 @@ mod tests {
             response_type: "Res",
             handler: unreachable_handler,
         }
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct Report {
+        kind: &'static str,
+        request_id: String,
+        route: String,
+        path: String,
+        detail: String,
+    }
+
+    impl Report {
+        fn new(kind: &'static str, request: RouteRequest<'_>, detail: String) -> Self {
+            Self {
+                kind,
+                request_id: request.request_id.to_string(),
+                route: request.route.to_string(),
+                path: request.path.to_string(),
+                detail,
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct Recorder(std::sync::Mutex<Vec<Report>>);
+
+    impl crate::ErrorReporter for Recorder {
+        fn route_error(&self, failure: &RouteFailure<'_>) {
+            let detail = format!("{} {}", failure.status, failure.code.unwrap_or_default());
+            self.0
+                .lock()
+                .unwrap()
+                .push(Report::new("route_error", failure.request, detail));
+        }
+
+        fn panic(&self, panic: &crate::PanicReport<'_>) {
+            let crate::PanicSite::Route(request) = panic.site else {
+                return;
+            };
+            assert!(panic.backtrace.is_some(), "route panic without a backtrace");
+            self.0
+                .lock()
+                .unwrap()
+                .push(Report::new("panic", request, panic.message.to_string()));
+        }
+
+        fn worker_failure(&self, _: &crate::WorkerFailure<'_>) {}
+    }
+
+    fn recorder() -> &'static Arc<Recorder> {
+        static RECORDER: std::sync::OnceLock<Arc<Recorder>> = std::sync::OnceLock::new();
+        RECORDER.get_or_init(|| {
+            let recorder = Arc::new(Recorder::default());
+            let reporter: Arc<dyn crate::ErrorReporter> = recorder.clone();
+            error_reporting::install(&reporter);
+            recorder
+        })
+    }
+
+    fn unavailable_handler(
+        parts: NatsRequestParts,
+        _: Vec<u8>,
+        _: Arc<dyn Any + Send + Sync>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = NatsReply> + Send>> {
+        Box::pin(async move {
+            let err = FlatbedRouteError::<()>::with_status(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "store offline",
+            )
+            .code("STORE_DOWN");
+            reply_err(parts.encoding, &parts.request_id, &err)
+        })
+    }
+
+    fn rejecting_handler(
+        parts: NatsRequestParts,
+        _: Vec<u8>,
+        _: Arc<dyn Any + Send + Sync>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = NatsReply> + Send>> {
+        Box::pin(async move {
+            let err = FlatbedRouteError::<()>::bad_request("bad order");
+            reply_err(parts.encoding, &parts.request_id, &err)
+        })
+    }
+
+    fn panicking_handler(
+        _: NatsRequestParts,
+        _: Vec<u8>,
+        _: Arc<dyn Any + Send + Sync>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = NatsReply> + Send>> {
+        Box::pin(async { panic!("nats handler blew up") })
+    }
+
+    async fn dispatch_to(handler: NatsHandlerFn, request_id: &str) -> NatsReply {
+        let mut headers = async_nats::HeaderMap::new();
+        headers.append(REQUEST_ID_HEADER, request_id);
+        let message = async_nats::Message {
+            subject: "orders.42.get".into(),
+            reply: None,
+            payload: Vec::new().into(),
+            headers: Some(headers),
+            status: None,
+            description: None,
+            length: 0,
+        };
+        let route = NatsRouteInfo {
+            handler,
+            ..route("orders.{id}.get", "orders.*.get")
+        };
+        dispatch(route, &message, Arc::new(())).await
+    }
+
+    fn reports_for(request_id: &str) -> Vec<Report> {
+        let reports = recorder().0.lock().unwrap();
+        reports
+            .iter()
+            .filter(|report| report.request_id == request_id)
+            .cloned()
+            .collect()
+    }
+
+    fn expected(kind: &'static str, request_id: &str, detail: &str) -> Report {
+        Report {
+            kind,
+            request_id: request_id.to_string(),
+            route: "orders.{id}.get".to_string(),
+            path: "orders.42.get".to_string(),
+            detail: detail.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_server_error_reply_is_reported_with_the_subject_pattern() {
+        recorder();
+        let reply = dispatch_to(unavailable_handler, "nats-5xx").await;
+        assert_eq!(
+            header_value(&reply.headers, ERROR_STATUS_HEADER),
+            Some("503")
+        );
+
+        assert_eq!(
+            reports_for("nats-5xx"),
+            vec![expected("route_error", "nats-5xx", "503 STORE_DOWN")]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_client_error_reply_is_not_reported() {
+        recorder();
+        let reply = dispatch_to(rejecting_handler, "nats-4xx").await;
+        assert_eq!(
+            header_value(&reply.headers, ERROR_STATUS_HEADER),
+            Some("400")
+        );
+
+        assert_eq!(reports_for("nats-4xx"), vec![]);
+    }
+
+    #[tokio::test]
+    async fn a_handler_panic_is_answered_with_panic_and_reported_once() {
+        recorder();
+        let reply = dispatch_to(panicking_handler, "nats-panic").await;
+        assert_eq!(
+            header_value(&reply.headers, ERROR_CODE_HEADER),
+            Some("PANIC")
+        );
+
+        assert_eq!(
+            reports_for("nats-panic"),
+            vec![expected("panic", "nats-panic", "nats handler blew up")]
+        );
     }
 
     #[test]
