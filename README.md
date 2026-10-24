@@ -449,6 +449,36 @@ Each `register_*!` macro also registers the worker trait's `drain`, which the
 shutdown path calls once the server stops accepting connections; it defaults to
 a no-op.
 
+## Reporting errors (optional)
+
+A panicking route handler is caught and answered with a `500` whose code is
+`PANIC`, carrying the request's `x-request-id`, on HTTP the same as on NATS.
+
+To send server failures to an error tracker, implement `ErrorReporter` and hand
+it to the config:
+
+```rust
+struct Tracker;
+
+impl flatbed::ErrorReporter for Tracker {
+    fn route_error(&self, failure: &flatbed::RouteFailure<'_>) { /* a 5xx answer */ }
+    fn panic(&self, panic: &flatbed::PanicReport<'_>) { /* route or worker panic */ }
+    fn worker_failure(&self, failure: &flatbed::WorkerFailure<'_>) { /* worker Err */ }
+}
+
+let config = FlatbedConfig::new("My API").with_error_reporter(Arc::new(Tracker));
+```
+
+flatbed reports every 5xx a route answers (HTTP or NATS — never a 4xx), every
+panic it catches, and every worker failure with the worker's typed
+`FlatbedWorkerError`; the reporter's `flush` runs when graceful shutdown starts.
+Reports name the route template, concrete path or subject, status, error code,
+message, and request id — never headers, query strings, or bodies. With a
+reporter configured, `Flatbed::run` also installs a panic hook that captures a
+backtrace for each panic report and then calls the hook installed before it; a
+hook the service installs afterwards replaces it, and panics then arrive without
+a backtrace.
+
 ## Crates
 
 | Crate | Purpose |

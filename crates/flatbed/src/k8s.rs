@@ -577,8 +577,7 @@ where
                             reconcile_with_finalizer(&*reconciler_ref, app_ctx, obj).await
                         }
                     },
-                    |_resource, error, _ctx| {
-                        error!(reconciler = R::NAME, error = %error, "reconciliation error");
+                    |_resource, _error, _ctx| {
                         kube::runtime::controller::Action::requeue(
                             std::time::Duration::from_secs(60),
                         )
@@ -842,8 +841,7 @@ where
                             reconcile_with_finalizer_kube_native(&*reconciler_ref, app_ctx, obj).await
                         }
                     },
-                    |_resource, error, _ctx| {
-                        error!(reconciler = R::NAME, error = %error, "reconciliation error");
+                    |_resource, _error, _ctx| {
                         kube::runtime::controller::Action::requeue(
                             std::time::Duration::from_secs(60),
                         )

@@ -31,7 +31,8 @@ use tokio::sync::watch;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, warn};
 
-use crate::{WorkerFn, WorkerInfo};
+use crate::error_reporting::{self, CaughtPanic, PanicSite, WorkerFailure};
+use crate::{FlatbedWorkerError, WorkerFn, WorkerInfo};
 
 /// Lifecycle state of a supervised worker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -192,8 +193,8 @@ enum Exit {
     /// Returned `Ok(())` — a worker is expected to run for the process
     /// lifetime, so this is an exit, not a success.
     Completed,
-    Failed(String),
-    Panicked(String),
+    Failed(FlatbedWorkerError),
+    Panicked(CaughtPanic),
 }
 
 impl std::fmt::Display for Exit {
@@ -206,32 +207,42 @@ impl std::fmt::Display for Exit {
     }
 }
 
-fn panic_message(payload: &(dyn Any + Send)) -> String {
-    if let Some(s) = payload.downcast_ref::<&'static str>() {
-        return (*s).to_string();
-    }
-    if let Some(s) = payload.downcast_ref::<String>() {
-        return s.clone();
-    }
-    "non-string panic payload".to_string()
-}
-
-/// Run the worker in its own task so an unwinding panic surfaces as a
-/// `JoinError` instead of silently killing just that task. `None` means the
-/// task was cancelled, which carries no information about the worker.
+/// Run the worker in its own task, catching a panic as an [`Exit`] rather
+/// than letting it silently kill just that task. `None` means the task was
+/// cancelled, which carries no information about the worker.
 ///
 /// The handle aborts on drop so a cancelled supervisor takes its worker with
 /// it rather than leaving it running unobserved.
 async fn run_once(worker: WorkerFn, ctx: std::sync::Arc<dyn Any + Send + Sync>) -> Option<Exit> {
-    let handle = AbortOnDropHandle::new(tokio::spawn(async move { worker(ctx).await }));
+    let handle = AbortOnDropHandle::new(tokio::spawn(error_reporting::catch_panic(worker(ctx))));
     match handle.await {
-        Ok(Ok(())) => Some(Exit::Completed),
-        Ok(Err(e)) => Some(Exit::Failed(e.to_string())),
-        Err(join) if join.is_panic() => {
-            Some(Exit::Panicked(panic_message(join.into_panic().as_ref())))
-        }
+        Ok(Ok(Ok(()))) => Some(Exit::Completed),
+        Ok(Ok(Err(e))) => Some(Exit::Failed(e)),
+        Ok(Err(panic)) => Some(Exit::Panicked(panic)),
         Err(_) => None,
     }
+}
+
+/// Hand a worker's exit to the error reporter; returns whether one received
+/// it. A panic that exhausts the restart policy is reported twice — the
+/// panic, then the exhaustion — since they are distinct facts.
+fn report_exit(name: &'static str, exit: &Exit, restarts_exhausted: bool) -> bool {
+    let error = match exit {
+        Exit::Completed => None,
+        Exit::Failed(e) => Some(e),
+        Exit::Panicked(panic) => {
+            let reported = error_reporting::report_panic(PanicSite::Worker(name), panic);
+            if !restarts_exhausted {
+                return reported;
+            }
+            None
+        }
+    };
+    error_reporting::report_worker_failure(&WorkerFailure {
+        worker: name,
+        error,
+        restarts_exhausted,
+    })
 }
 
 /// Run a registered worker under supervision until it ends terminally.
@@ -270,10 +281,12 @@ pub(crate) async fn supervise(
         attempt = attempt.saturating_add(1);
 
         if attempt > policy.max_restarts {
+            let reported = report_exit(info.name, &exit, true);
             error!(
                 worker = info.name,
                 restarts = policy.max_restarts,
                 outcome = %exit,
+                flatbed.reported = reported,
                 "worker exhausted its restart policy",
             );
             fail(info.name, &healthz_tx, Some(&shutdown_tx));
@@ -281,11 +294,13 @@ pub(crate) async fn supervise(
         }
 
         let delay = jittered(policy.delay(attempt), info.name, attempt);
+        let reported = report_exit(info.name, &exit, false);
         warn!(
             worker = info.name,
             attempt,
             backoff_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
             outcome = %exit,
+            flatbed.reported = reported,
             "worker ended; restarting after backoff",
         );
         set_state(info.name, WorkerState::BackingOff);
@@ -303,20 +318,22 @@ fn terminate(
     healthz_tx: &watch::Sender<bool>,
     shutdown_tx: &watch::Sender<bool>,
 ) {
+    let reported = report_exit(name, exit, false);
     match exit {
         Exit::Completed => {
             error!(
                 worker = name,
+                flatbed.reported = reported,
                 "worker exited; workers are expected to run for the life of the process",
             );
             fail(name, healthz_tx, None);
         }
         Exit::Failed(e) => {
-            error!(worker = name, error = %e, "worker failed");
+            error!(worker = name, error = %e, flatbed.reported = reported, "worker failed");
             fail(name, healthz_tx, Some(shutdown_tx));
         }
         Exit::Panicked(p) => {
-            error!(worker = name, panic = %p, "worker panicked");
+            error!(worker = name, panic = %p, flatbed.reported = reported, "worker panicked");
             fail(name, healthz_tx, Some(shutdown_tx));
         }
     }
