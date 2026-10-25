@@ -103,20 +103,16 @@ impl SentryReporter {
             if level > tracing::Level::INFO {
                 return EventMapping::Ignore;
             }
-            let mut items = Vec::with_capacity(2);
-            if level == tracing::Level::ERROR && !reported(event) {
-                items.push(EventMapping::Event(Box::new(event_from_event(
-                    event, no_span,
-                ))));
+            let mapping = if level == tracing::Level::ERROR && !reported(event) {
+                EventMapping::Event(Box::new(event_from_event(event, no_span)))
             } else {
-                items.push(EventMapping::Breadcrumb(breadcrumb_from_event(
-                    event, no_span,
-                )));
+                EventMapping::Breadcrumb(breadcrumb_from_event(event, no_span))
+            };
+            if !logs {
+                return mapping;
             }
-            if logs {
-                items.push(EventMapping::Log(log_from_event(event, no_span)));
-            }
-            EventMapping::Combined(items.into())
+            let log = EventMapping::Log(log_from_event(event, no_span));
+            EventMapping::Combined(vec![mapping, log].into())
         })
     }
 }
@@ -565,6 +561,41 @@ mod tests {
         assert_eq!(tag(event, "worker"), Some("cache-warmer"));
         assert_eq!(tag(event, "code"), Some("CACHE_ERROR"));
         assert_eq!(tag(event, "restarts_exhausted"), Some("true"));
+    }
+
+    #[test]
+    fn worker_exit_without_an_error_is_a_message_event() {
+        let events = with_captured_events(|| {
+            for restarts_exhausted in [false, true] {
+                reporter().worker_failure(&WorkerFailure {
+                    worker: "poller",
+                    error: None,
+                    restarts_exhausted,
+                });
+            }
+        });
+
+        let summary: Vec<_> = events
+            .iter()
+            .map(|event| {
+                (
+                    event.message.as_deref(),
+                    tag(event, "worker"),
+                    tag(event, "restarts_exhausted"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (Some("worker exited"), Some("poller"), Some("false")),
+                (
+                    Some("worker exhausted its restart policy"),
+                    Some("poller"),
+                    Some("true")
+                ),
+            ]
+        );
     }
 
     #[test]
