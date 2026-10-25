@@ -9,6 +9,40 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+## [0.0.8] — 2026-10-25
+
+### Added
+
+- `ErrorReporter` trait and `FlatbedConfig::with_error_reporter`: server
+  failures are reported to an injected backend instead of a hard-wired one.
+  Route failures answering 5xx over HTTP or NATS (`route_error`), caught
+  panics in route handlers and workers with a backtrace (`panic`), and
+  worker failures — typed `Err`, `Ok(())` exit, restarts exhausted
+  (`worker_failure`) — are reported, never with headers, query strings or
+  bodies. A flatbed panic hook is installed only when a reporter is
+  configured and chains to the previous hook. `flush(2s)` runs when
+  shutdown starts, before the drains. Log lines accompanying a report carry
+  `flatbed.reported`.
+- `sentry` feature: `flatbed::sentry::SentryReporter` (`from_env`, `layer`,
+  `with_logs`), an `ErrorReporter` for Sentry and Sentry-protocol servers
+  (GlitchTip, Bugsink). Uses the `ureq` + rustls (ring) transport, so no
+  OpenSSL or `ca-certificates` is needed, and sends nothing without a DSN.
+  Includes `examples/sentry` and a README section.
+
+### Changed
+
+- **BREAKING:** `#[flatbed::main]` and the hidden `flatbed::tokio` re-export
+  are removed. Call `Flatbed::run` from your own `#[tokio::main]`.
+- **BREAKING:** the minimum supported Rust version is now 1.88.
+- **BREAKING:** an HTTP handler that panics is now caught and answered with
+  `500` code `PANIC` and the request's `x-request-id`; before, the panic
+  dropped the connection.
+- HTTP 5xx answers are now logged (`route failed`).
+
+### Fixed
+
+- The k8s controllers no longer log each reconcile failure twice.
+
 ## [0.0.7] — 2026-10-21
 
 ### Added
@@ -185,7 +219,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.7...HEAD
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.8...HEAD
+[0.0.8]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.7...flatbed-v0.0.8
 [0.0.7]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.6...flatbed-v0.0.7
 [0.0.6]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.5...flatbed-v0.0.6
 [0.0.5]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.4...flatbed-v0.0.5
