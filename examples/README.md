@@ -12,6 +12,7 @@ and hit with `curl`. They are ordered from simplest to most featureful.
 | [`raw-response`](raw-response)       | `Response::raw` — returning arbitrary media (CSV, SVG) from a handler instead of JSON/FlatBuffer. |
 | [`static-assets`](static-assets)     | Serving a bundled single-page app and its JSON API from one origin — `static_route!` for `dist/`, `#[route]` for `/api/*`, no CORS. |
 | [`embedded-assets`](embedded-assets) | The same app compiled into the binary — `static_route!(embed = ...)`, so the binary is the whole deployable and the image ships no `dist/`. |
+| [`sentry`](sentry)                   | The `sentry` feature — 5xx answers and panics reported to Sentry, GlitchTip, or a local Bugsink (in the compose file). |
 
 ## Running an example
 
@@ -24,7 +25,7 @@ docker compose up --build
 
 The app listens on `localhost:8080`; see each example's README for the exact
 endpoints and `curl` commands. Some examples start extra containers (Swagger UI
-on `:8081`, Prometheus on `:9090`).
+on `:8081`, Prometheus on `:9090`, Bugsink on `:8000`).
 
 ### Running without Docker
 

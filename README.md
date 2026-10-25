@@ -454,8 +454,9 @@ a no-op.
 A panicking route handler is caught and answered with a `500` whose code is
 `PANIC`, carrying the request's `x-request-id`, on HTTP the same as on NATS.
 
-To send server failures to an error tracker, implement `ErrorReporter` and hand
-it to the config:
+For Sentry and servers speaking its protocol, the `sentry` feature ships a
+ready reporter (see [below](#sentry-glitchtip-bugsink)). For any other error
+tracker, implement `ErrorReporter` and hand it to the config:
 
 ```rust
 struct Tracker;
@@ -479,11 +480,67 @@ backtrace for each panic report and then calls the hook installed before it; a
 hook the service installs afterwards replaces it, and panics then arrive without
 a backtrace.
 
+### Sentry, GlitchTip, Bugsink
+
+With the `sentry` feature, `flatbed::sentry::SentryReporter` sends those
+reports to any server that ingests Sentry events: Sentry itself, GlitchTip, or
+Bugsink.
+
+```rust
+use flatbed::sentry::SentryReporter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+
+let reporter = Arc::new(SentryReporter::from_env());
+tracing_subscriber::registry()
+    .with(tracing_subscriber::fmt::layer())
+    .with(reporter.layer())
+    .init();
+let config = FlatbedConfig::new("My API").with_error_reporter(reporter);
+```
+
+`from_env()` reads `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, and `SENTRY_RELEASE`.
+Without a DSN it does nothing: no client, no thread, no network. Call it first
+thing in `main` and keep the reporter alive; dropping it flushes the client.
+flatbed also flushes it (up to 2 s) when graceful shutdown starts.
+
+What is sent:
+
+- each 5xx answer as an event whose exception is the error code and message,
+  tagged `transport`, `method`, `route` (the template), `status`, `code`, and
+  `request_id`, with the concrete path as extra data;
+- each caught panic with the message and the backtrace as its stacktrace
+  (tagged like a route, or `worker` for a worker);
+- each worker failure, with the returned `FlatbedWorkerError` as the
+  exception, tagged `worker`, `code`, and `restarts_exhausted`;
+- OS, device, and Rust runtime contexts.
+
+What is not: request headers, query strings, bodies, client IPs, or any other
+default PII (`send_default_pii` is off). Sentry's own panic handler stays off,
+since flatbed catches panics and its hook supplies the backtrace.
+
+`layer()` is an optional `tracing` layer for the same client: `error!` events
+become Sentry events and `warn!`/`info!` events become breadcrumbs. flatbed's
+own failure logs carry `flatbed.reported = true`, so the layer keeps them as
+breadcrumbs instead of sending each failure twice. `with_logs()` also sends
+those events as Sentry Logs.
+
+To try it locally against Bugsink, run the [`sentry` example](examples/sentry)
+or start Bugsink alone (the superuser must be an email address):
+
+```bash
+docker run -d -p 8000:8000 -e SECRET_KEY=$(openssl rand -hex 32) \
+  -e CREATE_SUPERUSER=admin@example.com:admin -e PORT=8000 bugsink/bugsink
+```
+
+Log in at `http://localhost:8000`, create a team and a project, and start the
+service with the project's DSN in `SENTRY_DSN`.
+
 ## Crates
 
 | Crate | Purpose |
 |---|---|
-| [`flatbed`](crates/flatbed) | HTTP server, route registry, optional telemetry / OpenAPI / NATS / Kubernetes / pagination feature gates |
+| [`flatbed`](crates/flatbed) | HTTP server, route registry, optional telemetry / OpenAPI / NATS / Kubernetes / pagination / Sentry feature gates |
 | [`flatbed_macros`](crates/flatbed_macros) | `#[route]` and `#[nats_route]` procedural macros |
 | [`flatbed_build`](crates/flatbed_build) | Build-time FlatBuffer codegen and the `flatbed` CLI tool (`cargo install flatbed_build` ships the binary) |
 

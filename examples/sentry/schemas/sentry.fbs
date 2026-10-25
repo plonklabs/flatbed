@@ -1,0 +1,5 @@
+namespace sentry_example;
+
+table Empty {}
+
+root_type Empty;

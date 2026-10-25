@@ -40,7 +40,8 @@ Kubernetes pods behind an Envoy sidecar. Three crates:
 
 - **`flatbed`** — the framework runtime: Hyper-backed server, route
   registry, request/response types, error handling, optional
-  `telemetry` / `openapi` / `nats` / `k8s` / `pagination` feature gates.
+  `telemetry` / `openapi` / `nats` / `k8s` / `pagination` / `sentry`
+  feature gates.
 - **`flatbed_macros`** — procedural macros: `#[route]`, `#[worker]`.
 - **`flatbed_build`** — build-time FlatBuffer codegen and the
   standalone `flatbed` CLI tool that drives codegen from `.fbs`
