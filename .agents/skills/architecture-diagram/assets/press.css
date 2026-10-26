@@ -1,0 +1,143 @@
+/* Plonk Press: the one stylesheet of a published page and of its figures. In a figure a box's fill says who owns it, a green edge says it is new, a line's stroke says what kind of call it is. */
+:root {
+  --ground: #efe7d8;
+  --on-ground: #141412;
+  --box: #141412;
+  --paper: #e8dcc6;
+  --cream: #dcc9a9;
+  --ink: #141412;
+  --caption: #5a5246;
+  --green: #4e6851;
+  --green-tint: #b9c7ad;
+  --ochre: #e0a35c;
+  --ochre-tint: #efcf9f;
+  --red: #b83a2d;
+  --red-tint: #e9b4a9;
+  --grey: #8f8a80;
+  --grey-tint: color-mix(in srgb, var(--grey) 45%, var(--paper));
+
+  --plat: var(--cream);
+  --user: var(--paper);
+  --new: var(--green);
+  --new-tint: var(--green-tint);
+
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --ground: #1b1b1a; --on-ground: #dcc9a9; --box: transparent; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --ground: #1b1b1a; --on-ground: #dcc9a9; --box: transparent; color-scheme: dark; }
+
+/* Page */
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--ground); color: var(--on-ground); font-family: var(--sans);
+  font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 64px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+.label { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600; }
+code { font-family: var(--mono); font-variant-ligatures: none; font-size: .88em; background: var(--cream); color: var(--ink); padding: 1px 5px; border-radius: 4px; }
+a { color: inherit; }
+p { margin: 0; max-width: 68ch; }
+
+header.mast { border-bottom: 4px solid var(--on-ground); padding-bottom: 14px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.mast h1 { font-family: var(--mono); font-weight: 800; font-size: clamp(40px, 8vw, 76px); line-height: .95; letter-spacing: -.02em; margin: 0; text-transform: uppercase; text-wrap: balance; }
+.mast .dateline { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; opacity: .8; }
+.lede { font-size: 19px; max-width: 68ch; margin: 0; }
+
+section { display: flex; flex-direction: column; gap: 16px; }
+section > h2 { font-family: var(--mono); font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: .02em; margin: 0;
+  border-top: 2px solid var(--on-ground); padding-top: 10px; text-wrap: balance; }
+.fig-no { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; font-weight: 600; margin-right: 10px; opacity: .8; vertical-align: 3px; }
+
+/* The sheet a figure is drawn on: paper in both themes, so the figure's colours never change with the page's. */
+.sheet { background: var(--paper); color: var(--ink); border: 2px solid var(--box); border-radius: 16px; padding: 16px; }
+.scroll { overflow-x: auto; }
+
+/* Key under each sheet: only the kinds the figure uses */
+.key { display: flex; flex-wrap: wrap; gap: 8px 22px; padding-top: 14px; margin-top: 12px; border-top: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+  font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; color: var(--caption); }
+.key span { display: inline-flex; align-items: center; gap: 8px; }
+.k-box { width: 20px; height: 14px; border-radius: 4px; border: 2px dashed var(--ink); }
+.k-box.plat { background: var(--plat); }
+.k-box.user { background: var(--user); border-style: solid; }
+.k-box.new { background: var(--new-tint); border-style: solid; border-left: 6px solid var(--new); }
+.k-line { width: 26px; height: 0; border-top: 2px solid var(--ink); }
+.k-line.tool { border-top: 3px solid var(--new); }
+.k-line.ctl { border-top: 2px dotted var(--ink); }
+.k-line.db { border-top-width: 4px; }
+.k-line.wire { border-top-style: dashed; border-color: var(--caption); }
+
+/* Boxes, tables, tags, lists */
+.box { background: var(--cream); color: var(--ink); border: 2px solid var(--box); border-radius: 16px; padding: 20px 22px; min-width: 0; }
+.box .label { color: var(--caption); display: block; margin-bottom: 6px; }
+.box h3 { margin: 0 0 6px; font-family: var(--mono); font-size: 15px; text-transform: uppercase; letter-spacing: .04em; }
+.box code, .sheet code { background: var(--paper); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat .fig { font-family: var(--mono); font-size: 40px; font-weight: 800; line-height: 1; }
+.tone-green { background: var(--green-tint); border-left: 6px solid var(--green); }
+.tone-ochre { background: var(--ochre-tint); border-left: 6px solid var(--ochre); }
+.tone-red { background: var(--red-tint); border-left: 6px solid var(--red); }
+.quote { font-size: 18px; }
+.table-wrap { overflow-x: auto; border: 2px solid var(--box); border-radius: 16px; background: var(--cream); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; color: var(--ink); font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); }
+th { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--caption); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+.tag { font-family: var(--mono); font-weight: 800; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; padding: 1px 7px; border-radius: 4px; border: 2px solid var(--ink); white-space: nowrap; display: inline-block; }
+.tag.green { background: var(--green-tint); border-left: 6px solid var(--green); }
+.tag.ochre { background: var(--ochre-tint); border-left: 6px solid var(--ochre); }
+.tag.red { background: var(--red-tint); border-left: 6px solid var(--red); }
+.tag.grey { background: var(--grey-tint); border-left: 6px solid var(--grey); }
+ol, ul { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; max-width: 72ch; }
+ol li::marker { font-family: var(--mono); font-weight: 800; }
+.note { font-size: 14px; opacity: .85; }
+footer { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; border-top: 2px solid var(--on-ground); padding-top: 10px; opacity: .8; }
+
+/* SVG vocabulary */
+.d { display: block; width: 100%; height: auto; min-width: 760px; }
+.d text { font-family: var(--mono); fill: var(--ink); font-variant-ligatures: none; }
+.d .t-sans { font-family: var(--sans); }
+.d .t-kind { font-size: 11px; font-weight: 800; letter-spacing: .1em; fill: var(--caption); }
+.d .t-lg { font-size: 20px; font-weight: 800; }
+.d .t-md { font-size: 15px; font-weight: 800; }
+.d .t-sm { font-size: 13px; font-weight: 600; }
+.d .t-xs { font-size: 12px; }
+.d .t-soft { fill: var(--caption); }
+.d .t-new { fill: var(--new); font-weight: 800; }
+.d .t-line { font-size: 12px; font-weight: 600; }
+.d .halo { paint-order: stroke; stroke-width: 6px; stroke-linejoin: round; }
+.d .cluster-box { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+.d .ns-box { stroke: var(--ink); stroke-width: 2; stroke-dasharray: 8 5; }
+.d .ns-box.plat { fill: var(--plat); }
+.d .ns-box.user { fill: var(--user); stroke-width: 2.5; stroke-dasharray: none; }
+.d .pod-box { fill: none; stroke: var(--ink); stroke-width: 2; stroke-dasharray: 2 4; stroke-linecap: round; }
+.d .svc-box { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+.d .db-box { fill: var(--user); stroke: var(--ink); stroke-width: 2.5; }
+.d .chip { fill: var(--cream); stroke: var(--ink); stroke-width: 1.5; }
+.d .ext-box { fill: var(--paper); stroke: var(--caption); stroke-width: 2; stroke-dasharray: 5 4; }
+.d .pill { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+.d .new-fill { fill: var(--new-tint); }
+.d .new-edge { fill: var(--new); }
+.d .outline { fill: none; stroke: var(--ink); stroke-width: 2; }
+.d .ln-int, .d .ln-ctl, .d .ln-db { fill: none; stroke: var(--ink); stroke-width: 2; }
+.d .ln-ctl { stroke-dasharray: 1 5; stroke-linecap: round; stroke-width: 2.5; }
+.d .ln-db { stroke-width: 4; }
+.d .ln-tool { fill: none; stroke: var(--new); stroke-width: 3; }
+.d .ln-wire { fill: none; stroke: var(--caption); stroke-width: 2; }
+.d .dash { stroke-dasharray: 6 4; }
+.d .f-int, .d .f-ctl, .d .f-db { fill: var(--ink); }
+.d .f-tool { fill: var(--new); }
+.d .f-wire { fill: var(--caption); }
+.d .lifeline { stroke: var(--caption); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.d .note-box { fill: var(--ochre-tint); stroke: var(--ink); stroke-width: 1.5; }
+.d .note-edge { fill: var(--ochre); }
+.d .num { fill: var(--ink); }
+.d .t-num { fill: var(--cream); font-size: 10px; font-weight: 800; }
