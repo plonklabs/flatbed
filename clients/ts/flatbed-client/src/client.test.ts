@@ -101,6 +101,79 @@ test("a non-2xx response rejects with FlatbedError carrying the status", () =>
     (e: unknown) => e instanceof FlatbedError && e.status === 404,
   ));
 
+const rejection = (reply: FlatbedResponse, contentType?: string): Promise<FlatbedError> =>
+  call(reply, "GET", "/x", new Uint8Array(), undefined, contentType).then(
+    () => assert.fail("expected a rejection"),
+    (e: unknown) => {
+      assert.ok(e instanceof FlatbedError);
+      return e;
+    },
+  );
+
+const failed = (headers?: Record<string, string>, body: Uint8Array = new Uint8Array()): FlatbedResponse => ({
+  status: 500,
+  ok: false,
+  headers,
+  body,
+});
+
+const json = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value));
+
+test("FlatbedError carries the server's error identity headers", () =>
+  rejection(failed({ "x-error-code": "conflict", "x-error-message": "already exists", "x-request-id": "req-7" })).then(
+    (e) => {
+      assert.equal(e.code, "conflict");
+      assert.equal(e.serverMessage, "already exists");
+      assert.equal(e.requestId, "req-7");
+    },
+  ));
+
+test("FlatbedError identity fields are undefined when the headers are absent", () =>
+  rejection(failed({})).then((e) => {
+    assert.equal(e.status, 500);
+    assert.equal(e.code, undefined);
+    assert.equal(e.serverMessage, undefined);
+    assert.equal(e.requestId, undefined);
+  }));
+
+test("FlatbedError identity fields are undefined when the transport returns no headers", () =>
+  rejection(failed()).then((e) => {
+    assert.equal(e.code, undefined);
+    assert.equal(e.serverMessage, undefined);
+    assert.equal(e.requestId, undefined);
+  }));
+
+test("a JSON error takes code and message from the body and the request id from the header", () =>
+  rejection(failed({ "x-request-id": "req-9" }, json({ code: "not_found", message: "no such user" })), JSON_CONTENT_TYPE).then(
+    (e) => {
+      assert.equal(e.code, "not_found");
+      assert.equal(e.serverMessage, "no such user");
+      assert.equal(e.requestId, "req-9");
+    },
+  ));
+
+test("a JSON error with a non-JSON body leaves code and message undefined", () =>
+  rejection(failed({}, new TextEncoder().encode("Not Found")), JSON_CONTENT_TYPE).then((e) => {
+    assert.equal(e.code, undefined);
+    assert.equal(e.serverMessage, undefined);
+  }));
+
+test("a JSON error answering a FlatBuffer request takes code and message from the body", () =>
+  rejection(failed({ "content-type": "application/json" }, json({ code: "BAD_REQUEST", message: "bad body" }))).then(
+    (e) => {
+      assert.equal(e.code, "BAD_REQUEST");
+      assert.equal(e.serverMessage, "bad body");
+    },
+  ));
+
+test("a FlatBuffer error does not read code or message from the body", () =>
+  rejection(
+    failed({ "content-type": "application/x-flatbuffers" }, json({ code: "not_found", message: "no such user" })),
+  ).then((e) => {
+    assert.equal(e.code, undefined);
+    assert.equal(e.serverMessage, undefined);
+  }));
+
 test("decode receives the response bytes", () =>
   call(ok(new Uint8Array([7, 8])), "GET", "/x", new Uint8Array()).then(({ out }) => {
     assert.deepEqual(out, new Uint8Array([7, 8]));
