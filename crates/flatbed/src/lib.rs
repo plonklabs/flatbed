@@ -1059,15 +1059,7 @@ impl Response<()> {
 /// # Example
 ///
 /// ```rust,ignore
-/// use flatbed::{worker, FlatbedWorkerError};
-/// use std::sync::Arc;
-///
-/// #[worker]
-/// async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlatbedWorkerError> {
-///     ctx.do_something().await
-///         .map_err(|e| FlatbedWorkerError::new("TASK_ERROR", e.to_string()))?;
-///     Ok(())
-/// }
+/// let err = FlatbedWorkerError::new("TASK_ERROR", e.to_string());
 /// ```
 #[derive(Debug, Clone)]
 pub struct FlatbedWorkerError {
@@ -1704,7 +1696,7 @@ pub fn get_static_routes() -> Vec<StaticRouteInfo> {
 /// Worker function signature for background tasks
 ///
 /// Workers receive the application context wrapped as `Arc<dyn Any + Send + Sync>`.
-/// The `#[worker]` macro generates a wrapper that downcasts to the correct concrete type.
+/// The `register_*!` macros generate a wrapper that downcasts to the correct concrete type.
 pub type WorkerFn = fn(
     std::sync::Arc<dyn std::any::Any + Send + Sync>,
 ) -> std::pin::Pin<
@@ -1788,7 +1780,7 @@ inventory::collect!(WorkerInfo);
 
 /// Get all registered workers
 ///
-/// Returns a vector of all workers registered via `#[worker]` macros.
+/// Returns a vector of all workers registered via the `register_*!` macros.
 ///
 /// # Example
 ///
@@ -1808,9 +1800,9 @@ pub fn get_workers() -> Vec<&'static WorkerInfo> {
 
 /// Trait-based background worker.
 ///
-/// Implement this trait to define a simple background worker without proc macros.
-/// The runtime executor [`run_basic_worker`] handles context downcasting —
-/// matching the behavior of `#[worker]`.
+/// Implement this trait to define a simple background worker and register it
+/// with [`register_worker!`]. The runtime executor [`run_basic_worker`]
+/// handles context downcasting.
 ///
 /// # Example
 ///
