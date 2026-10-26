@@ -145,5 +145,4 @@ the owner's changes are made in that file and published again.
 
 A page is published as a claude.ai artifact, private until shared, from the
 file it is kept in, and published again from the same file after each change
-so its link stays the same. As of 2026-10-25 a self-hosted artifact site for
-these pages is planned, and this section is the one to change when it ships.
+so its link stays the same.

@@ -7,6 +7,7 @@ The stylesheet and the drawing library are inlined, so the page needs nothing
 but Google Fonts.
 """
 import argparse
+import html
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -30,7 +31,7 @@ def main():
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{args.title}</title>
+<title>{html.escape(args.title)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="{FONTS}">
