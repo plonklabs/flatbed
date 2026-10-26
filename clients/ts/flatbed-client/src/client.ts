@@ -1,5 +1,5 @@
 import { FlatbedError } from "./error.js";
-import { fetchTransport, type Transport } from "./transport.js";
+import { fetchTransport, type FlatbedResponse, type Transport } from "./transport.js";
 
 /** The `Content-Type`/`Accept` for the FlatBuffer wire format (the default). */
 export const FLATBUFFERS_CONTENT_TYPE = "application/x-flatbuffers";
@@ -50,7 +50,36 @@ export const request = <T>(
   return transport
     .send({ method, url: config.baseUrl.replace(/\/+$/, "") + path, headers, body: sendBody })
     .then((res) => {
-      if (!res.ok) throw new FlatbedError(res.status, `${method} ${path} → ${res.status}`);
+      if (!res.ok) throw toFlatbedError(res, method, path, contentType);
       return decode(res.body);
     });
+};
+
+const asString = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined);
+
+const parseJsonObject = (bytes: Uint8Array): Readonly<Record<string, unknown>> => {
+  try {
+    const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+};
+
+/**
+ * A FlatBuffer route error carries its code and message in `x-error-code` /
+ * `x-error-message`; a JSON error carries them as the body's `code` / `message`.
+ * Framework-level failures (an undecodable request, say) answer in JSON whatever
+ * the request's format, so the response's own `content-type` decides, falling
+ * back to the request's when the transport reports no headers.
+ */
+const toFlatbedError = (res: FlatbedResponse, method: string, path: string, contentType: string): FlatbedError => {
+  const headers = res.headers ?? {};
+  const isJson = (headers["content-type"] ?? contentType).startsWith(JSON_CONTENT_TYPE);
+  const body = isJson ? parseJsonObject(res.body) : {};
+  return new FlatbedError(res.status, `${method} ${path} → ${res.status}`, {
+    code: headers["x-error-code"] ?? asString(body.code),
+    serverMessage: headers["x-error-message"] ?? asString(body.message),
+    requestId: headers["x-request-id"],
+  });
 };

@@ -106,10 +106,52 @@ const axiosTransport: Transport = {
   send: ({ method, url, headers, body }) =>
     axios
       .request({ method, url, headers, data: body, responseType: "arraybuffer", validateStatus: () => true })
-      .then((r) => ({ status: r.status, ok: r.status >= 200 && r.status < 300, body: new Uint8Array(r.data) })),
+      .then((r) => ({
+        status: r.status,
+        ok: r.status >= 200 && r.status < 300,
+        headers: r.headers as Record<string, string>,
+        body: new Uint8Array(r.data),
+      })),
 };
 
 const api = createFlatbedClient({ baseUrl: "http://svc:8080", transport: axiosTransport });
 ```
 
-A non-2xx response rejects with `FlatbedError` carrying the `status`.
+`headers` (lowercase names) is optional, but without it a `FlatbedError` loses
+the server's error identity below.
+
+## Errors
+
+A non-2xx response rejects with `FlatbedError`:
+
+| Field | Source |
+| --- | --- |
+| `status` | the HTTP status |
+| `code` | `x-error-code`, or the body's `code` when the response is JSON |
+| `serverMessage` | `x-error-message`, or the body's `message` when the response is JSON |
+| `requestId` | `x-request-id` |
+
+Each identity field is `undefined` when the response doesn't carry it: a 404
+for an unknown path, a proxy-generated error, a transport without headers. A
+framework-level failure (a request body that doesn't decode, say) carries `code`
+and `serverMessage` but no `requestId`.
+
+Across origins the browser hides these headers unless the service's CORS
+response lists them in `Access-Control-Expose-Headers`.
+
+`requestId` is what links a frontend failure to the backend's: a flatbed
+service built with the `sentry` feature tags its events `request_id`, so tag
+the frontend event the same way with your app's own `@sentry/browser`
+(the client has no Sentry dependency):
+
+```ts
+import * as Sentry from "@sentry/browser";
+import { FlatbedError } from "@plonklabs/flatbed-client";
+
+api.getUsersById({ pathParams: { id: "42" } }).catch((e: unknown) => {
+  if (e instanceof FlatbedError) {
+    Sentry.captureException(e, { tags: { request_id: e.requestId, error_code: e.code } });
+  }
+  throw e;
+});
+```

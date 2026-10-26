@@ -7,11 +7,17 @@ export interface FlatbedRequest {
   body?: Uint8Array;
 }
 
-/** A transport's reply: status plus the raw response bytes. */
+/** A transport's reply: status, headers, and the raw response bytes. */
 export interface FlatbedResponse {
   status: number;
   /** `true` iff the server returned a 2xx status; the client throws {@link FlatbedError} when this is `false`. */
   ok: boolean;
+  /**
+   * Response headers keyed by lowercase name. The client reads the error
+   * identity headers from them; a transport that omits them yields a
+   * {@link FlatbedError} without that identity.
+   */
+  headers?: Readonly<Record<string, string>>;
   body: Uint8Array;
 }
 
@@ -24,22 +30,29 @@ export interface Transport {
   send(req: FlatbedRequest): Promise<FlatbedResponse>;
 }
 
+// `Headers.forEach` yields lowercased names.
+const headerRecord = (headers: Headers): Record<string, string> => {
+  const record: Record<string, string> = {};
+  headers.forEach((value, name) => {
+    record[name] = value;
+  });
+  return record;
+};
+
 /** The default transport, backed by `fetch`. */
 export function fetchTransport(
   fetchImpl: typeof globalThis.fetch = globalThis.fetch,
 ): Transport {
   return {
-    async send({ method, url, headers, body }) {
-      const init: RequestInit = { method, headers };
-      if (body !== undefined) {
-        init.body = body as BodyInit;
-      }
-      const res = await fetchImpl(url, init);
-      return {
-        status: res.status,
-        ok: res.ok,
-        body: new Uint8Array(await res.arrayBuffer()),
-      };
-    },
+    send: ({ method, url, headers, body }) =>
+      fetchImpl(url, body === undefined ? { method, headers } : { method, headers, body: body as BodyInit }).then(
+        (res) =>
+          res.arrayBuffer().then((bytes) => ({
+            status: res.status,
+            ok: res.ok,
+            headers: headerRecord(res.headers),
+            body: new Uint8Array(bytes),
+          })),
+      ),
   };
 }

@@ -4,13 +4,14 @@ import { test } from "node:test";
 import { fetchTransport } from "./transport.js";
 
 /** A minimal `fetch` stand-in that records its call and returns bytes. */
-function stubFetch(status: number, body: Uint8Array) {
+function stubFetch(status: number, body: Uint8Array, headers: HeadersInit = {}) {
   const calls: { url: string; init?: RequestInit }[] = [];
   const impl = (async (url: string, init?: RequestInit) => {
     calls.push({ url, init });
     return {
       status,
       ok: status >= 200 && status < 300,
+      headers: new Headers(headers),
       arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
     };
   }) as unknown as typeof globalThis.fetch;
@@ -45,4 +46,11 @@ test("fetchTransport maps status, ok, and the response bytes", async () => {
   assert.equal(res.status, 503);
   assert.equal(res.ok, false);
   assert.deepEqual(res.body, new Uint8Array([4, 5, 6]));
+});
+
+test("fetchTransport maps the response headers under lowercase names", async () => {
+  const { impl } = stubFetch(500, new Uint8Array(), { "X-Request-Id": "req-1", "X-Error-Code": "internal" });
+  const res = await fetchTransport(impl).send({ method: "GET", url: "http://svc/h", headers: {} });
+  assert.equal(res.headers?.["x-request-id"], "req-1");
+  assert.equal(res.headers?.["x-error-code"], "internal");
 });
