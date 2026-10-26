@@ -42,7 +42,7 @@ Kubernetes pods behind an Envoy sidecar. Three crates:
   registry, request/response types, error handling, optional
   `telemetry` / `openapi` / `nats` / `k8s` / `pagination` / `sentry`
   feature gates.
-- **`flatbed_macros`** — procedural macros: `#[route]`, `#[worker]`.
+- **`flatbed_macros`** — procedural macros: `#[route]`, `#[nats_route]`.
 - **`flatbed_build`** — build-time FlatBuffer codegen and the
   standalone `flatbed` CLI tool that drives codegen from `.fbs`
   schemas.
@@ -224,7 +224,7 @@ the PR description and commit message.
 
 ## Worker and Route Discovery
 
-The `#[worker]` and `#[route]` macros use the `inventory` crate for
+The `register_*!` worker macros and `#[route]` use the `inventory` crate for
 **compile-time registration**:
 
 - **No re-exports needed**: simply declaring a module (`mod workers;`)
@@ -233,17 +233,28 @@ The `#[worker]` and `#[route]` macros use the `inventory` crate for
 - **Don't suppress unused-import warnings**: if the compiler says a
   re-export is unused, it's genuinely unused. The inventory system
   discovers items regardless of module visibility.
-- Workers are spawned automatically by `Flatbed::run()`.
+- Workers are spawned automatically by `Flatbed::run()` and are expected
+  to run for the life of the process. A worker that only has work in some
+  deployments overrides `Worker::enabled` instead of returning `Ok(())`.
 
 ```rust
 // workers/mod.rs — correct pattern
 mod deploy;  // Just declare, no `pub use` needed
 
 // workers/deploy.rs
-#[worker(name = "my-worker", description = "Does work")]
-pub async fn my_worker(ctx: Arc<AppContext>) -> Result<(), FlatbedWorkerError> {
-    // Worker logic
+#[derive(Default)]
+pub struct Deploy;
+
+impl Worker for Deploy {
+    type Context = AppContext;
+    const NAME: &'static str = "deploy";
+
+    fn run(&self, ctx: Arc<AppContext>) -> flatbed::BoxFuture<Result<(), FlatbedWorkerError>> {
+        Box::pin(async move { /* long-running worker loop */ })
+    }
 }
+
+flatbed::register_worker!(Deploy, AppContext);
 ```
 
 ## Static File Serving and Raw Responses

@@ -414,6 +414,23 @@ reason, marks `/healthz` unhealthy and starts graceful shutdown; returning
 is a job that stopped being done. One-shot initialisation belongs in the boot
 function passed to `Flatbed::run`, which already runs before traffic arrives.
 
+A `Worker` that only has work in some deployments says so with `enabled`,
+checked once against the application context before the worker would start:
+
+```rust
+impl flatbed::Worker for CorednsReplicas {
+    fn enabled(&self, ctx: &AppContext) -> bool {
+        ctx.config.provider == Provider::K3s
+    }
+
+    // ...
+}
+```
+
+It defaults to `true`. A worker it rejects is never started, its `drain` never
+runs, the process stays healthy, and the worker is reported as `disabled`; the
+startup log names it.
+
 Kubernetes stays the outer supervisor. Where a pod restart per blip is too
 blunt — a WAN connection holder riding out a broker outage — set the worker's
 `RESTART` const and it is re-run in place instead:
@@ -443,7 +460,7 @@ counts as a recovery. Ten consecutive restarts are allowed
 Any worker that is not running is named on its own line in the `/healthz` body,
 so a failing probe names the worker behind it, and on a telemetry backend that
 supports labelled gauges each worker's state — `running`, `backing-off`,
-`failed` — is also a `flatbed_worker_state` series in `/metrics`.
+`failed`, `disabled` — is also a `flatbed_worker_state` series in `/metrics`.
 
 Each `register_*!` macro also registers the worker trait's `drain`, which the
 shutdown path calls once the server stops accepting connections; it defaults to

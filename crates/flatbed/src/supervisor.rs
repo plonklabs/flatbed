@@ -17,6 +17,10 @@
 //! larger of the policy's two bounds — is treated as a recovery and resets
 //! the count, so the bound only ever measures consecutive rapid failures.
 //!
+//! A worker whose `enabled` check rejects the application context is never
+//! started; it is recorded as [`WorkerState::Disabled`] and leaves health
+//! alone.
+//!
 //! Once graceful shutdown has begun a worker's exit is a consequence of it,
 //! so the supervisor logs the outcome and does nothing else.
 
@@ -29,7 +33,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 use tokio_util::task::AbortOnDropHandle;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::error_reporting::{self, CaughtPanic, PanicSite, WorkerFailure};
 use crate::{FlatbedWorkerError, WorkerFn, WorkerInfo};
@@ -44,6 +48,9 @@ pub enum WorkerState {
     /// The worker ended terminally: no restart policy, or the policy's
     /// restart bound was exceeded.
     Failed,
+    /// The worker's `enabled` check returned `false` at startup, so it was
+    /// never started.
+    Disabled,
 }
 
 impl WorkerState {
@@ -54,15 +61,17 @@ impl WorkerState {
             WorkerState::Running => "running",
             WorkerState::BackingOff => "backing-off",
             WorkerState::Failed => "failed",
+            WorkerState::Disabled => "disabled",
         }
     }
 }
 
 #[cfg(feature = "telemetry")]
-const ALL_STATES: [WorkerState; 3] = [
+const ALL_STATES: [WorkerState; 4] = [
     WorkerState::Running,
     WorkerState::BackingOff,
     WorkerState::Failed,
+    WorkerState::Disabled,
 ];
 
 /// Opt-in restart policy for a registered worker.
@@ -143,6 +152,14 @@ static STATE_GAUGE: std::sync::OnceLock<std::sync::Arc<dyn crate::telemetry::Gau
 pub fn worker_states() -> Vec<(&'static str, WorkerState)> {
     let states = STATES.lock().unwrap_or_else(PoisonError::into_inner);
     states.iter().map(|(name, state)| (*name, *state)).collect()
+}
+
+pub(crate) fn is_disabled(name: &str) -> bool {
+    STATES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(name)
+        .is_some_and(|state| *state == WorkerState::Disabled)
 }
 
 /// Register the `flatbed_worker_state` gauge so supervisor transitions reach
@@ -245,13 +262,42 @@ fn report_exit(name: &'static str, exit: &Exit, restarts_exhausted: bool) -> boo
     })
 }
 
-/// Run a registered worker under supervision until it ends terminally.
+/// Evaluate the worker's `enabled` check, catching a panic so it fails the
+/// worker loudly instead of silently ending the supervisor task.
+async fn check_enabled(
+    info: &WorkerInfo,
+    ctx: &(dyn Any + Send + Sync),
+) -> Result<bool, CaughtPanic> {
+    let Some(enabled) = info.enabled else {
+        return Ok(true);
+    };
+    error_reporting::catch_panic(Box::pin(async move { enabled(ctx) })).await
+}
+
+/// Run a registered worker under supervision until it ends terminally, or
+/// not at all when its `enabled` check rejects the context.
 pub(crate) async fn supervise(
     info: WorkerInfo,
     ctx: std::sync::Arc<dyn Any + Send + Sync>,
     healthz_tx: watch::Sender<bool>,
     shutdown_tx: watch::Sender<bool>,
 ) {
+    match check_enabled(&info, &*ctx).await {
+        Ok(true) => {}
+        Ok(false) => {
+            info!(
+                worker = info.name,
+                "worker disabled for this context; not starting"
+            );
+            set_state(info.name, WorkerState::Disabled);
+            return;
+        }
+        Err(panic) => {
+            terminate(info.name, &Exit::Panicked(panic), &healthz_tx, &shutdown_tx);
+            return;
+        }
+    }
+
     let mut shutdown_rx = shutdown_tx.subscribe();
     let mut attempt = 0u32;
 
@@ -387,6 +433,7 @@ mod tests {
             description: None,
             worker,
             restart,
+            enabled: None,
         }
     }
 
@@ -466,6 +513,25 @@ mod tests {
         assert!(!*healthz_tx.borrow());
         assert!(*shutdown_tx.borrow());
         assert_eq!(state_of("panicking-worker"), Some(WorkerState::Failed));
+    }
+
+    #[tokio::test]
+    async fn panicking_enabled_check_marks_unhealthy_and_starts_shutdown() {
+        let (healthz_tx, shutdown_tx) = channels();
+        let mut worker = info("panicking-check", ok_worker, None);
+        worker.enabled = Some(|_| panic!("enabled check panicked on purpose"));
+
+        supervise(
+            worker,
+            Arc::new(()),
+            healthz_tx.clone(),
+            shutdown_tx.clone(),
+        )
+        .await;
+
+        assert!(!*healthz_tx.borrow());
+        assert!(*shutdown_tx.borrow());
+        assert_eq!(state_of("panicking-check"), Some(WorkerState::Failed));
     }
 
     #[tokio::test]

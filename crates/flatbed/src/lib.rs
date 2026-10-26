@@ -1722,6 +1722,12 @@ pub type DrainFn = fn(
     Box<dyn std::future::Future<Output = Result<(), FlatbedWorkerError>> + Send>,
 >;
 
+/// Startup check deciding whether a registered worker runs in this process.
+///
+/// Receives the application context as `&dyn Any`; the registration macro
+/// generates a function that downcasts it to the worker's context type.
+pub type EnabledFn = fn(&(dyn std::any::Any + Send + Sync)) -> bool;
+
 /// Worker metadata registered via the `register_*!` macros
 ///
 /// This struct is collected via the `inventory` crate at runtime.
@@ -1736,6 +1742,10 @@ pub struct WorkerInfo {
     /// Opt-in in-process restart policy. `None` makes the worker's first
     /// exit terminal.
     pub restart: Option<RestartPolicy>,
+    /// Evaluated once against the application context before the worker
+    /// starts; `false` leaves the worker unstarted and reported as
+    /// [`WorkerState::Disabled`]. `None` means always enabled.
+    pub enabled: Option<EnabledFn>,
 }
 
 // Manual Debug implementation to avoid printing function pointers
@@ -1746,6 +1756,7 @@ impl std::fmt::Debug for WorkerInfo {
             .field("description", &self.description)
             .field("worker", &"<worker_fn>")
             .field("restart", &self.restart)
+            .field("enabled", &self.enabled.map(|_| "<enabled_fn>"))
             .finish()
     }
 }
@@ -1860,6 +1871,25 @@ pub trait Worker: Send + Sync + 'static {
     /// passed to [`Flatbed::run`], not in a worker.
     fn run(&self, ctx: std::sync::Arc<Self::Context>) -> BoxFuture<Result<(), FlatbedWorkerError>>;
 
+    /// Whether this worker runs in this process. Evaluated once against the
+    /// application context after boot, before the worker would start.
+    /// Returning `false` never starts the worker or its drain, keeps the
+    /// process healthy, and reports the worker as
+    /// [`WorkerState::Disabled`] in `/healthz` and `flatbed_worker_state`.
+    /// Defaults to `true`.
+    ///
+    /// Use it for a worker that only has work in some deployments, rather
+    /// than returning `Ok(())` from [`run`](Worker::run):
+    ///
+    /// ```rust,ignore
+    /// fn enabled(&self, ctx: &AppContext) -> bool {
+    ///     ctx.config.provider == Provider::K3s
+    /// }
+    /// ```
+    fn enabled(&self, _ctx: &Self::Context) -> bool {
+        true
+    }
+
     /// Finish in-progress work during graceful shutdown, within the
     /// configured shutdown budget. Defaults to a no-op.
     fn drain(
@@ -1885,6 +1915,19 @@ where
         let worker = W::default();
         worker.run(ctx).await
     })
+}
+
+/// Evaluate [`Worker::enabled`] by downcasting the context.
+///
+/// A context of the wrong type counts as enabled, so the mismatch surfaces
+/// through the supervised [`run_basic_worker`] panic instead of hiding the
+/// worker.
+pub fn basic_worker_enabled<W>(ctx: &(dyn std::any::Any + Send + Sync)) -> bool
+where
+    W: Worker + Default,
+{
+    ctx.downcast_ref::<W::Context>()
+        .is_none_or(|ctx| W::default().enabled(ctx))
 }
 
 /// Drain a [`Worker`] by downcasting the context and delegating to
@@ -1934,6 +1977,7 @@ macro_rules! register_kube_reconciler {
                 name: <$reconciler as $crate::k8s::KubeReconciler>::NAME,
                 description: <$reconciler as $crate::k8s::KubeReconciler>::DESCRIPTION,
                 restart: <$reconciler as $crate::k8s::KubeReconciler>::RESTART,
+                enabled: ::core::option::Option::None,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -1997,6 +2041,7 @@ macro_rules! register_kube_native_reconciler {
                 name: <$reconciler as $crate::k8s::KubeNativeReconciler>::NAME,
                 description: <$reconciler as $crate::k8s::KubeNativeReconciler>::DESCRIPTION,
                 restart: <$reconciler as $crate::k8s::KubeNativeReconciler>::RESTART,
+                enabled: ::core::option::Option::None,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -2064,6 +2109,7 @@ macro_rules! register_kube_watcher {
                 name: <$watcher as $crate::k8s::KubeWatcher>::NAME,
                 description: <$watcher as $crate::k8s::KubeWatcher>::DESCRIPTION,
                 restart: <$watcher as $crate::k8s::KubeWatcher>::RESTART,
+                enabled: ::core::option::Option::None,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -2123,6 +2169,7 @@ macro_rules! register_stream_worker {
                 name: <$stream_worker as $crate::nats::StreamWorker>::NAME,
                 description: <$stream_worker as $crate::nats::StreamWorker>::DESCRIPTION,
                 restart: <$stream_worker as $crate::nats::StreamWorker>::RESTART,
+                enabled: ::core::option::Option::None,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -2189,6 +2236,7 @@ macro_rules! register_kv_worker {
                 name: <$kv_worker as $crate::kv::KvWorker>::NAME,
                 description: <$kv_worker as $crate::kv::KvWorker>::DESCRIPTION,
                 restart: <$kv_worker as $crate::kv::KvWorker>::RESTART,
+                enabled: ::core::option::Option::None,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
@@ -2245,6 +2293,12 @@ macro_rules! register_worker {
                 name: <$worker_type as $crate::Worker>::NAME,
                 description: <$worker_type as $crate::Worker>::DESCRIPTION,
                 restart: <$worker_type as $crate::Worker>::RESTART,
+                enabled: ::core::option::Option::Some({
+                    fn __enabled(ctx: &(dyn ::std::any::Any + Send + Sync)) -> bool {
+                        $crate::basic_worker_enabled::<$worker_type>(ctx)
+                    }
+                    __enabled
+                }),
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
