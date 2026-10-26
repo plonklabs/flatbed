@@ -1,0 +1,117 @@
+<header class="mast">
+  <h1>One pi,<br>two sessions</h1>
+  <div class="dateline">Plonk · keel's per-user agents · proposal</div>
+</header>
+
+<section>
+  <p class="lede">A keel user's agent as one pod that is usually at zero. When it's up, one pi process holds the assistant and the supervisor as two sessions, and they talk only through the fleet's ledger.</p>
+</section>
+
+<section class="fig">
+  <h2><span class="fig-no">Fig. 1</span>In the cluster</h2>
+  <p>The user's namespace holds everything that carries their data. NATS carries only chat messages, a "tick owed" marker and one timestamp; the waker watches those and moves the pod between 0 and 1 replicas.</p>
+  <div class="sheet">
+    <div class="scroll"><svg class="d" id="f1"></svg></div>
+    <div class="key">
+      <span><i class="k-box user"></i>User namespace</span>
+      <span><i class="k-box plat"></i>Platform namespace</span>
+      <span><i class="k-box new"></i>New piece</span>
+      <span><i class="k-line int"></i>Messaging or a fleet call</span>
+      <span><i class="k-line tool"></i>Tool call between the sessions</span>
+      <span><i class="k-line ctl"></i>Scaling</span>
+      <span><i class="k-line db"></i>Ledger or database write</span>
+      <span><i class="k-line wire"></i>Watches, or outside the cluster</span>
+    </div>
+  </div>
+</section>
+
+<section class="fig">
+  <h2><span class="fig-no">Fig. 2</span>The user writes while the pod is asleep</h2>
+  <p>The message waits in the user's JetStream durable until the pod is up; the reply goes out through keel's channel bridge.</p>
+  <div class="sheet">
+    <div class="scroll"><svg class="d" id="f2"></svg></div>
+    <div class="key">
+      <span><i class="k-line int"></i>Message or call</span>
+      <span><i class="k-line ctl"></i>Scaling</span>
+      <span><i class="k-line wire"></i>Reply or read</span>
+    </div>
+  </div>
+</section>
+
+<script>
+Diagram.arch("f1", {
+  height: 1090,
+  title: "Telegram reaches keel's api, which publishes to nats. The waker watches the user's subjects and scales the agent pod; inside it one pi host runs a supervisor and an assistant session beside the fleet, its ledger and worker sessions, which write the user's database in rds.",
+  boxes: [
+    { kind: "pill", x: 1005, y: 14, w: 170, h: 38, name: "the user" },
+    { kind: "ext", x: 1005, y: 190, w: 170, h: 64, tag: "MESSAGING", name: "Telegram", caption: "outside the cluster" },
+    { kind: "cluster", x: 40, y: 90, w: 930, h: 985, name: "omega/plonk", note: "one user shown; every user has the same" },
+    { kind: "ns", x: 80, y: 150, w: 460, h: 120, name: "plonk" },
+    { kind: "svc", x: 100, y: 190, w: 420, h: 64, name: "waker", sub: "pending or due → 1 replica · drained and idle → 0", isNew: true },
+    { kind: "ns", x: 580, y: 150, w: 350, h: 120, name: "keel-cloud" },
+    { kind: "svc", x: 600, y: 190, w: 310, h: 64, name: "api", sub: "Telegram bot · user channels" },
+    { kind: "ns", x: 80, y: 300, w: 850, h: 130, name: "nats" },
+    { kind: "svc", x: 100, y: 336, w: 810, h: 80, name: "" },
+    { kind: "chip", x: 116, y: 370, w: 186, h: 34, name: "fleet.<user>.tick", isNew: true },
+    { kind: "chip", x: 314, y: 370, w: 204, h: 34, name: "KV fleet.<user>.next-wake", isNew: true },
+    { kind: "chip", x: 530, y: 370, w: 180, h: 34, name: "keel.channel.in.<uuid>" },
+    { kind: "chip", x: 720, y: 370, w: 180, h: 34, name: "keel.channel.out.<uuid>" },
+    { kind: "ns", tone: "user", x: 80, y: 460, w: 850, h: 420, name: "keel-user-<id>" },
+    { kind: "pod", x: 120, y: 500, w: 790, h: 360, name: "agent · 0 or 1 replica" },
+    { kind: "proc", x: 140, y: 540, w: 750, h: 145, name: "plonk pi host" },
+    { kind: "svc", x: 200, y: 590, w: 270, h: 76, name: "supervisor session", sub: "fleet extension · no user channel" },
+    { kind: "svc", x: 590, y: 590, w: 280, h: 76, name: "assistant session", sub: "keel channel extension · the only voice" },
+    { kind: "svc", x: 140, y: 730, w: 240, h: 70, name: "fleet", sub: "CLI · ticks · dags" },
+    { kind: "db", x: 420, y: 730, w: 220, h: 70, tag: "LEDGER", name: "SQLite", sub: "on the user's volume" },
+    { kind: "svc", x: 680, y: 730, w: 210, h: 70, name: "worker sessions", sub: "claude -p · pi -p" },
+    { kind: "ns", x: 80, y: 910, w: 850, h: 145, name: "rds" },
+    { kind: "svc", x: 100, y: 950, w: 810, h: 90, name: "" },
+    { kind: "db", x: 620, y: 966, w: 270, h: 58, name: "keel_user_<id>", note: "colocated" },
+  ],
+  lines: [
+    { k: "wire", d: "M1090,52 V188", both: true },
+    { k: "wire", d: "M1003,222 H912", both: true },
+    { d: "M650,256 V368", label: "publish", at: [658, 292] },
+    { d: "M840,368 V256", label: "reply", at: [848, 292] },
+    { k: "wire", d: "M209,368 V256", label: "watches", at: [216, 290] },
+    { k: "wire", d: "M416,368 V256" },
+    { k: "wire", d: "M560,368 V222 H522" },
+    { k: "ctl", d: "M98,222 H60 V680 H118", label: "scales 0 ↔ 1", at: [78, 470], anchor: "middle", rotate: -90 },
+    { d: "M640,406 V588" },
+    { d: "M810,588 V406" },
+    { d: "M260,406 V588", label: "tick owed", at: [268, 452] },
+    { d: "M430,588 V406", label: "before sleeping", at: [438, 452] },
+    { d: "M165,728 V406" },
+    { k: "tool", d: "M472,624 H588", label: "tell the user", at: [530, 614], anchor: "middle" },
+    { k: "tool", d: "M620,668 V706 H340 V728", label: "hand to the fleet", at: [630, 700] },
+    { d: "M300,668 V728", label: "fleet tick", at: [292, 700], anchor: "end" },
+    { k: "db", d: "M382,765 H418" },
+    { d: "M260,802 V830 H760 V802", label: "spawns · reports back with fleet tick … done", at: [470, 846] },
+    { k: "db", d: "M850,802 V964", label: "the user's data", at: [858, 900] },
+  ],
+  labels: [
+    { x: 116, y: 360, text: [["nats", "t-md"], ["JetStream · per-user subjects", "t-sans t-sm t-soft"]] },
+    { x: 116, y: 978, text: [["gringotts", "t-md"], ["a database per user namespace", "t-sans t-sm t-soft"]] },
+  ],
+});
+
+Diagram.seq("f2",
+  [ { id: "U", tag: "PERSON", label: "user", kind: "user" },
+    { id: "K", tag: "KEEL-CLOUD", label: "api" },
+    { id: "N", tag: "NATS", label: "channel.in/out", kind: "store" },
+    { id: "W", tag: "PLONK", label: "waker", kind: "new" },
+    { id: "P", tag: "POD", label: "pi host", kind: "new" },
+    { id: "A", tag: "SESSION", label: "assistant" } ],
+  [ { from: "U", to: "K", text: "“Any news from the bank?”" },
+    { from: "K", to: "N", text: "publish channel.in" },
+    { note: ["N", "N"], text: "waits in the durable" },
+    { from: "W", to: "N", text: "1 pending?", k: "wire", reply: true },
+    { from: "W", to: "P", text: "scale to 1", k: "ctl" },
+    { note: ["P", "A"], text: "pod starts · about 40s" },
+    { from: "A", to: "N", text: "pull channel.in" },
+    { from: "A", to: "A", text: "turn: reads the mail" },
+    { from: "A", to: "N", text: "publish channel.out" },
+    { from: "K", to: "U", text: "“One statement, 09:12”", k: "wire", reply: true },
+    { from: "W", to: "P", text: "scale to 0", k: "ctl" } ],
+  { title: "The user writes; the message waits in nats; the waker scales the pod up; the assistant pulls the message, answers, and the pod scales back to zero." });
+</script>

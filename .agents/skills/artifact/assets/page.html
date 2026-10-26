@@ -1,0 +1,95 @@
+<header class="mast">
+  <h1>Two to<br>four words</h1>
+  <div class="dateline">Plonk · the area · the author · proposal · the date · under #the issue</div>
+</header>
+
+<section>
+  <p class="lede">One paragraph that says what the reader gets, in the reader's terms: what changes for them once this exists.</p>
+  <div class="box tone-ochre quote"><span class="label">The ask, in the owner's words</span>The owner's message, quoted exactly as written, typos included.</div>
+</section>
+
+<section>
+  <h2>Why now</h2>
+  <div class="grid3">
+    <div class="box tone-red stat"><span class="label">What the number counts</span><span class="fig">N</span><p>Where it was read and what it costs today. Red only when it needs the owner or something is broken.</p></div>
+    <div class="box tone-ochre stat"><span class="label">What the number counts</span><span class="fig">N</span><p>A cost that is waiting on something.</p></div>
+    <div class="box tone-green stat"><span class="label">What the number counts</span><span class="fig">N</span><p>What already works and needs nothing.</p></div>
+  </div>
+  <p>What already exists and what is missing between those pieces, naming each by the command or file a reader can open.</p>
+</section>
+
+<section class="fig">
+  <h2><span class="fig-no">Fig. 1</span>How it works</h2>
+  <p>What to notice in the figure, in one or two sentences.</p>
+  <div class="sheet">
+    <div class="scroll"><svg class="d" id="f1"></svg></div>
+    <div class="key">
+      <span><i class="k-box new"></i>New piece</span>
+      <span><i class="k-line int"></i>A call</span>
+    </div>
+  </div>
+  <ol>
+    <li><strong>The first step, as a headline.</strong> What it does, in plain words, naming the real command, file or type.</li>
+    <li><strong>The next step.</strong> One numbered item per box or arrow in the figure, in the figure's order.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>What it reads</h2>
+  <p>Every input the mechanism takes, before any output it gives.</p>
+  <div class="grid2">
+    <div class="box"><span class="label">One source of input</span><ul><li><code>field</code>: what it holds and where it comes from</li></ul></div>
+    <div class="box"><span class="label">Another source</span><ul><li><code>field</code>: what it holds and where it comes from</li></ul></div>
+  </div>
+</section>
+
+<section>
+  <h2>Worked examples</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>A real case, as the system wrote it</th><th>Context</th><th>Outcome</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>One case copied from a log, an issue or a run</td><td>What else was true at the time</td><td><span class="tag green">Outcome</span></td><td>One sentence of reasoning.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Where each piece lives</h2>
+  <div class="grid2">
+    <div class="box"><span class="label">One home</span><ul><li><code>a/path</code>: what lives there</li></ul></div>
+    <div class="box"><span class="label">Another home</span><ul><li><code>a/path</code>: what lives there</li></ul></div>
+  </div>
+</section>
+
+<section>
+  <h2>What it costs</h2>
+  <div class="grid3">
+    <div class="box stat"><span class="label">What is spent</span><span class="fig">N</span><p>How the figure was reached, or "unknown" and what would tell.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Decisions for the owner</h2>
+  <div class="grid2">
+    <div class="box"><h3>The question</h3><p>Proposed: the recommendation. Alternative: the other road, and what each costs.</p></div>
+  </div>
+</section>
+
+<script>
+Diagram.arch("f1", {
+  width: 1000,
+  height: 120,
+  title: "One sentence saying what the figure shows, read in place of it.",
+  boxes: [
+    { kind: "svc", x: 10, y: 20, w: 220, h: 76, name: "what starts it", sub: "a trigger" },
+    { kind: "svc", x: 390, y: 20, w: 220, h: 76, name: "what runs", sub: "the piece that decides", isNew: true },
+    { kind: "svc", x: 770, y: 20, w: 220, h: 76, name: "what comes out", sub: "what a person sees" },
+  ],
+  lines: [
+    { d: "M232,58 H388" },
+    { d: "M612,58 H768" },
+  ],
+});
+</script>
