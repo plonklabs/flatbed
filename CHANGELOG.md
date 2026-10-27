@@ -9,6 +9,23 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+## [0.0.9] — 2026-10-27
+
+### Added
+
+- `Worker::enabled(&self, ctx: &Self::Context) -> bool`, defaulting to
+  `true`: a worker that only has work in some deployments opts out at
+  startup instead of returning `Ok(())`. It is evaluated once against the
+  application context after boot. A rejected worker is never started, its
+  `drain` is skipped, the process stays healthy, it is reported as
+  `disabled` in `/healthz` and `flatbed_worker_state`, and one info line
+  names it. A panicking check fails the worker like a panicking worker.
+
+### Changed
+
+- **BREAKING:** `WorkerInfo` gains an `enabled: Option<EnabledFn>` field
+  and `WorkerState` gains a `Disabled` variant.
+
 ## [0.0.8] — 2026-10-25
 
 ### Added
@@ -219,7 +236,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.8...HEAD
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.9...HEAD
+[0.0.9]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.8...flatbed-v0.0.9
 [0.0.8]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.7...flatbed-v0.0.8
 [0.0.7]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.6...flatbed-v0.0.7
 [0.0.6]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.5...flatbed-v0.0.6
