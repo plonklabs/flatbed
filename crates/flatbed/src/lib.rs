@@ -1059,7 +1059,7 @@ impl Response<()> {
 /// # Example
 ///
 /// ```rust,ignore
-/// let err = FlatbedWorkerError::new("TASK_ERROR", e.to_string());
+/// let err = FlatbedWorkerError::new("TASK_ERROR", "something went wrong");
 /// ```
 #[derive(Debug, Clone)]
 pub struct FlatbedWorkerError {

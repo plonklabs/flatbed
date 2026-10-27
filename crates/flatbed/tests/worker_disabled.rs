@@ -1,8 +1,3 @@
-//! End-to-end check of `Worker::enabled`: a worker whose check rejects the
-//! application context is never started, leaves the process healthy, and is
-//! reported as `disabled` in `/healthz` and `flatbed_worker_state`, while a
-//! worker the same context enables runs as usual.
-
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
