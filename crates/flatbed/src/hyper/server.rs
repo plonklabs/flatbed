@@ -205,13 +205,16 @@ const REPORTER_FLUSH_TIMEOUT: tokio::time::Duration = tokio::time::Duration::fro
 /// Time left to in-flight connections after the worker drains have run.
 const CONNECTION_EPILOGUE: tokio::time::Duration = tokio::time::Duration::from_secs(2);
 
-/// Run every registered drain concurrently, giving them at most `budget`.
-/// Returns whether any drain ran.
+/// Run the drain of every registered worker that is not disabled
+/// concurrently, giving them at most `budget`. Returns whether any drain ran.
 async fn run_worker_drains<C: Clone + Send + Sync + 'static>(
     service_ctx: &ServiceContext<C>,
     budget: tokio::time::Duration,
 ) -> bool {
-    let drains = get_worker_drains();
+    let drains: Vec<_> = get_worker_drains()
+        .into_iter()
+        .filter(|drain_info| !crate::supervisor::is_disabled(drain_info.name))
+        .collect();
     if drains.is_empty() {
         return false;
     }

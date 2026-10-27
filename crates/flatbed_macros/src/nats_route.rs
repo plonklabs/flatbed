@@ -358,6 +358,7 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
                 name: concat!("nats_route:", #subject),
                 description: None,
                 restart: ::core::option::Option::None,
+                enabled: ::core::option::Option::None,
                 worker: {
                     fn __worker(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
