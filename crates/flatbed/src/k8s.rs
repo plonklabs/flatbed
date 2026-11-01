@@ -892,13 +892,15 @@ where
 /// | `KubeWatcher` | `Api::all` watcher    | Leader-only     | We don't own the resource              |
 /// | [`crate::nats::StreamWorker`] | NATS subject pull   | Follower-only   | Queue semantics                        |
 /// | [`crate::kv::KvWorker`] | NATS KV watch_all  | Every pod       | Fan-out cache subscriber               |
+/// | [`crate::message::MessageWorker`] | In-process keyed queue | Leader-only | Serial handling, coalesced by key |
 ///
 /// # Naming convention
 ///
 /// Flatbed's leader-gated / event-driven primitives follow the
 /// `<Source><Role>` pattern: the prefix names the specific medium the
 /// primitive reads from (`Kube` = kube apiserver, `Stream` = JetStream
-/// stream, `Kv` = JetStream KV bucket), and the suffix names the role
+/// stream, `Kv` = JetStream KV bucket, `Message` = in-process message
+/// queue), and the suffix names the role
 /// (`Watcher`, `Reconciler`, `Worker`). New primitives slot in under
 /// this rule.
 ///

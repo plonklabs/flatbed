@@ -34,7 +34,8 @@
 //! With the `k8s` feature the context provides leader election (see
 //! [`MessageWorker::Context`]), and messages are handled only while this
 //! process leads. Each time it becomes leader the worker waits
-//! [`SETTLE`](MessageWorker::SETTLE) before the first message. When it loses
+//! [`SETTLE`](MessageWorker::SETTLE) before the first message, so a request
+//! the previous leader already sent lands first. When it loses
 //! leadership the message being handled is cancelled and the whole queue is
 //! discarded. Sends are accepted whether or not the process leads; what a
 //! follower queues waits for the next leadership term, and is discarded with
@@ -58,6 +59,9 @@ pub enum MessageResult {
     /// The message is finished.
     Done,
     /// Put the message back at the end of the line; the reason is logged.
+    /// Use it for an unmet precondition, such as a server that is not ready,
+    /// never to poll work that is still running: the next message starts as
+    /// soon as `handle` returns.
     Retry(String),
 }
 
@@ -77,7 +81,7 @@ pub enum MessageResult {
 /// use std::sync::Arc;
 ///
 /// #[derive(Clone)]
-/// struct RunMigrator { namespace: String, migrator: String }
+/// struct RunMigrator { server: String, migrator: String }
 ///
 /// #[derive(Default)]
 /// struct MigratorRunner;
@@ -91,7 +95,7 @@ pub enum MessageResult {
 ///     const NAME: &'static str = "migrator-runner";
 ///
 ///     fn key(msg: &RunMigrator) -> Self::Key {
-///         (msg.namespace.clone(), msg.migrator.clone())
+///         (msg.server.clone(), msg.migrator.clone())
 ///     }
 ///
 ///     fn sender(ctx: &AppContext) -> &MessageSender<Self> {
@@ -104,9 +108,10 @@ pub enum MessageResult {
 ///         msg: RunMigrator,
 ///     ) -> flatbed::BoxFuture<Result<MessageResult, kube::Error>> {
 ///         Box::pin(async move {
-///             if !run_job(&ctx, &msg).await? {
-///                 return Ok(MessageResult::Retry("job not finished".into()));
+///             if !server_ready(&ctx, &msg.server).await? {
+///                 return Ok(MessageResult::Retry("server not ready".into()));
 ///             }
+///             run_job_to_completion(&ctx, &msg).await?;
 ///             Ok(MessageResult::Done)
 ///         })
 ///     }
@@ -152,8 +157,9 @@ pub trait MessageWorker: Sized + Send + Sync + 'static {
     /// Most messages held at once, counting the one being handled.
     const CAPACITY: usize = 1024;
 
-    /// Pause after becoming leader before the first message is taken, giving
-    /// producers time to resend. Defaults to zero.
+    /// Pause after becoming leader before the first message is taken, so a
+    /// request the previous leader already sent lands before this leader
+    /// issues its first one. Defaults to zero.
     const SETTLE: Duration = Duration::ZERO;
 
     /// Pause after a [`MessageResult::Retry`] before the next message is
@@ -390,7 +396,7 @@ async fn serve<W: MessageWorker>(
 
     if !ctx.ha_enabled() {
         info!(worker = W::NAME, "standalone mode, handling messages");
-        handle_term(&worker, &ctx, &sender).await;
+        handle_messages(&worker, &ctx, &sender).await;
         return Ok(());
     }
 
@@ -403,7 +409,7 @@ async fn serve<W: MessageWorker>(
 
         let mut loss_rx = ctx.is_leader_rx();
         tokio::select! {
-            () = handle_term(&worker, &ctx, &sender) => {}
+            () = handle_messages(&worker, &ctx, &sender) => {}
             () = wait_for_leadership_loss(&mut loss_rx, W::NAME) => {}
         }
         let dropped = sender.clear();
@@ -422,12 +428,12 @@ async fn serve<W: MessageWorker>(
     let sender = W::sender(&ctx).clone();
     sender.release_in_flight();
     info!(worker = W::NAME, "handling messages");
-    handle_term(&worker, &ctx, &sender).await;
+    handle_messages(&worker, &ctx, &sender).await;
     Ok(())
 }
 
 /// Settle, then handle messages until cancelled. Never returns.
-async fn handle_term<W: MessageWorker>(
+async fn handle_messages<W: MessageWorker>(
     worker: &W,
     ctx: &Arc<W::Context>,
     sender: &MessageSender<W>,
@@ -478,7 +484,10 @@ where
 mod tests {
     use std::collections::HashMap;
 
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use tokio::sync::{mpsc, Semaphore};
+    use tokio::task::JoinHandle;
     use tokio::time::{timeout, Instant};
 
     use super::*;
@@ -516,11 +525,22 @@ mod tests {
     }
 
     /// Reports each message as it starts, then holds it until the test
-    /// releases a permit.
+    /// releases a permit. A handle future dropped before it finishes counts
+    /// as cancelled.
+    #[derive(Clone)]
     struct Recorder {
         started: mpsc::UnboundedSender<Job>,
         permits: Arc<Semaphore>,
         retries: Arc<Mutex<HashMap<u32, u32>>>,
+        cancelled: Arc<AtomicUsize>,
+    }
+
+    struct CancelGuard(Arc<AtomicUsize>);
+
+    impl Drop for CancelGuard {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     fn take_retry(retries: &Mutex<HashMap<u32, u32>>, key: u32) -> bool {
@@ -555,9 +575,11 @@ mod tests {
             let started = self.started.clone();
             let permits = Arc::clone(&self.permits);
             let retries = Arc::clone(&self.retries);
+            let guard = CancelGuard(Arc::clone(&self.cancelled));
             Box::pin(async move {
                 started.send(msg.clone()).unwrap();
                 permits.acquire().await.unwrap().forget();
+                std::mem::forget(guard);
                 if msg.key == FAILING {
                     return Err("boom".to_string());
                 }
@@ -571,46 +593,62 @@ mod tests {
 
     struct Harness {
         sender: MessageSender<Recorder>,
+        worker: Recorder,
         started: mpsc::UnboundedReceiver<Job>,
         permits: Arc<Semaphore>,
         retries: Arc<Mutex<HashMap<u32, u32>>>,
+        cancelled: Arc<AtomicUsize>,
+        task: Option<JoinHandle<Result<(), FlatbedWorkerError>>>,
         #[cfg(feature = "k8s")]
         leader: Option<tokio::sync::watch::Sender<bool>>,
     }
 
     impl Harness {
         fn standalone(permits: usize) -> Self {
-            Self::new(permits, None)
+            let mut harness = Self::idle(permits);
+            harness.start();
+            harness
         }
 
         #[cfg(feature = "k8s")]
         fn ha(permits: usize, leading: bool) -> Self {
-            Self::new(permits, Some(leading))
+            let mut harness = Self::idle(permits);
+            harness.leader = Some(tokio::sync::watch::channel(leading).0);
+            harness.start();
+            harness
         }
 
-        #[cfg_attr(not(feature = "k8s"), allow(unused_variables))]
-        fn new(permits: usize, leading: Option<bool>) -> Self {
+        fn idle(permits: usize) -> Self {
             let (started_tx, started) = mpsc::unbounded_channel();
-            let harness = Self {
+            let permits = Arc::new(Semaphore::new(permits));
+            let retries = Arc::default();
+            let cancelled = Arc::default();
+            Self {
                 sender: MessageSender::new(),
+                worker: Recorder {
+                    started: started_tx,
+                    permits: Arc::clone(&permits),
+                    retries: Arc::clone(&retries),
+                    cancelled: Arc::clone(&cancelled),
+                },
                 started,
-                permits: Arc::new(Semaphore::new(permits)),
-                retries: Arc::default(),
+                permits,
+                retries,
+                cancelled,
+                task: None,
                 #[cfg(feature = "k8s")]
-                leader: leading.map(|leading| tokio::sync::watch::channel(leading).0),
-            };
+                leader: None,
+            }
+        }
+
+        /// Runs `serve` over this harness's sender, as a worker (re)start does.
+        fn start(&mut self) {
             let ctx = Ctx {
-                sender: harness.sender.clone(),
+                sender: self.sender.clone(),
                 #[cfg(feature = "k8s")]
-                leader: harness.leader.clone(),
+                leader: self.leader.clone(),
             };
-            let worker = Recorder {
-                started: started_tx,
-                permits: Arc::clone(&harness.permits),
-                retries: Arc::clone(&harness.retries),
-            };
-            tokio::spawn(serve(worker, Arc::new(ctx)));
-            harness
+            self.task = Some(tokio::spawn(serve(self.worker.clone(), Arc::new(ctx))));
         }
 
         fn send(&self, key: u32, tag: &'static str) {
@@ -760,6 +798,28 @@ mod tests {
         assert_eq!(h.sender.send(job(4, "d")), Ok(()));
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_restarted_worker_drops_the_interrupted_message_and_keeps_the_queue() {
+        let mut h = Harness::standalone(0);
+        h.send(1, "a");
+        h.send(2, "b");
+        assert_eq!(h.next_started().await, job(1, "a"));
+
+        let first = h.task.take().unwrap();
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        assert_eq!(h.cancelled.load(Ordering::SeqCst), 1);
+        assert_eq!(h.sender.position(&1), Some(0));
+
+        h.start();
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        assert_eq!(h.sender.position(&1), None);
+        assert_eq!(h.sender.position(&2), Some(1));
+        h.permits.add_permits(10);
+        assert_eq!(h.next_started().await, job(2, "b"));
+        h.assert_quiet(QUIET).await;
+    }
+
     #[cfg(feature = "k8s")]
     #[tokio::test(start_paused = true)]
     async fn nothing_is_handled_while_not_leader() {
@@ -795,6 +855,7 @@ mod tests {
 
         h.leader.as_ref().unwrap().send(false).unwrap();
         tokio::time::sleep(Duration::from_millis(1)).await;
+        assert_eq!(h.cancelled.load(Ordering::SeqCst), 1);
         assert_eq!(h.sender.position(&1), None);
         assert_eq!(h.sender.position(&2), None);
 
