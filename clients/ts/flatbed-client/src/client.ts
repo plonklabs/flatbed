@@ -69,7 +69,7 @@ const parseJsonObject = (bytes: Uint8Array): Readonly<Record<string, unknown>> =
 /**
  * A FlatBuffer route error carries its code and message in `x-error-code` /
  * `x-error-message`; a JSON error carries them as the body's `code` / `message`.
- * Framework-level failures (an undecodable request, say) answer in JSON whatever
+ * Failures answered before routing (a server still booting, say) are JSON whatever
  * the request's format, so the response's own `content-type` decides, falling
  * back to the request's when the transport reports no headers.
  */
