@@ -16,6 +16,10 @@
 //! | `nats`         | `nats_client`, `jetstream`, `stream_replicas`             | `HasJetStream`        |
 //! | `k8s`          | `kube_client`, leader election fields                     | `HasKubeClient`, `HasLeaderElection` |
 //!
+//! Every `FlatbedContext` also implements
+//! [`HasLocalQueues`](crate::local_queue::HasLocalQueues): it owns one queue
+//! per local queue worker type, shared by all of its clones.
+//!
 //! User fields on `C` are accessible transparently via [`Deref`].
 //!
 //! # Example: custom context (no wrapper)
@@ -84,11 +88,12 @@ use tokio::sync::watch;
 /// traits based on enabled features. Access user fields via [`Deref`].
 ///
 /// This is a convenience — you can always define your own context struct
-/// and implement the traits manually instead. See the [module docs](self)
-/// for examples of both approaches.
+/// and implement the traits manually instead.
 #[derive(Clone)]
 pub struct FlatbedContext<C> {
     inner: C,
+
+    local_queues: crate::local_queue::LocalQueues,
 
     /// NATS client connection.
     #[cfg(feature = "nats")]
@@ -120,6 +125,12 @@ impl<C> Deref for FlatbedContext<C> {
 
     fn deref(&self) -> &C {
         &self.inner
+    }
+}
+
+impl<C> crate::local_queue::HasLocalQueues for FlatbedContext<C> {
+    fn local_queues(&self) -> &crate::local_queue::LocalQueues {
+        &self.local_queues
     }
 }
 
@@ -275,6 +286,7 @@ impl<C> FlatbedContextBuilder<C> {
     pub fn build(self) -> FlatbedContext<C> {
         FlatbedContext {
             inner: self.inner,
+            local_queues: crate::local_queue::LocalQueues::default(),
             #[cfg(feature = "nats")]
             nats_client: self.nats_client.expect("nats_client is required"),
             #[cfg(feature = "nats")]

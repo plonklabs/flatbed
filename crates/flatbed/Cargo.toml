@@ -84,8 +84,8 @@ name = "worker_disabled"
 required-features = ["telemetry", "prometheus"]
 
 [[test]]
-name = "message_worker"
-required-features = ["k8s", "telemetry", "prometheus"]
+name = "local_queue_worker"
+required-features = ["nats", "k8s", "telemetry", "prometheus"]
 
 [[test]]
 name = "register_macros"

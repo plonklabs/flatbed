@@ -1,26 +1,38 @@
-//! End-to-end check of a registered `MessageWorker` under `Flatbed::run`:
-//! messages sent while the process does not lead wait, are handled in order
-//! with duplicates coalesced once it leads, and the worker reports `running`.
+//! End-to-end check of a registered `LocalQueueWorker` under `Flatbed::run`
+//! with a `FlatbedContext`: messages sent while the process does not lead
+//! wait, are handled in order with duplicates coalesced once it leads, and the
+//! worker reports `running`.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use flatbed::k8s::HasLeaderElection;
-use flatbed::message::{MessageResult, MessageSender, MessageWorker};
-use flatbed::{Flatbed, FlatbedConfig};
+use flatbed::local_queue::{HasLocalQueues, LocalQueueResult, LocalQueueWorker};
+use flatbed::{Flatbed, FlatbedConfig, FlatbedContext};
 use tokio::sync::watch;
 
-#[derive(Clone)]
-struct AppContext {
-    setups: MessageSender<NamespaceSetup>,
+#[derive(Clone, Default)]
+struct AppData {
     handled: Arc<Mutex<Vec<String>>>,
-    leader: Arc<watch::Sender<bool>>,
 }
 
-impl HasLeaderElection for AppContext {
-    fn is_leader_rx(&self) -> watch::Receiver<bool> {
-        self.leader.subscribe()
-    }
+type AppContext = FlatbedContext<AppData>;
+
+/// A context whose NATS and kube clients never connect: nothing in this test
+/// reaches either.
+async fn app_context() -> AppContext {
+    let nats = flatbed::async_nats::ConnectOptions::new()
+        .retry_on_initial_connect()
+        .connect("127.0.0.1:1")
+        .await
+        .unwrap();
+    let kube_config = flatbed::kube::Config::new("http://127.0.0.1:1".parse().unwrap());
+    let (is_leader_tx, is_leader_rx) = watch::channel(false);
+    FlatbedContext::builder(AppData::default())
+        .jetstream(flatbed::async_nats::jetstream::new(nats.clone()))
+        .nats_client(nats)
+        .kube_client(flatbed::kube::Client::try_from(kube_config).unwrap())
+        .leader_election(Arc::new(is_leader_tx), is_leader_rx, true)
+        .build()
 }
 
 #[derive(Clone)]
@@ -33,7 +45,7 @@ struct SetupNamespace {
 #[derive(Default)]
 struct NamespaceSetup;
 
-impl MessageWorker for NamespaceSetup {
+impl LocalQueueWorker for NamespaceSetup {
     type Message = SetupNamespace;
     type Key = (&'static str, &'static str);
     type Context = AppContext;
@@ -45,26 +57,22 @@ impl MessageWorker for NamespaceSetup {
         (msg.namespace, msg.server)
     }
 
-    fn sender(ctx: &AppContext) -> &MessageSender<Self> {
-        &ctx.setups
-    }
-
     fn handle(
         &self,
         ctx: Arc<AppContext>,
         msg: SetupNamespace,
-    ) -> flatbed::BoxFuture<Result<MessageResult, String>> {
+    ) -> flatbed::BoxFuture<Result<LocalQueueResult, String>> {
         Box::pin(async move {
             ctx.handled
                 .lock()
                 .unwrap()
                 .push(format!("{}@{}#{}", msg.namespace, msg.server, msg.attempt));
-            Ok(MessageResult::Done)
+            Ok(LocalQueueResult::Done)
         })
     }
 }
 
-flatbed::register_message_worker!(NamespaceSetup, AppContext);
+flatbed::register_local_queue_worker!(NamespaceSetup, AppContext);
 
 fn running(metrics: &str) -> bool {
     metrics.lines().any(|line| {
@@ -76,13 +84,13 @@ fn running(metrics: &str) -> bool {
 }
 
 #[tokio::test]
-async fn registered_message_worker_handles_queued_messages_once_leading() {
+async fn registered_local_queue_worker_handles_queued_messages_once_leading() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
 
     let telemetry_config = flatbed::TelemetryConfig::new(
-        Some("message-worker-test".to_string()),
+        Some("local-queue-worker-test".to_string()),
         Some("127.0.0.1".to_string()),
         Some(port),
     )
@@ -90,16 +98,12 @@ async fn registered_message_worker_handles_queued_messages_once_leading() {
     let telemetry: Arc<dyn flatbed::TelemetryService> = <flatbed::telemetry::prometheus::PrometheusTelemetryService as flatbed::TelemetryService>::new(
         telemetry_config,
     );
-    let config = FlatbedConfig::new("Message Worker Test")
+    let config = FlatbedConfig::new("Local Queue Worker Test")
         .host("127.0.0.1")
         .port(port)
         .with_telemetry(telemetry);
 
-    let ctx = AppContext {
-        setups: MessageSender::new(),
-        handled: Arc::default(),
-        leader: Arc::new(watch::channel(false).0),
-    };
+    let ctx = app_context().await;
     let boot_ctx = ctx.clone();
     let server =
         tokio::spawn(async move { Flatbed::run(config, |_| async { Ok(boot_ctx) }).await });
@@ -123,7 +127,7 @@ async fn registered_message_worker_handles_queued_messages_once_leading() {
     );
 
     let send = |namespace, server, attempt| {
-        ctx.setups
+        ctx.local_queue::<NamespaceSetup>()
             .send(SetupNamespace {
                 namespace,
                 server,
@@ -134,7 +138,11 @@ async fn registered_message_worker_handles_queued_messages_once_leading() {
     send("team-a", "s1", 1);
     send("team-b", "s1", 1);
     send("team-a", "s1", 2);
-    assert_eq!(ctx.setups.position(&("team-b", "s1")), Some(2));
+    assert_eq!(
+        ctx.local_queue::<NamespaceSetup>()
+            .position(&("team-b", "s1")),
+        Some(2)
+    );
 
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert!(
@@ -142,7 +150,7 @@ async fn registered_message_worker_handles_queued_messages_once_leading() {
         "nothing is handled before the process leads"
     );
 
-    ctx.leader.send_replace(true);
+    ctx.is_leader_tx.send_replace(true);
     for _ in 0..100 {
         tokio::time::sleep(Duration::from_millis(20)).await;
         if ctx.handled.lock().unwrap().len() >= 2 {
@@ -151,7 +159,11 @@ async fn registered_message_worker_handles_queued_messages_once_leading() {
     }
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(*ctx.handled.lock().unwrap(), ["team-a@s1#1", "team-b@s1#1"],);
-    assert_eq!(ctx.setups.position(&("team-a", "s1")), None);
+    assert_eq!(
+        ctx.local_queue::<NamespaceSetup>()
+            .position(&("team-a", "s1")),
+        None
+    );
 
     let health = client.get(format!("{base}/healthz")).send().await.unwrap();
     assert_eq!(health.status(), reqwest::StatusCode::OK);

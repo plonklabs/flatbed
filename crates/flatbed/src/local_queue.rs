@@ -1,30 +1,31 @@
-//! In-process message worker: a bounded, keyed queue handled one message at
-//! a time.
+//! Local queue worker: a bounded, keyed, in-process queue handled one message
+//! at a time.
 //!
-//! Producers inside the process enqueue through a [`MessageSender`] held on
-//! the application context; one [`MessageWorker`] takes the messages strictly
-//! in order, taking the next only after [`handle`](MessageWorker::handle)
+//! The application context owns one queue per [`LocalQueueWorker`] type
+//! ([`HasLocalQueues`]). Producers inside the process enqueue with
+//! `ctx.local_queue::<W>().send(msg)`; the worker takes the messages strictly
+//! in order, taking the next only after [`handle`](LocalQueueWorker::handle)
 //! returns. Nothing is persisted: the queue is lost on restart, so producers
 //! are expected to be level-triggered and resend what they still need.
 //!
 //! ## Queue semantics
 //!
-//! - **Coalescing.** Every message has a [`key`](MessageWorker::key). Sending
+//! - **Coalescing.** Every message has a [`key`](LocalQueueWorker::key). Sending
 //!   a key that is already queued adds nothing: the queued entry keeps both
 //!   its place in line and its original payload, and the new payload is
 //!   discarded. The message being handled counts as *not* queued, so a resend
 //!   during handling queues the key again, to run after the current attempt.
-//! - **Position.** [`MessageSender::position`] is `Some(0)` for the message
+//! - **Position.** [`LocalQueueSender::position`] is `Some(0)` for the message
 //!   being handled, `Some(1)` for the next one, and `None` for a key that is
 //!   neither.
-//! - **Capacity.** At most [`CAPACITY`](MessageWorker::CAPACITY) messages are
+//! - **Capacity.** At most [`CAPACITY`](LocalQueueWorker::CAPACITY) messages are
 //!   held, counting the one being handled. Sending a new key into a full
-//!   queue returns [`QueueFull`]; coalescing into a queued key always
+//!   queue returns [`LocalQueueFull`]; coalescing into a queued key always
 //!   succeeds.
-//! - **Outcome.** [`MessageResult::Retry`] puts the message back at the end
+//! - **Outcome.** [`LocalQueueResult::Retry`] puts the message back at the end
 //!   of the line, unless the same key was resent meanwhile, in which case the
 //!   queued resend stands in for it. After a retry the worker waits
-//!   [`RETRY_DELAY`](MessageWorker::RETRY_DELAY) before taking the next
+//!   [`RETRY_DELAY`](LocalQueueWorker::RETRY_DELAY) before taking the next
 //!   message, so messages that keep failing never spin. An `Err` from `handle`
 //!   is logged and the message dropped; it does not stop the worker or touch
 //!   health.
@@ -32,18 +33,18 @@
 //! ## Leadership
 //!
 //! With the `k8s` feature the context provides leader election (see
-//! [`MessageWorker::Context`]), and messages are handled only while this
+//! [`LocalQueueWorker::Context`]), and messages are handled only while this
 //! process leads. Each time it becomes leader the worker waits
-//! [`SETTLE`](MessageWorker::SETTLE) before the first message, so a request
-//! the previous leader already sent lands first. When it loses
-//! leadership the message being handled is cancelled and the whole queue is
-//! discarded. Sends are accepted whether or not the process leads; what a
+//! [`SETTLE`](LocalQueueWorker::SETTLE) before the first message, so a request
+//! the previous leader already sent lands first. When it loses leadership the
+//! message being handled is cancelled and the whole queue is discarded. Sends are accepted whether or not the process leads; what a
 //! follower queues waits for the next leadership term, and is discarded with
 //! the rest if leadership is lost first. With leader election disabled
 //! (`ha_enabled() == false`), or without the `k8s` feature, the worker
 //! handles messages from startup, after one `SETTLE`.
 
-use std::collections::VecDeque;
+use std::any::{Any, TypeId};
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
@@ -55,7 +56,7 @@ use crate::{BoxFuture, FlatbedWorkerError};
 
 /// Outcome of handling one message.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MessageResult {
+pub enum LocalQueueResult {
     /// The message is finished.
     Done,
     /// Put the message back at the end of the line; the reason is logged.
@@ -65,7 +66,7 @@ pub enum MessageResult {
     Retry(String),
 }
 
-/// In-process message worker handling a keyed queue one message at a time.
+/// Worker handling a keyed, in-process queue one message at a time.
 ///
 /// See the [module docs](self) for the queue and leadership semantics.
 ///
@@ -77,8 +78,10 @@ pub enum MessageResult {
 /// # Example
 ///
 /// ```rust,ignore
-/// use flatbed::message::{MessageResult, MessageSender, MessageWorker};
+/// use flatbed::local_queue::{HasLocalQueues, LocalQueueResult, LocalQueueWorker};
 /// use std::sync::Arc;
+///
+/// type AppContext = flatbed::FlatbedContext<AppData>;
 ///
 /// #[derive(Clone)]
 /// struct RunMigrator { server: String, migrator: String }
@@ -86,7 +89,7 @@ pub enum MessageResult {
 /// #[derive(Default)]
 /// struct MigratorRunner;
 ///
-/// impl MessageWorker for MigratorRunner {
+/// impl LocalQueueWorker for MigratorRunner {
 ///     type Message = RunMigrator;
 ///     type Key = (String, String);
 ///     type Context = AppContext;
@@ -98,28 +101,28 @@ pub enum MessageResult {
 ///         (msg.server.clone(), msg.migrator.clone())
 ///     }
 ///
-///     fn sender(ctx: &AppContext) -> &MessageSender<Self> {
-///         &ctx.migrations
-///     }
-///
 ///     fn handle(
 ///         &self,
 ///         ctx: Arc<AppContext>,
 ///         msg: RunMigrator,
-///     ) -> flatbed::BoxFuture<Result<MessageResult, kube::Error>> {
+///     ) -> flatbed::BoxFuture<Result<LocalQueueResult, kube::Error>> {
 ///         Box::pin(async move {
 ///             if !server_ready(&ctx, &msg.server).await? {
-///                 return Ok(MessageResult::Retry("server not ready".into()));
+///                 return Ok(LocalQueueResult::Retry("server not ready".into()));
 ///             }
 ///             run_job_to_completion(&ctx, &msg).await?;
-///             Ok(MessageResult::Done)
+///             Ok(LocalQueueResult::Done)
 ///         })
 ///     }
 /// }
 ///
-/// flatbed::register_message_worker!(MigratorRunner, AppContext);
+/// flatbed::register_local_queue_worker!(MigratorRunner, AppContext);
+///
+/// // In a reconciler holding `ctx: Arc<AppContext>`:
+/// ctx.local_queue::<MigratorRunner>().send(RunMigrator { server, migrator })?;
+/// let position = ctx.local_queue::<MigratorRunner>().position(&key);
 /// ```
-pub trait MessageWorker: Sized + Send + Sync + 'static {
+pub trait LocalQueueWorker: Sized + Send + Sync + 'static {
     /// The message type carried by the queue. Cloned once per attempt so a
     /// retry can re-enqueue it.
     type Message: Clone + Send + 'static;
@@ -127,14 +130,14 @@ pub trait MessageWorker: Sized + Send + Sync + 'static {
     /// Identity used to coalesce messages; see [`key`](Self::key).
     type Key: Eq + Send + 'static;
 
-    /// The application context type holding the [`MessageSender`] and
-    /// providing leader election.
+    /// The application context type owning the queue and providing leader
+    /// election.
     #[cfg(feature = "k8s")]
-    type Context: crate::k8s::HasLeaderElection + Send + Sync + 'static;
+    type Context: HasLocalQueues + crate::k8s::HasLeaderElection + Send + Sync + 'static;
 
-    /// The application context type holding the [`MessageSender`].
+    /// The application context type owning the queue.
     #[cfg(not(feature = "k8s"))]
-    type Context: Send + Sync + 'static;
+    type Context: HasLocalQueues + Send + Sync + 'static;
 
     /// Error returned by [`handle`](Self::handle). The runtime logs it via
     /// `Display` and drops the message.
@@ -162,17 +165,13 @@ pub trait MessageWorker: Sized + Send + Sync + 'static {
     /// issues its first one. Defaults to zero.
     const SETTLE: Duration = Duration::ZERO;
 
-    /// Pause after a [`MessageResult::Retry`] before the next message is
+    /// Pause after a [`LocalQueueResult::Retry`] before the next message is
     /// taken.
     const RETRY_DELAY: Duration = Duration::from_secs(1);
 
     /// The coalescing key of a message: two messages with equal keys are the
     /// same request.
     fn key(msg: &Self::Message) -> Self::Key;
-
-    /// The sender held on the context. The worker takes its messages from
-    /// the same queue, so this must return the same sender every time.
-    fn sender(ctx: &Self::Context) -> &MessageSender<Self>;
 
     /// Handle one message. The next message is taken only after the
     /// returned future completes. The future is dropped mid-flight when
@@ -181,7 +180,7 @@ pub trait MessageWorker: Sized + Send + Sync + 'static {
         &self,
         ctx: Arc<Self::Context>,
         msg: Self::Message,
-    ) -> BoxFuture<Result<MessageResult, Self::Error>>;
+    ) -> BoxFuture<Result<LocalQueueResult, Self::Error>>;
 
     /// Finish in-progress work during graceful shutdown, within the
     /// configured shutdown budget. Defaults to a no-op.
@@ -191,56 +190,93 @@ pub trait MessageWorker: Sized + Send + Sync + 'static {
 }
 
 /// Sending a new key into a queue already holding
-/// [`MessageWorker::CAPACITY`] messages.
+/// [`LocalQueueWorker::CAPACITY`] messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QueueFull {
-    /// The worker's [`MessageWorker::NAME`].
+pub struct LocalQueueFull {
+    /// The worker's [`LocalQueueWorker::NAME`].
     pub worker: &'static str,
-    /// The worker's [`MessageWorker::CAPACITY`].
+    /// The worker's [`LocalQueueWorker::CAPACITY`].
     pub capacity: usize,
 }
 
-impl fmt::Display for QueueFull {
+impl fmt::Display for LocalQueueFull {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "message worker '{}' queue is full ({} messages)",
+            "local queue worker '{}' is full ({} messages)",
             self.worker, self.capacity
         )
     }
 }
 
-impl std::error::Error for QueueFull {}
+impl std::error::Error for LocalQueueFull {}
 
-/// Enqueues messages for a [`MessageWorker`].
+/// Contexts that own the local queues: one queue per [`LocalQueueWorker`]
+/// type, shared by every clone of the context.
 ///
-/// Create one with [`MessageSender::new`] while building the application
-/// context and return it from [`MessageWorker::sender`]. Clones share one
-/// queue and are cheap. Sending never waits for the message to be handled.
-pub struct MessageSender<W: MessageWorker> {
+/// [`FlatbedContext`](crate::FlatbedContext) implements it. A hand-rolled
+/// context holds a [`LocalQueues`] and returns it.
+pub trait HasLocalQueues {
+    /// The context's queues.
+    fn local_queues(&self) -> &LocalQueues;
+
+    /// The queue for worker `W`, created on first use. Producers and the
+    /// worker get the same queue whichever of them asks first.
+    fn local_queue<W: LocalQueueWorker>(&self) -> LocalQueueSender<W> {
+        self.local_queues().get::<W>()
+    }
+}
+
+/// The per-worker-type queues behind [`HasLocalQueues`]. Clones share the
+/// same queues.
+#[derive(Clone, Default)]
+pub struct LocalQueues {
+    queues: Arc<Mutex<HashMap<TypeId, Box<dyn Any + Send + Sync>>>>,
+}
+
+impl LocalQueues {
+    fn get<W: LocalQueueWorker>(&self) -> LocalQueueSender<W> {
+        let mut queues = self.queues.lock().unwrap_or_else(PoisonError::into_inner);
+        queues
+            .entry(TypeId::of::<W>())
+            .or_insert_with(|| Box::new(LocalQueueSender::<W>::new()))
+            .downcast_ref::<LocalQueueSender<W>>()
+            .expect("local queues are keyed by worker type")
+            .clone()
+    }
+}
+
+impl fmt::Debug for LocalQueues {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LocalQueues").finish_non_exhaustive()
+    }
+}
+
+/// Enqueues messages for a [`LocalQueueWorker`]; obtained from
+/// [`HasLocalQueues::local_queue`]. Clones share one queue and are cheap.
+/// Sending never waits for the message to be handled.
+pub struct LocalQueueSender<W: LocalQueueWorker> {
     shared: Arc<Shared<W>>,
 }
 
-struct Shared<W: MessageWorker> {
+struct Shared<W: LocalQueueWorker> {
     state: Mutex<State<W>>,
     wake: Notify,
 }
 
-struct State<W: MessageWorker> {
+struct State<W: LocalQueueWorker> {
     queued: VecDeque<(W::Key, W::Message)>,
     in_flight: Option<W::Key>,
 }
 
-impl<W: MessageWorker> State<W> {
+impl<W: LocalQueueWorker> State<W> {
     fn is_queued(&self, key: &W::Key) -> bool {
         self.queued.iter().any(|(queued, _)| queued == key)
     }
 }
 
-impl<W: MessageWorker> MessageSender<W> {
-    /// An empty queue.
-    #[must_use]
-    pub fn new() -> Self {
+impl<W: LocalQueueWorker> LocalQueueSender<W> {
+    fn new() -> Self {
         Self {
             shared: Arc::new(Shared {
                 state: Mutex::new(State {
@@ -257,16 +293,16 @@ impl<W: MessageWorker> MessageSender<W> {
     ///
     /// # Errors
     ///
-    /// [`QueueFull`] when the key is not queued and the queue already holds
-    /// [`MessageWorker::CAPACITY`] messages.
-    pub fn send(&self, msg: W::Message) -> Result<(), QueueFull> {
+    /// [`LocalQueueFull`] when the key is not queued and the queue already holds
+    /// [`LocalQueueWorker::CAPACITY`] messages.
+    pub fn send(&self, msg: W::Message) -> Result<(), LocalQueueFull> {
         let key = W::key(&msg);
         let mut state = self.lock();
         if state.is_queued(&key) {
             return Ok(());
         }
         if state.queued.len() + usize::from(state.in_flight.is_some()) >= W::CAPACITY {
-            return Err(QueueFull {
+            return Err(LocalQueueFull {
                 worker: W::NAME,
                 capacity: W::CAPACITY,
             });
@@ -344,13 +380,7 @@ impl<W: MessageWorker> MessageSender<W> {
     }
 }
 
-impl<W: MessageWorker> Default for MessageSender<W> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<W: MessageWorker> Clone for MessageSender<W> {
+impl<W: LocalQueueWorker> Clone for LocalQueueSender<W> {
     fn clone(&self) -> Self {
         Self {
             shared: Arc::clone(&self.shared),
@@ -358,9 +388,9 @@ impl<W: MessageWorker> Clone for MessageSender<W> {
     }
 }
 
-impl<W: MessageWorker> fmt::Debug for MessageSender<W> {
+impl<W: LocalQueueWorker> fmt::Debug for LocalQueueSender<W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MessageSender")
+        f.debug_struct("LocalQueueSender")
             .field("worker", &W::NAME)
             .finish_non_exhaustive()
     }
@@ -370,28 +400,28 @@ impl<W: MessageWorker> fmt::Debug for MessageSender<W> {
 // Runtime Executor
 // ============================================================================
 
-/// Run a [`MessageWorker`]: the executor behind `register_message_worker!`.
-pub async fn run_message_worker<W, C>(
+/// Run a [`LocalQueueWorker`]: the executor behind `register_local_queue_worker!`.
+pub async fn run_local_queue_worker<W, C>(
     ctx: Arc<dyn std::any::Any + Send + Sync>,
 ) -> Result<(), FlatbedWorkerError>
 where
-    W: MessageWorker<Context = C> + Default,
+    W: LocalQueueWorker<Context = C> + Default,
     C: Send + Sync + 'static,
 {
     let ctx: Arc<C> = ctx
         .downcast::<C>()
-        .unwrap_or_else(|_| panic!("message_worker '{}' context type mismatch", W::NAME));
+        .unwrap_or_else(|_| panic!("local_queue_worker '{}' context type mismatch", W::NAME));
     serve(W::default(), ctx).await
 }
 
 #[cfg(feature = "k8s")]
-async fn serve<W: MessageWorker>(
+async fn serve<W: LocalQueueWorker>(
     worker: W,
     ctx: Arc<W::Context>,
 ) -> Result<(), FlatbedWorkerError> {
     use crate::k8s::{wait_for_leadership, wait_for_leadership_loss, HasLeaderElection};
 
-    let sender = W::sender(&ctx).clone();
+    let sender = ctx.local_queue::<W>();
     sender.release_in_flight();
 
     if !ctx.ha_enabled() {
@@ -421,11 +451,11 @@ async fn serve<W: MessageWorker>(
 }
 
 #[cfg(not(feature = "k8s"))]
-async fn serve<W: MessageWorker>(
+async fn serve<W: LocalQueueWorker>(
     worker: W,
     ctx: Arc<W::Context>,
 ) -> Result<(), FlatbedWorkerError> {
-    let sender = W::sender(&ctx).clone();
+    let sender = ctx.local_queue::<W>();
     sender.release_in_flight();
     info!(worker = W::NAME, "handling messages");
     handle_messages(&worker, &ctx, &sender).await;
@@ -433,20 +463,20 @@ async fn serve<W: MessageWorker>(
 }
 
 /// Settle, then handle messages until cancelled. Never returns.
-async fn handle_messages<W: MessageWorker>(
+async fn handle_messages<W: LocalQueueWorker>(
     worker: &W,
     ctx: &Arc<W::Context>,
-    sender: &MessageSender<W>,
+    sender: &LocalQueueSender<W>,
 ) {
     tokio::time::sleep(W::SETTLE).await;
     loop {
         let msg = sender.next().await;
         let retry = match worker.handle(Arc::clone(ctx), msg.clone()).await {
-            Ok(MessageResult::Done) => {
+            Ok(LocalQueueResult::Done) => {
                 debug!(worker = W::NAME, "message done");
                 None
             }
-            Ok(MessageResult::Retry(reason)) => {
+            Ok(LocalQueueResult::Retry(reason)) => {
                 warn!(worker = W::NAME, reason = %reason, "retrying message");
                 Some(msg)
             }
@@ -463,19 +493,19 @@ async fn handle_messages<W: MessageWorker>(
     }
 }
 
-/// Drain a [`MessageWorker`] by downcasting the context and delegating to
-/// `MessageWorker::drain`.
-pub fn run_message_worker_drain<W, C>(
+/// Drain a [`LocalQueueWorker`] by downcasting the context and delegating to
+/// `LocalQueueWorker::drain`.
+pub fn run_local_queue_worker_drain<W, C>(
     ctx: Arc<dyn std::any::Any + Send + Sync>,
 ) -> BoxFuture<Result<(), FlatbedWorkerError>>
 where
-    W: MessageWorker<Context = C> + Default,
+    W: LocalQueueWorker<Context = C> + Default,
     C: Send + Sync + 'static,
 {
     Box::pin(async move {
         let ctx: Arc<C> = ctx
             .downcast::<C>()
-            .unwrap_or_else(|_| panic!("message_worker '{}' context type mismatch", W::NAME));
+            .unwrap_or_else(|_| panic!("local_queue_worker '{}' context type mismatch", W::NAME));
         W::default().drain(ctx).await
     })
 }
@@ -507,10 +537,17 @@ mod tests {
     const RETRY_DELAY: Duration = Duration::from_secs(1);
     const QUIET: Duration = Duration::from_secs(60);
 
+    #[derive(Clone)]
     struct Ctx {
-        sender: MessageSender<Recorder>,
+        queues: LocalQueues,
         #[cfg(feature = "k8s")]
         leader: Option<tokio::sync::watch::Sender<bool>>,
+    }
+
+    impl HasLocalQueues for Ctx {
+        fn local_queues(&self) -> &LocalQueues {
+            &self.queues
+        }
     }
 
     #[cfg(feature = "k8s")]
@@ -552,7 +589,7 @@ mod tests {
         true
     }
 
-    impl MessageWorker for Recorder {
+    impl LocalQueueWorker for Recorder {
         type Message = Job;
         type Key = u32;
         type Context = Ctx;
@@ -567,11 +604,7 @@ mod tests {
             msg.key
         }
 
-        fn sender(ctx: &Ctx) -> &MessageSender<Self> {
-            &ctx.sender
-        }
-
-        fn handle(&self, _ctx: Arc<Ctx>, msg: Job) -> BoxFuture<Result<MessageResult, String>> {
+        fn handle(&self, _ctx: Arc<Ctx>, msg: Job) -> BoxFuture<Result<LocalQueueResult, String>> {
             let started = self.started.clone();
             let permits = Arc::clone(&self.permits);
             let retries = Arc::clone(&self.retries);
@@ -584,23 +617,21 @@ mod tests {
                     return Err("boom".to_string());
                 }
                 if take_retry(&retries, msg.key) {
-                    return Ok(MessageResult::Retry("again".to_string()));
+                    return Ok(LocalQueueResult::Retry("again".to_string()));
                 }
-                Ok(MessageResult::Done)
+                Ok(LocalQueueResult::Done)
             })
         }
     }
 
     struct Harness {
-        sender: MessageSender<Recorder>,
+        ctx: Ctx,
         worker: Recorder,
         started: mpsc::UnboundedReceiver<Job>,
         permits: Arc<Semaphore>,
         retries: Arc<Mutex<HashMap<u32, u32>>>,
         cancelled: Arc<AtomicUsize>,
         task: Option<JoinHandle<Result<(), FlatbedWorkerError>>>,
-        #[cfg(feature = "k8s")]
-        leader: Option<tokio::sync::watch::Sender<bool>>,
     }
 
     impl Harness {
@@ -613,7 +644,7 @@ mod tests {
         #[cfg(feature = "k8s")]
         fn ha(permits: usize, leading: bool) -> Self {
             let mut harness = Self::idle(permits);
-            harness.leader = Some(tokio::sync::watch::channel(leading).0);
+            harness.ctx.leader = Some(tokio::sync::watch::channel(leading).0);
             harness.start();
             harness
         }
@@ -624,7 +655,11 @@ mod tests {
             let retries = Arc::default();
             let cancelled = Arc::default();
             Self {
-                sender: MessageSender::new(),
+                ctx: Ctx {
+                    queues: LocalQueues::default(),
+                    #[cfg(feature = "k8s")]
+                    leader: None,
+                },
                 worker: Recorder {
                     started: started_tx,
                     permits: Arc::clone(&permits),
@@ -636,23 +671,22 @@ mod tests {
                 retries,
                 cancelled,
                 task: None,
-                #[cfg(feature = "k8s")]
-                leader: None,
             }
         }
 
-        /// Runs `serve` over this harness's sender, as a worker (re)start does.
+        /// Runs `serve` over this harness's context, as a worker (re)start
+        /// does.
         fn start(&mut self) {
-            let ctx = Ctx {
-                sender: self.sender.clone(),
-                #[cfg(feature = "k8s")]
-                leader: self.leader.clone(),
-            };
-            self.task = Some(tokio::spawn(serve(self.worker.clone(), Arc::new(ctx))));
+            let ctx = Arc::new(self.ctx.clone());
+            self.task = Some(tokio::spawn(serve(self.worker.clone(), ctx)));
+        }
+
+        fn queue(&self) -> LocalQueueSender<Recorder> {
+            self.ctx.local_queue::<Recorder>()
         }
 
         fn send(&self, key: u32, tag: &'static str) {
-            self.sender.send(job(key, tag)).unwrap();
+            self.queue().send(job(key, tag)).unwrap();
         }
 
         async fn next_started(&mut self) -> Job {
@@ -667,6 +701,24 @@ mod tests {
                 panic!("nothing should start, but {job:?} did");
             }
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn producers_and_the_worker_share_one_queue_whoever_asks_first() {
+        let mut h = Harness::idle(10);
+        let before = h.queue();
+        h.start();
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let after = h.ctx.clone().local_queue::<Recorder>();
+        before.send(job(1, "before")).unwrap();
+        after.send(job(2, "after")).unwrap();
+        assert_eq!(h.next_started().await, job(1, "before"));
+        assert_eq!(h.next_started().await, job(2, "after"));
+
+        let mut h = Harness::standalone(10);
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        h.send(3, "worker first");
+        assert_eq!(h.next_started().await, job(3, "worker first"));
     }
 
     #[tokio::test(start_paused = true)]
@@ -691,8 +743,8 @@ mod tests {
         h.send(2, "b");
         h.send(1, "second");
 
-        assert_eq!(h.sender.position(&1), Some(1));
-        assert_eq!(h.sender.position(&2), Some(2));
+        assert_eq!(h.queue().position(&1), Some(1));
+        assert_eq!(h.queue().position(&2), Some(2));
         assert_eq!(h.next_started().await, job(1, "first"));
         assert_eq!(h.next_started().await, job(2, "b"));
         h.assert_quiet(QUIET).await;
@@ -705,7 +757,7 @@ mod tests {
         assert_eq!(h.next_started().await, job(1, "first"));
 
         h.send(1, "second");
-        assert_eq!(h.sender.position(&1), Some(0));
+        assert_eq!(h.queue().position(&1), Some(0));
         h.permits.add_permits(1);
         assert_eq!(h.next_started().await, job(1, "second"));
     }
@@ -716,20 +768,20 @@ mod tests {
         h.send(1, "a");
         h.send(2, "b");
         h.send(3, "c");
-        assert_eq!(h.sender.position(&1), Some(1));
-        assert_eq!(h.sender.position(&3), Some(3));
-        assert_eq!(h.sender.position(&4), None);
+        assert_eq!(h.queue().position(&1), Some(1));
+        assert_eq!(h.queue().position(&3), Some(3));
+        assert_eq!(h.queue().position(&4), None);
 
         h.next_started().await;
-        assert_eq!(h.sender.position(&1), Some(0));
-        assert_eq!(h.sender.position(&2), Some(1));
-        assert_eq!(h.sender.position(&3), Some(2));
+        assert_eq!(h.queue().position(&1), Some(0));
+        assert_eq!(h.queue().position(&2), Some(1));
+        assert_eq!(h.queue().position(&3), Some(2));
 
         h.permits.add_permits(1);
         h.next_started().await;
-        assert_eq!(h.sender.position(&1), None);
-        assert_eq!(h.sender.position(&2), Some(0));
-        assert_eq!(h.sender.position(&3), Some(1));
+        assert_eq!(h.queue().position(&1), None);
+        assert_eq!(h.queue().position(&2), Some(0));
+        assert_eq!(h.queue().position(&3), Some(1));
     }
 
     #[tokio::test(start_paused = true)]
@@ -783,19 +835,19 @@ mod tests {
         h.send(1, "a");
         h.send(2, "b");
         h.send(3, "c");
-        let full = QueueFull {
+        let full = LocalQueueFull {
             worker: "recorder",
             capacity: 3,
         };
-        assert_eq!(h.sender.send(job(4, "d")), Err(full));
-        assert_eq!(h.sender.send(job(2, "again")), Ok(()));
+        assert_eq!(h.queue().send(job(4, "d")), Err(full));
+        assert_eq!(h.queue().send(job(2, "again")), Ok(()));
 
         h.next_started().await;
-        assert_eq!(h.sender.send(job(4, "d")), Err(full));
+        assert_eq!(h.queue().send(job(4, "d")), Err(full));
 
         h.permits.add_permits(1);
         h.next_started().await;
-        assert_eq!(h.sender.send(job(4, "d")), Ok(()));
+        assert_eq!(h.queue().send(job(4, "d")), Ok(()));
     }
 
     #[tokio::test(start_paused = true)]
@@ -809,12 +861,12 @@ mod tests {
         first.abort();
         assert!(first.await.unwrap_err().is_cancelled());
         assert_eq!(h.cancelled.load(Ordering::SeqCst), 1);
-        assert_eq!(h.sender.position(&1), Some(0));
+        assert_eq!(h.queue().position(&1), Some(0));
 
         h.start();
         tokio::time::sleep(Duration::from_millis(1)).await;
-        assert_eq!(h.sender.position(&1), None);
-        assert_eq!(h.sender.position(&2), Some(1));
+        assert_eq!(h.queue().position(&1), None);
+        assert_eq!(h.queue().position(&2), Some(1));
         h.permits.add_permits(10);
         assert_eq!(h.next_started().await, job(2, "b"));
         h.assert_quiet(QUIET).await;
@@ -827,7 +879,7 @@ mod tests {
         h.send(1, "a");
 
         h.assert_quiet(QUIET).await;
-        assert_eq!(h.sender.position(&1), Some(1));
+        assert_eq!(h.queue().position(&1), Some(1));
     }
 
     #[cfg(feature = "k8s")]
@@ -837,7 +889,7 @@ mod tests {
         h.send(1, "a");
         h.assert_quiet(QUIET).await;
 
-        h.leader.as_ref().unwrap().send(true).unwrap();
+        h.ctx.leader.as_ref().unwrap().send(true).unwrap();
         h.assert_quiet(SETTLE - Duration::from_millis(1)).await;
         assert_eq!(
             timeout(Duration::from_millis(2), h.started.recv()).await,
@@ -853,13 +905,13 @@ mod tests {
         h.send(2, "b");
         assert_eq!(h.next_started().await, job(1, "a"));
 
-        h.leader.as_ref().unwrap().send(false).unwrap();
+        h.ctx.leader.as_ref().unwrap().send(false).unwrap();
         tokio::time::sleep(Duration::from_millis(1)).await;
         assert_eq!(h.cancelled.load(Ordering::SeqCst), 1);
-        assert_eq!(h.sender.position(&1), None);
-        assert_eq!(h.sender.position(&2), None);
+        assert_eq!(h.queue().position(&1), None);
+        assert_eq!(h.queue().position(&2), None);
 
-        h.leader.as_ref().unwrap().send(true).unwrap();
+        h.ctx.leader.as_ref().unwrap().send(true).unwrap();
         h.permits.add_permits(10);
         h.assert_quiet(QUIET).await;
         h.send(3, "c");

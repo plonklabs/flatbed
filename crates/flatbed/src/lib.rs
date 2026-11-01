@@ -84,10 +84,7 @@ pub use k8s::{
 #[cfg(all(feature = "nats", feature = "k8s"))]
 pub use k8s::{run_kube_reconciler, KubeReconciler};
 
-// Generic context wrapper (available when any service feature is enabled)
-#[cfg(any(feature = "nats", feature = "k8s"))]
 mod context;
-#[cfg(any(feature = "nats", feature = "k8s"))]
 pub use context::FlatbedContext;
 
 // Re-export kube for use in generated macro code
@@ -98,8 +95,11 @@ pub use kube;
 // Hyper integration module
 pub mod hyper;
 
-pub mod message;
-pub use message::{run_message_worker, MessageResult, MessageSender, MessageWorker, QueueFull};
+pub mod local_queue;
+pub use local_queue::{
+    run_local_queue_worker, HasLocalQueues, LocalQueueFull, LocalQueueResult, LocalQueueSender,
+    LocalQueueWorker, LocalQueues,
+};
 
 pub mod readiness;
 pub use readiness::{Readiness, ReadinessGate};
@@ -2262,10 +2262,10 @@ macro_rules! register_kv_worker {
     };
 }
 
-/// Register a [`MessageWorker`] implementor with the Flatbed worker system.
+/// Register a [`LocalQueueWorker`] implementor with the Flatbed worker system.
 ///
 /// Submits a [`WorkerInfo`] whose worker function delegates to
-/// [`run_message_worker`], plus a [`WorkerDrainInfo`] wired to the worker's
+/// [`run_local_queue_worker`], plus a [`WorkerDrainInfo`] wired to the worker's
 /// `drain`.
 ///
 /// # Usage
@@ -2273,24 +2273,24 @@ macro_rules! register_kv_worker {
 /// ```rust,ignore
 /// #[derive(Default)]
 /// struct MigratorRunner;
-/// impl flatbed::MessageWorker for MigratorRunner { /* ... */ }
+/// impl flatbed::LocalQueueWorker for MigratorRunner { /* ... */ }
 ///
-/// flatbed::register_message_worker!(MigratorRunner, AppContext);
+/// flatbed::register_local_queue_worker!(MigratorRunner, AppContext);
 /// ```
 ///
 /// The worker's `RESTART` associated const decides whether it is restarted
 /// in place; the macro takes no configuration of its own.
 ///
-/// [`MessageWorker`]: crate::message::MessageWorker
-/// [`run_message_worker`]: crate::message::run_message_worker
+/// [`LocalQueueWorker`]: crate::local_queue::LocalQueueWorker
+/// [`run_local_queue_worker`]: crate::local_queue::run_local_queue_worker
 #[macro_export]
-macro_rules! register_message_worker {
-    ($message_worker:ty, $context:ty) => {
+macro_rules! register_local_queue_worker {
+    ($local_queue_worker:ty, $context:ty) => {
         $crate::inventory::submit! {
             $crate::WorkerInfo {
-                name: <$message_worker as $crate::message::MessageWorker>::NAME,
-                description: <$message_worker as $crate::message::MessageWorker>::DESCRIPTION,
-                restart: <$message_worker as $crate::message::MessageWorker>::RESTART,
+                name: <$local_queue_worker as $crate::local_queue::LocalQueueWorker>::NAME,
+                description: <$local_queue_worker as $crate::local_queue::LocalQueueWorker>::DESCRIPTION,
+                restart: <$local_queue_worker as $crate::local_queue::LocalQueueWorker>::RESTART,
                 enabled: ::core::option::Option::None,
                 worker: {
                     fn __worker(
@@ -2298,7 +2298,7 @@ macro_rules! register_message_worker {
                     ) -> ::std::pin::Pin<
                         Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
                     > {
-                        Box::pin($crate::message::run_message_worker::<$message_worker, $context>(ctx))
+                        Box::pin($crate::local_queue::run_local_queue_worker::<$local_queue_worker, $context>(ctx))
                     }
                     __worker
                 },
@@ -2306,14 +2306,14 @@ macro_rules! register_message_worker {
         }
         $crate::inventory::submit! {
             $crate::WorkerDrainInfo {
-                name: <$message_worker as $crate::message::MessageWorker>::NAME,
+                name: <$local_queue_worker as $crate::local_queue::LocalQueueWorker>::NAME,
                 drain: {
                     fn __drain(
                         ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
                     ) -> ::std::pin::Pin<
                         Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
                     > {
-                        $crate::message::run_message_worker_drain::<$message_worker, $context>(ctx)
+                        $crate::local_queue::run_local_queue_worker_drain::<$local_queue_worker, $context>(ctx)
                     }
                     __drain
                 },
