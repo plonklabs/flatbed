@@ -9,6 +9,25 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+## [0.0.10] — 2026-11-01
+
+### Added
+
+- `LocalQueueWorker`, an in-process worker that handles messages from a
+  bounded, keyed queue held in memory, strictly one at a time, registered
+  with `register_local_queue_worker!`. Sending a key that is already
+  queued coalesces into the queued entry, `LocalQueueResult::Retry` sends
+  a message to the back after `RETRY_DELAY`, and an `Err` is logged and
+  dropped. Under `k8s` it handles only while leading, waits `SETTLE` at
+  each acquisition, and drops the queue on leadership loss. Nothing is
+  persisted. Its companion types are `LocalQueueSender` (`send`,
+  `position`), `LocalQueueResult` and `LocalQueueFull`.
+- `HasLocalQueues`, implemented by `FlatbedContext`: producers reach a
+  worker's queue with `ctx.local_queue::<W>()`, with no field or wiring in
+  the application context. `LocalQueues` is the per-context store behind
+  it.
+- `FlatbedContext` is available without the `nats` or `k8s` features.
+
 ## [0.0.9] — 2026-10-27
 
 ### Added
@@ -236,7 +255,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.9...HEAD
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.10...HEAD
+[0.0.10]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.9...flatbed-v0.0.10
 [0.0.9]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.8...flatbed-v0.0.9
 [0.0.8]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.7...flatbed-v0.0.8
 [0.0.7]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.6...flatbed-v0.0.7
