@@ -119,6 +119,15 @@ async fn panicking(
     panic!("handler blew up")
 }
 
+struct Unbooted;
+
+#[route("/report/unbooted")]
+async fn unbooted(
+    _req: Request<TestRequest, Arc<Unbooted>>,
+) -> Result<Response<TestResponse>, FlatbedRouteError> {
+    Ok(Response::ok(TestResponse::default()))
+}
+
 /// Start a server reporting to the shared recorder and wait until it is
 /// ready, returning its base URL.
 async fn boot(config: FlatbedConfig) -> String {
@@ -242,4 +251,67 @@ async fn before_request_server_error_is_reported() {
             message: "auth backend down".to_string(),
         }]
     );
+}
+
+async fn post_flatbuffer(
+    base: &str,
+    path: &str,
+    request_id: &str,
+    body: Vec<u8>,
+) -> reqwest::Response {
+    reqwest::Client::new()
+        .post(format!("{base}{path}"))
+        .header("x-request-id", request_id)
+        .header("content-type", "application/x-flatbuffers")
+        .body(body)
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn framework_server_error_answers_in_flatbuffer_shape_with_the_reported_request_id() {
+    let base = boot(FlatbedConfig::new("report-framework-5xx")).await;
+    let body = TestRequest {
+        message: Some("hi".to_string()),
+        value: 1,
+    }
+    .to_flatbuffer();
+
+    let response = post_flatbuffer(&base, "/report/unbooted", "req-framework", body).await;
+    assert_eq!(response.status(), 500);
+    assert_eq!(response.headers()["x-request-id"], "req-framework");
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/x-flatbuffers"
+    );
+    assert_eq!(response.headers()["x-error-code"], "INTERNAL_ERROR");
+    assert!(response.bytes().await.unwrap().is_empty());
+
+    assert_eq!(
+        RECORDER.for_request("req-framework"),
+        vec![Record::RouteError {
+            route: http_route("/report/unbooted", "/report/unbooted", "req-framework"),
+            status: 500,
+            code: Some("INTERNAL_ERROR".to_string()),
+            message: "Route context type mismatch: expected Unbooted".to_string(),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn undecodable_flatbuffer_body_answers_in_flatbuffer_shape_with_the_request_id() {
+    let base = boot(FlatbedConfig::new("report-decode")).await;
+
+    let response = post_flatbuffer(&base, "/report/missing", "req-decode", vec![0xff; 3]).await;
+    assert_eq!(response.status(), 400);
+    assert_eq!(response.headers()["x-request-id"], "req-decode");
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/x-flatbuffers"
+    );
+    assert_eq!(response.headers()["x-error-code"], "BAD_REQUEST");
+    assert!(response.bytes().await.unwrap().is_empty());
+
+    assert_eq!(RECORDER.for_request("req-decode"), vec![]);
 }

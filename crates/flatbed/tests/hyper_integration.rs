@@ -1088,8 +1088,7 @@ async fn accept_header_selects_the_response_codec() {
     );
 
     // A handler's own error under `accept: application/x-flatbuffers` takes
-    // the FlatBuffer shape: code and message in headers, no JSON body. (A body
-    // that fails to decode is the service's answer, JSON whatever the codec.)
+    // the FlatBuffer shape: code and message in headers, no JSON body.
     let resp = client
         .post(format!("{base}/api/error"))
         .header("content-type", "application/json")

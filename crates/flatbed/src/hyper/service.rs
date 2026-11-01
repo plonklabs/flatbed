@@ -312,11 +312,9 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes().to_vec(),
         Err(e) => {
-            return build_error_response(
-                StatusCode::BAD_REQUEST,
-                "BODY_READ_ERROR",
-                &format!("Failed to read request body: {}", e),
-            );
+            let err = FlatbedRouteError::bad_request(format!("Failed to read request body: {e}"))
+                .code("BODY_READ_ERROR");
+            return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id);
         }
     };
 
@@ -347,16 +345,16 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         Error::HandlerError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "HANDLER_ERROR"),
         Error::Custom(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),
     };
-    let message = e.to_string();
+    let err = FlatbedRouteError::with_status(status, e.to_string()).code(code);
     if status.is_server_error() {
         error_reporting::route_error(&RouteFailure {
             request: route,
             status: status.as_u16(),
             code: Some(code),
-            message: &message,
+            message: &err.message,
         });
     }
-    build_error_response(status, code, &message)
+    build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id)
 }
 
 fn is_get_or_head(method: &str) -> bool {
