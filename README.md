@@ -466,6 +466,25 @@ Each `register_*!` macro also registers the worker trait's `drain`, which the
 shutdown path calls once the server stops accepting connections; it defaults to
 a no-op.
 
+### Local queues
+
+A `LocalQueueWorker` carries out requests that other parts of the process
+enqueue, strictly one at a time, from a bounded queue held in memory. Nothing
+is persisted, so it suits level-triggered producers such as reconcilers, which
+resend whatever they still need after a restart. The context owns the queue:
+`FlatbedContext` implements `HasLocalQueues`, so a producer enqueues with
+`ctx.local_queue::<W>().send(msg)` and asks where a request stands with
+`.position(&key)`, with no field or wiring in the app. Register the worker
+with `register_local_queue_worker!`.
+
+Sending a key that is already queued keeps the queued entry, its place and its
+payload; the key being handled is not queued, so a resend during handling runs
+again afterwards. `Retry` sends the message to the back of the line, `Err` logs
+and drops it, and neither touches health. With the `k8s` feature, messages are
+handled only while the process leads, after a `SETTLE` pause on each
+acquisition that lets a request the previous leader sent land first, and the
+queue is discarded when leadership is lost.
+
 ## Reporting errors (optional)
 
 A panicking route handler is caught and answered with a `500` whose code is
