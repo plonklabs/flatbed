@@ -1,12 +1,11 @@
 //! In-process message worker: a bounded, keyed queue handled one message at
 //! a time.
 //!
-//! [`MessageWorker`] is the in-memory counterpart to `StreamWorker`.
 //! Producers inside the process enqueue through a [`MessageSender`] held on
-//! the application context; one worker takes the messages strictly in order,
-//! taking the next only after [`handle`](MessageWorker::handle) returns. Nothing is persisted: the queue
-//! is lost on restart, so producers are expected to be level-triggered and
-//! resend what they still need.
+//! the application context; one [`MessageWorker`] takes the messages strictly
+//! in order, taking the next only after [`handle`](MessageWorker::handle)
+//! returns. Nothing is persisted: the queue is lost on restart, so producers
+//! are expected to be level-triggered and resend what they still need.
 //!
 //! ## Queue semantics
 //!
@@ -27,20 +26,21 @@
 //!   queued resend stands in for it. After a retry the worker waits
 //!   [`RETRY_DELAY`](MessageWorker::RETRY_DELAY) before taking the next
 //!   message, so messages that keep failing never spin. An `Err` from `handle`
-//!   is logged and the message dropped, like a `NatsResult::Skip`: it does
-//!   not stop the worker or touch health.
+//!   is logged and the message dropped; it does not stop the worker or touch
+//!   health.
 //!
 //! ## Leadership
 //!
-//! With the `k8s` feature the context implements `HasLeaderElection`, and
-//! messages are handled only while this process leads. Each time it becomes
-//! leader the worker waits [`SETTLE`](MessageWorker::SETTLE) before the first
-//! message. When it loses leadership the message being handled is cancelled
-//! and the whole queue is discarded. Sends are accepted whether or not the process
-//! leads; what a follower queues waits for the next leadership term, and is
-//! discarded with the rest if leadership is lost first. With leader election
-//! disabled (`ha_enabled() == false`), or without the `k8s` feature, the
-//! worker handles messages from startup, after one `SETTLE`.
+//! With the `k8s` feature the context provides leader election (see
+//! [`MessageWorker::Context`]), and messages are handled only while this
+//! process leads. Each time it becomes leader the worker waits
+//! [`SETTLE`](MessageWorker::SETTLE) before the first message. When it loses
+//! leadership the message being handled is cancelled and the whole queue is
+//! discarded. Sends are accepted whether or not the process leads; what a
+//! follower queues waits for the next leadership term, and is discarded with
+//! the rest if leadership is lost first. With leader election disabled
+//! (`ha_enabled() == false`), or without the `k8s` feature, the worker
+//! handles messages from startup, after one `SETTLE`.
 
 use std::collections::VecDeque;
 use std::fmt;
