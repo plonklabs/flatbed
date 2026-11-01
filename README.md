@@ -466,6 +466,51 @@ Each `register_*!` macro also registers the worker trait's `drain`, which the
 shutdown path calls once the server stops accepting connections; it defaults to
 a no-op.
 
+### In-process message queues
+
+A `MessageWorker` carries out requests that other parts of the process enqueue,
+strictly one at a time, from a bounded queue held in memory. Nothing is
+persisted, so it suits level-triggered producers such as reconcilers, which
+resend whatever they still need after a restart. The app creates the
+`MessageSender` while building its context, and the worker reads from the
+same queue:
+
+```rust
+#[derive(Default)]
+struct NamespaceSetup;
+
+impl flatbed::MessageWorker for NamespaceSetup {
+    type Message = SetupNamespace;
+    type Key = (String, String);
+    type Context = AppContext;
+    type Error = kube::Error;
+    const NAME: &'static str = "namespace-setup";
+
+    fn key(msg: &SetupNamespace) -> Self::Key {
+        (msg.namespace.clone(), msg.server.clone())
+    }
+
+    fn sender(ctx: &AppContext) -> &flatbed::MessageSender<Self> {
+        &ctx.setups // built with MessageSender::new()
+    }
+
+    // fn handle(...) -> Done, Retry(reason), or Err
+}
+
+flatbed::register_message_worker!(NamespaceSetup, AppContext);
+
+// From a reconciler:
+ctx.setups.send(SetupNamespace { namespace, server })?; // QueueFull when at CAPACITY
+ctx.setups.position(&key); // Some(0) = being handled, Some(1) = next
+```
+
+Sending a key that is already queued keeps the queued entry, its place and its
+payload; the key being handled is not queued, so a resend during handling runs
+again afterwards. `Retry` sends the message to the back of the line, `Err` logs
+and drops it, and neither touches health. With the `k8s` feature, messages are
+handled only while the process leads, after a `SETTLE` pause on each
+acquisition, and the queue is discarded when leadership is lost.
+
 ## Reporting errors (optional)
 
 A panicking route handler is caught and answered with a `500` whose code is

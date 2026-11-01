@@ -98,6 +98,9 @@ pub use kube;
 // Hyper integration module
 pub mod hyper;
 
+pub mod message;
+pub use message::{run_message_worker, MessageResult, MessageSender, MessageWorker, QueueFull};
+
 pub mod readiness;
 pub use readiness::{Readiness, ReadinessGate};
 
@@ -2251,6 +2254,66 @@ macro_rules! register_kv_worker {
                         Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
                     > {
                         $crate::kv::run_kv_worker_drain::<$kv_worker, $context>(ctx)
+                    }
+                    __drain
+                },
+            }
+        }
+    };
+}
+
+/// Register a [`MessageWorker`] implementor with the Flatbed worker system.
+///
+/// Submits a [`WorkerInfo`] whose worker function delegates to
+/// [`run_message_worker`], plus a [`WorkerDrainInfo`] wired to the worker's
+/// `drain`.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// #[derive(Default)]
+/// struct MigratorRunner;
+/// impl flatbed::MessageWorker for MigratorRunner { /* ... */ }
+///
+/// flatbed::register_message_worker!(MigratorRunner, AppContext);
+/// ```
+///
+/// The worker's `RESTART` associated const decides whether it is restarted
+/// in place; the macro takes no configuration of its own.
+///
+/// [`MessageWorker`]: crate::message::MessageWorker
+/// [`run_message_worker`]: crate::message::run_message_worker
+#[macro_export]
+macro_rules! register_message_worker {
+    ($message_worker:ty, $context:ty) => {
+        $crate::inventory::submit! {
+            $crate::WorkerInfo {
+                name: <$message_worker as $crate::message::MessageWorker>::NAME,
+                description: <$message_worker as $crate::message::MessageWorker>::DESCRIPTION,
+                restart: <$message_worker as $crate::message::MessageWorker>::RESTART,
+                enabled: ::core::option::Option::None,
+                worker: {
+                    fn __worker(
+                        ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                    ) -> ::std::pin::Pin<
+                        Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
+                    > {
+                        Box::pin($crate::message::run_message_worker::<$message_worker, $context>(ctx))
+                    }
+                    __worker
+                },
+            }
+        }
+        $crate::inventory::submit! {
+            $crate::WorkerDrainInfo {
+                name: <$message_worker as $crate::message::MessageWorker>::NAME,
+                drain: {
+                    fn __drain(
+                        ctx: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
+                    ) -> ::std::pin::Pin<
+                        Box<dyn ::std::future::Future<Output = Result<(), $crate::FlatbedWorkerError>> + Send>,
+                    > {
+                        $crate::message::run_message_worker_drain::<$message_worker, $context>(ctx)
                     }
                     __drain
                 },
