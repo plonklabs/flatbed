@@ -9,6 +9,8 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+## [0.0.11] — 2026-11-03
+
 ### Added
 
 - Dead letters for `LocalQueueWorker`. A message is set aside, and the line
@@ -38,6 +40,14 @@ contain breaking changes during the pre-1.0 stabilization window.
   returns a `KeyStatus`: `InHand`, `Queued(n)` with `Queued(1)` next,
   `DeadLettered(letter)` or `Absent`.
 - `futures` is a dependency in every build, not only under `nats` or `k8s`.
+
+### Fixed
+
+- Errors the framework raises after a route matches (`BAD_REQUEST`,
+  `BODY_READ_ERROR`, `SERIALIZATION_ERROR`, `HANDLER_ERROR`,
+  `INTERNAL_ERROR`) carry `x-request-id` and answer in the request's wire
+  format (`x-error-code` / `x-error-message` for FlatBuffer), like route
+  errors. A reported 5xx and its response share the request id.
 
 ## [0.0.10] — 2026-11-01
 
@@ -285,7 +295,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.10...HEAD
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.11...HEAD
+[0.0.11]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.10...flatbed-v0.0.11
 [0.0.10]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.9...flatbed-v0.0.10
 [0.0.9]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.8...flatbed-v0.0.9
 [0.0.8]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.7...flatbed-v0.0.8
