@@ -298,11 +298,18 @@ impl<F: Future + Unpin> Future for CatchPanic<F> {
         let inner = &mut self.0;
         match std::panic::catch_unwind(AssertUnwindSafe(|| Pin::new(inner).poll(cx))) {
             Ok(poll) => poll.map(Ok),
-            Err(payload) => Poll::Ready(Err(CaughtPanic {
-                message: panic_message(payload.as_ref()),
-                backtrace: LAST_BACKTRACE.try_with(Cell::take).ok().flatten(),
-            })),
+            Err(payload) => Poll::Ready(Err(caught_panic(payload.as_ref()))),
         }
+    }
+}
+
+/// The panic behind an unwind `payload`. Call it on the thread, and in the
+/// same `poll`, that caught the unwind: the panic hook keeps the backtrace in
+/// a thread-local.
+pub(crate) fn caught_panic(payload: &(dyn std::any::Any + Send)) -> CaughtPanic {
+    CaughtPanic {
+        message: panic_message(payload),
+        backtrace: LAST_BACKTRACE.try_with(Cell::take).ok().flatten(),
     }
 }
 

@@ -97,8 +97,8 @@ pub mod hyper;
 
 pub mod local_queue;
 pub use local_queue::{
-    run_local_queue_worker, HasLocalQueues, LocalQueueFull, LocalQueueResult, LocalQueueSender,
-    LocalQueueWorker, LocalQueues,
+    run_local_queue_worker, DeadLetter, DeadLetterCause, HasLocalQueues, KeyStatus, LocalQueueFull,
+    LocalQueueResult, LocalQueueSender, LocalQueueWorker, LocalQueues, SendError,
 };
 
 pub mod readiness;
