@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dead Letters for the Queue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Plonk Press: the one stylesheet of a published page and of its figures. In a figure a box's fill says who owns it, a green edge says it is new, a line's stroke says what kind of call it is. */
+:root {
+  --ground: #efe7d8;
+  --on-ground: #141412;
+  --box: #141412;
+  --paper: #e8dcc6;
+  --cream: #dcc9a9;
+  --ink: #141412;
+  --caption: #5a5246;
+  --green: #4e6851;
+  --green-tint: #b9c7ad;
+  --ochre: #e0a35c;
+  --ochre-tint: #efcf9f;
+  --red: #b83a2d;
+  --red-tint: #e9b4a9;
+  --grey: #8f8a80;
+  --grey-tint: color-mix(in srgb, var(--grey) 45%, var(--paper));
+
+  --plat: var(--cream);
+  --user: var(--paper);
+  --new: var(--green);
+  --new-tint: var(--green-tint);
+
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --ground: #1b1b1a; --on-ground: #dcc9a9; --box: transparent; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --ground: #1b1b1a; --on-ground: #dcc9a9; --box: transparent; color-scheme: dark; }
+
+/* Page */
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--ground); color: var(--on-ground); font-family: var(--sans);
+  font-size: 16px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 64px;
+}
+.wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+.label { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; font-weight: 600; }
+code { font-family: var(--mono); font-variant-ligatures: none; font-size: .88em; background: var(--cream); color: var(--ink); padding: 1px 5px; border-radius: 4px; }
+a { color: inherit; }
+p { margin: 0; max-width: 68ch; }
+
+header.mast { border-bottom: 4px solid var(--on-ground); padding-bottom: 14px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.mast h1 { font-family: var(--mono); font-weight: 800; font-size: clamp(40px, 8vw, 76px); line-height: .95; letter-spacing: -.02em; margin: 0; text-transform: uppercase; text-wrap: balance; }
+.mast .dateline { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; opacity: .8; }
+.lede { font-size: 19px; max-width: 68ch; margin: 0; }
+
+section { display: flex; flex-direction: column; gap: 16px; }
+section > h2 { font-family: var(--mono); font-size: 22px; font-weight: 800; text-transform: uppercase; letter-spacing: .02em; margin: 0;
+  border-top: 2px solid var(--on-ground); padding-top: 10px; text-wrap: balance; }
+.fig-no { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; font-weight: 600; margin-right: 10px; opacity: .8; vertical-align: 3px; }
+
+/* The sheet a figure is drawn on: paper in both themes, so the figure's colours never change with the page's. */
+.sheet { background: var(--paper); color: var(--ink); border: 2px solid var(--box); border-radius: 16px; padding: 16px; }
+.scroll { overflow-x: auto; }
+
+/* Key under each sheet: only the kinds the figure uses */
+.key { display: flex; flex-wrap: wrap; gap: 8px 22px; padding-top: 14px; margin-top: 12px; border-top: 1px solid color-mix(in srgb, var(--ink) 22%, transparent);
+  font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; color: var(--caption); }
+.key span { display: inline-flex; align-items: center; gap: 8px; }
+.k-box { width: 20px; height: 14px; border-radius: 4px; border: 2px dashed var(--ink); }
+.k-box.plat { background: var(--plat); }
+.k-box.user { background: var(--user); border-style: solid; }
+.k-box.new { background: var(--new-tint); border-style: solid; border-left: 6px solid var(--new); }
+.k-line { width: 26px; height: 0; border-top: 2px solid var(--ink); }
+.k-line.tool { border-top: 3px solid var(--new); }
+.k-line.ctl { border-top: 2px dotted var(--ink); }
+.k-line.db { border-top-width: 4px; }
+.k-line.wire { border-top-style: dashed; border-color: var(--caption); }
+
+/* Boxes, tables, tags, lists */
+.box { background: var(--cream); color: var(--ink); border: 2px solid var(--box); border-radius: 16px; padding: 20px 22px; min-width: 0; }
+.box .label { color: var(--caption); display: block; margin-bottom: 6px; }
+.box h3 { margin: 0 0 6px; font-family: var(--mono); font-size: 15px; text-transform: uppercase; letter-spacing: .04em; }
+.box code, .sheet code { background: var(--paper); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.stat { display: flex; flex-direction: column; gap: 2px; }
+.stat .fig { font-family: var(--mono); font-size: 40px; font-weight: 800; line-height: 1; }
+.tone-green { background: var(--green-tint); border-left: 6px solid var(--green); }
+.tone-ochre { background: var(--ochre-tint); border-left: 6px solid var(--ochre); }
+.tone-red { background: var(--red-tint); border-left: 6px solid var(--red); }
+.quote { font-size: 18px; }
+.table-wrap { overflow-x: auto; border: 2px solid var(--box); border-radius: 16px; background: var(--cream); }
+table { border-collapse: collapse; width: 100%; min-width: 640px; color: var(--ink); font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid color-mix(in srgb, var(--ink) 22%, transparent); }
+th { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--caption); font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+.tag { font-family: var(--mono); font-weight: 800; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; padding: 1px 7px; border-radius: 4px; border: 2px solid var(--ink); white-space: nowrap; display: inline-block; }
+.tag.green { background: var(--green-tint); border-left: 6px solid var(--green); }
+.tag.ochre { background: var(--ochre-tint); border-left: 6px solid var(--ochre); }
+.tag.red { background: var(--red-tint); border-left: 6px solid var(--red); }
+.tag.grey { background: var(--grey-tint); border-left: 6px solid var(--grey); }
+.src { margin: 0; padding: 14px 16px; background: var(--paper); color: var(--ink); border-radius: 10px; overflow-x: auto; font-family: var(--mono); font-variant-ligatures: none; font-size: 13px; line-height: 1.55; white-space: pre; }
+.src .c { color: var(--caption); }
+ol, ul { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; max-width: 72ch; }
+ol li::marker { font-family: var(--mono); font-weight: 800; }
+.note { font-size: 14px; opacity: .85; }
+footer { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; border-top: 2px solid var(--on-ground); padding-top: 10px; opacity: .8; }
+
+/* SVG vocabulary */
+.d { display: block; width: 100%; height: auto; min-width: 760px; }
+.d text { font-family: var(--mono); fill: var(--ink); font-variant-ligatures: none; }
+.d .t-sans { font-family: var(--sans); }
+.d .t-kind { font-size: 11px; font-weight: 800; letter-spacing: .1em; fill: var(--caption); }
+.d .t-lg { font-size: 20px; font-weight: 800; }
+.d .t-md { font-size: 15px; font-weight: 800; }
+.d .t-sm { font-size: 13px; font-weight: 600; }
+.d .t-xs { font-size: 12px; }
+.d .t-soft { fill: var(--caption); }
+.d .t-new { fill: var(--new); font-weight: 800; }
+.d .t-line { font-size: 12px; font-weight: 600; }
+.d .halo { paint-order: stroke; stroke-width: 6px; stroke-linejoin: round; }
+.d .cluster-box { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+.d .ns-box { stroke: var(--ink); stroke-width: 2; stroke-dasharray: 8 5; }
+.d .ns-box.plat { fill: var(--plat); }
+.d .ns-box.user { fill: var(--user); stroke-width: 2.5; stroke-dasharray: none; }
+.d .pod-box { fill: none; stroke: var(--ink); stroke-width: 2; stroke-dasharray: 2 4; stroke-linecap: round; }
+.d .svc-box { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+.d .db-box { fill: var(--user); stroke: var(--ink); stroke-width: 2.5; }
+.d .chip { fill: var(--cream); stroke: var(--ink); stroke-width: 1.5; }
+.d .ext-box { fill: var(--paper); stroke: var(--caption); stroke-width: 2; stroke-dasharray: 5 4; }
+.d .pill { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+.d .new-fill { fill: var(--new-tint); }
+.d .new-edge { fill: var(--new); }
+.d .outline { fill: none; stroke: var(--ink); stroke-width: 2; }
+.d .ln-int, .d .ln-ctl, .d .ln-db { fill: none; stroke: var(--ink); stroke-width: 2; }
+.d .ln-ctl { stroke-dasharray: 1 5; stroke-linecap: round; stroke-width: 2.5; }
+.d .ln-db { stroke-width: 4; }
+.d .ln-tool { fill: none; stroke: var(--new); stroke-width: 3; }
+.d .ln-wire { fill: none; stroke: var(--caption); stroke-width: 2; }
+.d .dash { stroke-dasharray: 6 4; }
+.d .f-int, .d .f-ctl, .d .f-db { fill: var(--ink); }
+.d .f-tool { fill: var(--new); }
+.d .f-wire { fill: var(--caption); }
+.d .lifeline { stroke: var(--caption); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.d .note-box { fill: var(--ochre-tint); stroke: var(--ink); stroke-width: 1.5; }
+.d .note-edge { fill: var(--ochre); }
+.d .num { fill: var(--ink); }
+.d .t-num { fill: var(--cream); font-size: 10px; font-weight: 800; }
+</style>
+<script>
+// Draws Plonk Press figures from data: Diagram.arch for a structure, Diagram.seq for a sequence.
+// Each call fills an empty <svg class="d" id="..."> already on the page.
+(function () {
+  const NS = "http://www.w3.org/2000/svg";
+  const KINDS = ["int", "ctl", "tool", "db", "wire"];
+  // The fill a text sits on, so its halo erases the lines passing under it.
+  const BG = {
+    cluster: "--paper", svc: "--paper", ext: "--paper", pill: "--paper",
+    "ns:plat": "--plat", "ns:user": "--user", db: "--user", chip: "--cream",
+    proc: "--new-tint", "svc:new": "--new-tint", "chip:new": "--new-tint",
+  };
+
+  const theme = new URLSearchParams(location.search).get("theme");
+  if (theme === "light" || theme === "dark") document.documentElement.setAttribute("data-theme", theme);
+
+  function el(tag, attrs, parent) {
+    const node = document.createElementNS(NS, tag);
+    for (const k in attrs) if (attrs[k] !== undefined) node.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(node);
+    return node;
+  }
+
+  function text(parent, x, y, spans, opts = {}) {
+    const t = el("text", { x, y, "text-anchor": opts.anchor, transform: opts.rotate ? `rotate(${opts.rotate} ${x} ${y})` : undefined }, parent);
+    if (opts.halo) { t.classList.add("halo"); t.style.stroke = `var(${opts.halo})`; }
+    (Array.isArray(spans) ? spans : [[spans, opts.cls || ""]]).forEach(([s, cls], i) => {
+      const ts = el("tspan", { class: cls, dx: i ? 10 : undefined }, t);
+      ts.textContent = s;
+    });
+    return t;
+  }
+
+  function markers(svg, id) {
+    const defs = el("defs", {}, svg);
+    for (const k of KINDS) {
+      const m = el("marker", { id: `${id}-${k}`, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 12, markerHeight: 12, markerUnits: "userSpaceOnUse", orient: "auto-start-reverse" }, defs);
+      el("path", { d: "M0,0 L10,5 L0,10 z", class: `f-${k}` }, m);
+    }
+    return defs;
+  }
+
+  function title(svg, words) {
+    if (!words) return;
+    el("title", {}, svg).textContent = words;
+    svg.setAttribute("role", "img");
+  }
+
+  const isNew = b => b.kind === "proc" || ((b.kind === "svc" || b.kind === "chip") && b.isNew);
+
+  function bgKey(b) {
+    if (b.kind === "ns") return `ns:${b.tone || "plat"}`;
+    if (isNew(b) && b.kind !== "proc") return `${b.kind}:new`;
+    return b.kind;
+  }
+
+  function bgAt(boxes, x, y) {
+    let bg = "--paper";
+    for (const b of boxes) if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h && BG[bgKey(b)]) bg = BG[bgKey(b)];
+    return bg;
+  }
+
+  const SHAPE = {
+    cluster: () => ({ class: "cluster-box", rx: 16 }),
+    ns: b => ({ class: `ns-box ${b.tone || "plat"}`, rx: 12 }),
+    pod: () => ({ class: "pod-box", rx: 10 }),
+    svc: () => ({ class: "svc-box", rx: 10 }),
+    db: () => ({ class: "db-box", rx: 8 }),
+    chip: () => ({ class: "chip", rx: 6 }),
+    ext: () => ({ class: "ext-box", rx: 10 }),
+    pill: b => ({ class: "pill", rx: b.h / 2 }),
+  };
+  const RADIUS = { proc: 10, svc: 10, chip: 6 };
+
+  // A new piece: green tint, a full-green band down its left edge, the ink outline over both.
+  function newBox(g, defs, b, key, edge = 6) {
+    const rx = RADIUS[b.kind] ?? 10;
+    const clip = el("clipPath", { id: key }, defs);
+    el("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx }, clip);
+    el("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx, class: "new-fill" }, g);
+    el("rect", { x: b.x, y: b.y, width: edge, height: b.h, class: "new-edge", "clip-path": `url(#${key})` }, g);
+    el("rect", { x: b.x, y: b.y, width: b.w, height: b.h, rx, class: "outline" }, g);
+  }
+
+  function boxText(g, b, boxes) {
+    const halo = BG[bgKey(b)];
+    const x = b.x, y = b.y, w = b.w, h = b.h;
+    const pad = isNew(b) ? 20 : 16;
+    switch (b.kind) {
+      case "cluster":
+        text(g, x + 24, y + 36, b.name, { cls: "t-lg", halo });
+        if (b.note) text(g, x + w - 24, y + 34, b.note, { cls: "t-xs t-soft", anchor: "end", halo });
+        break;
+      case "ns":
+        text(g, x + 16, y + 26, [[b.tag || "NAMESPACE", "t-kind"], [b.name, "t-sm"]], { halo });
+        break;
+      case "pod":
+        text(g, x + 16, y + 24, [[b.tag || "POD", "t-kind"], [b.name, "t-sm"]], { halo: bgAt(boxes.filter(o => o !== b), x + 16, y + 24) });
+        break;
+      case "proc":
+        text(g, x + pad, y + 24, [[b.tag || "PROCESS", "t-kind"], [b.name, "t-sm"], ["NEW", "t-kind t-new"]], { halo });
+        break;
+      case "svc":
+        if (b.sub) {
+          text(g, x + pad, y + 28, b.name, { cls: "t-md", halo });
+          text(g, x + pad, y + 50, b.sub, { cls: "t-sans t-sm t-soft", halo });
+        } else {
+          text(g, x + pad, y + h / 2 + 6, b.name, { cls: "t-md", halo });
+        }
+        if (b.isNew) text(g, x + w - 14, y + 24, "NEW", { cls: "t-kind t-new", anchor: "end", halo });
+        break;
+      case "db":
+      case "ext":
+        text(g, x + 14, y + 22, b.tag || (b.kind === "db" ? "DATABASE" : "EXTERNAL"), { cls: "t-kind", halo });
+        text(g, x + 14, y + 46, b.name, { cls: "t-md", halo });
+        if (b.sub) text(g, x + 14, y + 64, b.sub, { cls: "t-sans t-xs t-soft", halo });
+        if (b.note) text(g, x + w - 14, y + 22, b.note, { cls: "t-kind", anchor: "end", halo });
+        if (b.caption) text(g, x, y + h + 22, b.caption, { cls: "t-xs t-soft" });
+        break;
+      case "chip":
+        text(g, x + w / 2 + (b.isNew ? 3 : 0), y + h / 2 + 4, b.name, { cls: "t-xs", anchor: "middle", halo });
+        break;
+      case "pill":
+        text(g, x + w / 2, y + h / 2 + 5, b.name, { cls: "t-sm", anchor: "middle", halo });
+        break;
+    }
+  }
+
+  // spec: { width, height, title, boxes: [...], lines: [...], labels: [...] }
+  // Boxes are listed outermost first; lines are drawn over boxes and under every text.
+  function arch(id, spec) {
+    const svg = document.getElementById(id);
+    svg.setAttribute("viewBox", `0 0 ${spec.width || 1190} ${spec.height}`);
+    title(svg, spec.title);
+    const defs = markers(svg, id);
+    const boxes = spec.boxes || [];
+    const gBox = el("g", {}, svg), gLine = el("g", {}, svg), gText = el("g", {}, svg);
+    boxes.forEach((b, i) => {
+      if (isNew(b)) newBox(gBox, defs, b, `${id}-new-${i}`);
+      else el("rect", { x: b.x, y: b.y, width: b.w, height: b.h, ...SHAPE[b.kind](b) }, gBox);
+    });
+    for (const l of spec.lines || []) {
+      const k = l.k || "int";
+      el("path", {
+        d: l.d, class: `ln-${k}${(l.dash && k !== "ctl") || k === "wire" ? " dash" : ""}`,
+        "marker-end": l.end === false ? undefined : `url(#${id}-${k})`,
+        "marker-start": l.both ? `url(#${id}-${k})` : undefined,
+      }, gLine);
+      if (l.label) {
+        const [lx, ly] = l.at;
+        text(gText, lx, ly, l.label, { cls: `t-line${k === "tool" ? " t-new" : ""}`, anchor: l.anchor, rotate: l.rotate, halo: bgAt(boxes, lx, ly) });
+      }
+    }
+    for (const b of boxes) boxText(gText, b, boxes);
+    for (const t of spec.labels || []) text(gText, t.x, t.y, t.text, { cls: t.cls || "t-sans t-sm t-soft", anchor: t.anchor, halo: bgAt(boxes, t.x, t.y) });
+  }
+
+  // parts: [{ id, tag, label, kind: "user" | "new" | "store" | "svc" }]
+  // steps: [{ from, to, text, k, reply }] or [{ note: [fromId, toId], text }]
+  function seq(id, parts, steps, opts = {}) {
+    const svg = document.getElementById(id);
+    title(svg, opts.title);
+    const boxW = parts.length > 6 ? 112 : 140, headH = 58, top = 12, rowH = 40, left = 24;
+    const colW = Math.min(168, (980 - left * 2 - boxW) / (parts.length - 1));
+    const cx = i => left + boxW / 2 + i * colW;
+    const width = left * 2 + boxW + colW * (parts.length - 1);
+    const firstY = top + headH + 36;
+    const height = firstY + steps.length * rowH + 10;
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    const defs = markers(svg, id);
+    const idx = {};
+    parts.forEach((p, i) => (idx[p.id] = i));
+    const gLine = el("g", {}, svg), gText = el("g", {}, svg);
+
+    parts.forEach((p, i) => {
+      el("line", { x1: cx(i), y1: top + headH, x2: cx(i), y2: height - 6, class: "lifeline" }, gLine);
+      const box = { kind: "svc", x: cx(i) - boxW / 2, y: top, w: boxW, h: headH };
+      if (p.kind === "new") newBox(gLine, defs, box, `${id}-head-${i}`);
+      else {
+        const cls = p.kind === "user" ? "pill" : p.kind === "store" ? "db-box" : "svc-box";
+        el("rect", { x: box.x, y: top, width: boxW, height: headH, rx: p.kind === "user" ? 29 : 10, class: cls }, gLine);
+      }
+      const nx = cx(i) + (p.kind === "new" ? 3 : 0);
+      text(gText, nx, top + 23, p.tag, { cls: "t-kind", anchor: "middle" });
+      text(gText, nx, top + 43, p.label, { cls: "t-sm", anchor: "middle" }).style.fontWeight = 800;
+    });
+
+    let n = 0;
+    steps.forEach((s, r) => {
+      const y = firstY + r * rowH;
+      if (s.note) {
+        const a = idx[s.note[0]], b = idx[s.note[1]];
+        const x1 = cx(Math.min(a, b)) - boxW / 2 + 6, x2 = cx(Math.max(a, b)) + boxW / 2 - 6;
+        const note = { kind: "chip", x: x1, y: y - 14, w: x2 - x1, h: 26 };
+        const clip = el("clipPath", { id: `${id}-note-${r}` }, defs);
+        el("rect", { x: note.x, y: note.y, width: note.w, height: note.h, rx: 5 }, clip);
+        el("rect", { x: note.x, y: note.y, width: note.w, height: note.h, rx: 5, class: "note-box" }, gLine);
+        el("rect", { x: note.x, y: note.y, width: 5, height: note.h, class: "note-edge", "clip-path": `url(#${id}-note-${r})` }, gLine);
+        text(gText, (x1 + x2) / 2 + 2, y + 4, s.text, { cls: "t-sans t-sm", anchor: "middle" });
+        return;
+      }
+      n += 1;
+      const k = s.k || "int";
+      const a = idx[s.from], b = idx[s.to];
+      const lastCol = a === parts.length - 1;
+      const cls = `ln-${k}${s.reply && k !== "ctl" ? " dash" : ""}`;
+      const marker = `url(#${id}-${k})`;
+      if (a === b) {
+        const x = cx(a), dir = lastCol ? -1 : 1;
+        el("path", { d: `M${x},${y - 6} H${x + 34 * dir} V${y + 10} H${x + 4 * dir}`, class: cls, "marker-end": marker }, gLine);
+        text(gText, x + 42 * dir, y + 6, s.text, { cls: "t-sans t-sm", anchor: lastCol ? "end" : "start", halo: "--paper" });
+      } else {
+        el("path", { d: `M${cx(a) + (b > a ? 4 : -4)},${y} H${cx(b) + (b > a ? -4 : 4)}`, class: cls, "marker-end": marker }, gLine);
+        text(gText, (cx(a) + cx(b)) / 2, y - 8, s.text, { cls: "t-sans t-sm", anchor: "middle", halo: "--paper" });
+      }
+      const numX = a === b ? cx(a) + (lastCol ? 16 : -16) : b > a ? cx(a) - 16 : cx(a) + 16;
+      el("circle", { cx: numX, cy: y, r: 9, class: "num" }, gText);
+      text(gText, numX, y + 3.5, String(n), { cls: "t-num", anchor: "middle" });
+    });
+  }
+
+  window.Diagram = { arch, seq };
+})();
+</script>
+</head>
+<body>
+<div class="wrap">
+<header class="mast">
+  <h1>Dead letters<br>for the queue</h1>
+  <div class="dateline">flatbed · local queue · thufir · proposal · 2026-11-03 · for flatbed 0.0.11 · under plonk#6829</div>
+</header>
+
+<section>
+  <p class="lede">A message that keeps failing, or runs too long, is set aside and the line moves on. flatbed 0.0.10's <code>LocalQueueWorker</code> handles one message at a time and has no way to give up on one: a <code>Retry</code> goes back in line forever, a slow <code>handle</code> holds every message behind it, and an <code>Err</code> is dropped with only a log line. 0.0.11 adds a limit on attempts, a limit on time, and a dead-letter set the worker hands a message to when either runs out. The worker decides what setting it aside means, and a producer can see that it was.</p>
+  <div class="box tone-ochre quote"><span class="label">The ask, in the owner's words</span>Do also a dead letter queue, so we can continue with the queue as it's being processed</div>
+  <div class="box"><span class="label">And on where it is built</span>Talk to the flatbed agent, and write a Claude artifact about the flatbed changes</div>
+</section>
+
+<section>
+  <h2>Why now</h2>
+  <div class="grid3">
+    <div class="box tone-red stat"><span class="label">Longest one migration can hold the line</span><span class="fig">2h</span><p>plonk#6829's <code>Migrate</code> handler waits for its Job to end, and the migrator's Job carries <code>activeDeadlineSeconds: 7200</code>. A pod stuck on an image pull holds every PlonkRDS change in the cluster for that long.</p></div>
+    <div class="box tone-ochre stat"><span class="label">Times a Retry is tried before giving up</span><span class="fig">&infin;</span><p><code>handle_messages</code> in <code>local_queue.rs</code> puts a <code>Retry</code> back at the end of the line every time. A message that can never succeed costs one <code>RETRY_DELAY</code> per lap, for good.</p></div>
+    <div class="box tone-ochre stat"><span class="label">Record an Err leaves</span><span class="fig">1 log</span><p>An <code>Err</code> from <code>handle</code> is logged at error and dropped. Nothing a producer can read says it happened, so a level-triggered producer sends it again on its next pass.</p></div>
+  </div>
+</section>
+
+<section class="fig">
+  <h2><span class="fig-no">Fig. 1</span>Where a message can end, before and after</h2>
+  <p>Every outcome that is not <code>Done</code> now has an end: a retry until the attempts run out, a <code>handle</code> until the time runs out, and an <code>Err</code> at once. Each goes through the worker's <code>dead_letter</code> hook, inside the line, before the next message is taken.</p>
+  <div class="sheet">
+    <div class="scroll"><svg class="d" id="f1"></svg></div>
+    <div class="key">
+      <span><i class="k-box plat"></i>Today's queue</span>
+      <span><i class="k-box new"></i>New in 0.0.11</span>
+      <span><i class="k-line int"></i>A message moving</span>
+      <span><i class="k-line tool"></i>A new path</span>
+      <span><i class="k-line wire"></i>A producer reading</span>
+    </div>
+  </div>
+  <ol>
+    <li><strong>The line hands out the next message.</strong> As today, <code>next()</code> takes the front entry and marks its key in hand.</li>
+    <li><strong><code>handle</code> runs, now under a clock and a panic guard.</strong> With <code>HANDLE_TIMEOUT</code> set, the future is dropped when it runs out, as a leadership loss drops it today. A panic is caught and becomes <code>Failed("panicked: …")</code>, instead of taking the worker down and losing the message.</li>
+    <li><strong><code>Done</code> ends it and clears its count.</strong> Unchanged.</li>
+    <li><strong><code>Retry</code> counts an attempt.</strong> Under <code>MAX_ATTEMPTS</code> it goes back in line as today; at the limit it is set aside instead.</li>
+    <li><strong>A time-out, the last attempt, an <code>Err</code> or a panic calls <code>dead_letter</code>.</strong> A time-out goes straight there, without another attempt. The worker's hook gets the message and why, and the line waits for it, under the same <code>HANDLE_TIMEOUT</code>, so a hook that hangs can't wedge the line either. The operator uses that wait to delete a Job before the next change starts. The hook is best effort: a leadership loss cancels it, so a handler also clears what an earlier term left, such as a stale Job, at the start of its next attempt.</li>
+    <li><strong>The message joins the dead-letter set.</strong> It is kept by key beside the queue, in memory, and cleared with it on a leadership loss.</li>
+    <li><strong>Producers can see it and bring it back.</strong> <code>status</code> reports it, a <code>send</code> of that key is refused so a producer's next pass does not loop it straight back, and <code>requeue</code> puts it at the end of the line with its attempts reset. flatbed can't tell a changed payload from the same one, since a message has no <code>Eq</code>, so bringing a key back when its spec changes is the producer's rule: it compares the generation it last sent and calls <code>requeue</code>.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>What it reads</h2>
+  <div class="grid2">
+    <div class="box"><span class="label">From the worker, as constants</span><ul>
+      <li><code>MAX_ATTEMPTS: Option&lt;NonZeroU32&gt;</code>, <code>None</code> by default: how many times <code>handle</code> may run for one key before it is set aside. A <code>Retry</code> is an attempt; a resend coalesced into a queued key keeps its count; <code>Done</code> clears it.</li>
+      <li><code>HANDLE_TIMEOUT: Option&lt;Duration&gt;</code>, <code>None</code> by default: longest one <code>handle</code> may run.</li>
+      <li><code>DEAD_LETTER_CAPACITY: usize</code>, 256 by default: most messages kept aside. Past it the oldest is evicted, logged at warn, and its key can be sent again.</li>
+    </ul></div>
+    <div class="box"><span class="label">From each attempt</span><ul>
+      <li>The <code>LocalQueueResult</code> or <code>Err</code> that <code>handle</code> returned, or that the clock ran out first</li>
+      <li>The attempt count kept for the key in hand</li>
+      <li>The reason a <code>Retry</code> or <code>Err</code> carried, kept as the last reason</li>
+    </ul></div>
+  </div>
+</section>
+
+<section>
+  <h2>The API, as proposed</h2>
+  <div class="box"><pre style="margin:0;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.5"><code style="background:none;padding:0">pub trait LocalQueueWorker {
+    // ... as in 0.0.10 ...
+    const MAX_ATTEMPTS: Option&lt;NonZeroU32&gt; = None;
+    const HANDLE_TIMEOUT: Option&lt;Duration&gt; = None;   // bounds handle and dead_letter
+    const DEAD_LETTER_CAPACITY: usize = 256;
+
+    /// Runs in the line: the next message waits for it. Best effort:
+    /// a leadership loss cancels it, as it cancels handle.
+    fn dead_letter(&amp;self, ctx: Arc&lt;Self::Context&gt;, msg: Self::Message, letter: DeadLetter)
+        -&gt; BoxFuture&lt;()&gt; { /* default: log at error */ }
+}
+
+#[derive(Clone)]
+pub struct DeadLetter { pub cause: DeadLetterCause, pub attempts: u32,
+                        pub last_reason: Option&lt;String&gt;, pub at: SystemTime }
+#[derive(Clone)]
+pub enum DeadLetterCause { Exhausted, TimedOut { after: Duration }, Failed(String) }  // a panic is Failed
+
+#[non_exhaustive]
+pub enum SendError { Full(LocalQueueFull), DeadLettered }
+
+impl&lt;W&gt; LocalQueueSender&lt;W&gt; {
+    pub fn send(&amp;self, msg: W::Message) -&gt; Result&lt;(), SendError&gt;;
+    pub fn status(&amp;self, key: &amp;W::Key) -&gt; KeyStatus;   // replaces position:
+                                                       // InHand | Queued(n) | DeadLettered(DeadLetter) | Absent
+    pub fn requeue(&amp;self, key: &amp;W::Key) -&gt; Result&lt;(), LocalQueueFull&gt;;
+    pub fn forget(&amp;self, key: &amp;W::Key) -&gt; bool;
+}</code></pre></div>
+  <p>The key's bounds don't change: <code>Key</code> needs no <code>Clone</code>, because there is no call that lists every set-aside key. A producer knows its own keys and asks <code>status</code> for each. With the constants at their defaults there is no limit on attempts or time. Three things change for every caller: <code>send</code>'s error type, <code>status</code> in place of <code>position</code>, and what an <code>Err</code> does (decision 1).</p>
+</section>
+
+<section>
+  <h2>Worked examples</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Case</th><th>In 0.0.10</th><th>In 0.0.11</th><th>What the operator does with it</th></tr></thead>
+      <tbody>
+        <tr><td>A migrator's pod is stuck pulling its image</td><td>The <code>Migrate</code> handler waits up to 2h; every PlonkRDS change waits behind it</td><td><span class="tag green">set aside</span> at <code>HANDLE_TIMEOUT</code></td><td>The hook deletes the Job, with its pod, and writes <code>MigrationsApplied=False</code>, reason <code>DeadLettered</code>. The next change starts once the Job is gone.</td></tr>
+        <tr><td>YugabyteDB refuses connections for an hour</td><td>Every message retries once a lap, forever, and the line keeps going round</td><td><span class="tag ochre">set aside</span> at <code>MAX_ATTEMPTS</code></td><td>The condition says why. When the server is back, the operator requeues what it set aside for that server; see decision 3.</td></tr>
+        <tr><td>A <code>Catalog</code> change fails on a bad grant</td><td>Logged and dropped; the reconciler finds the drift and sends it again on its next pass, and it fails again</td><td><span class="tag green">set aside</span> at once, as <code>Failed</code></td><td>The reconciler's resend is refused with <code>DeadLettered</code>, so it reports instead of looping. When the grant's generation changes, the reconciler calls <code>requeue</code>.</td></tr>
+        <tr><td>A <code>handle</code> panics on a malformed object</td><td>The worker goes down; <code>RESTART</code> brings it back without the message, the producer resends, it panics again: a crash loop no count sees</td><td><span class="tag green">set aside</span> as <code>Failed("panicked: …")</code></td><td>The same as any <code>Failed</code>: a condition, and no resend until the object changes.</td></tr>
+        <tr><td>The operator's leader changes</td><td>Queue cleared; reconcilers resend</td><td><span class="tag grey">unchanged</span> the dead-letter set is cleared too</td><td>The condition on the object is the lasting record: a reconciler that finds <code>DeadLettered</code> there doesn't resend until the spec changes or the requeue annotation is set.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Where each piece lives</h2>
+  <div class="grid2">
+    <div class="box"><span class="label">flatbed, released as 0.0.11</span><ul>
+      <li><code>crates/flatbed/src/local_queue.rs</code>: the constants, <code>dead_letter</code>, <code>DeadLetter</code>, <code>SendError</code>, <code>KeyStatus</code>, the attempt count beside <code>in_flight</code>, the dead-letter map beside <code>queued</code>, and the clock around <code>handle</code> in <code>handle_messages</code></li>
+      <li><code>crates/flatbed/tests/local_queue_worker.rs</code>: each way to end, a panic, the hook holding the line and timing out, a refused resend, a requeue, an eviction, a leadership loss clearing both</li>
+      <li>Released with PR #111 (<code>x-request-id</code> and the FlatBuffer format on errors flatbed raises), already on flatbed's main</li>
+    </ul></div>
+    <div class="box"><span class="label">plonk, in #6829's slice</span><ul>
+      <li><code>services/plonk_rds_schema_queue.rs</code>: the limits, and the hook that deletes a Job and writes the condition</li>
+      <li><code>libs/crds</code>: the <code>DeadLettered</code> reason beside <code>Queued</code></li>
+      <li>The reconcilers: no resend while their object reads <code>DeadLettered</code>; a new generation (a new image, a changed grant), or the <code>plonk.tools/requeue</code> annotation, calls <code>requeue</code></li>
+      <li>The <code>Migrate</code> and <code>Restore</code> handlers delete a stale Job from an earlier term before starting, rather than counting on the hook</li>
+      <li>All eight crates on flatbed 0.0.11 rather than 0.0.10 (ruled E)</li>
+    </ul></div>
+  </div>
+</section>
+
+<section>
+  <h2>What it costs</h2>
+  <div class="grid3">
+    <div class="box stat"><span class="label">flatbed releases before #6829 starts</span><span class="fig">1</span><p>0.0.11, by the flatbed session, reviewed and published to crates.io. #6829's slice waits for it.</p></div>
+    <div class="box stat"><span class="label">Breaking changes</span><span class="fig">3</span><p><code>send</code>'s error, <code>status</code> in place of <code>position</code>, and an <code>Err</code> setting a key aside. The only caller is #6829's slice, which doesn't exist yet, so nothing in use breaks.</p></div>
+    <div class="box stat"><span class="label">Memory per worker</span><span class="fig">small</span><p>A count per queued key and up to 256 set-aside messages; for #6829 a message is two names.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Decisions, ruled 2026-11-03</h2>
+  <div class="box tone-ochre quote"><span class="label">The owner, 2026-11-03</span>yes, the dead letters artifact looks good, also put it on main. And I can rule positive for both points</div>
+  <p>The owner approved the page as proposed: every decision below is ruled its proposal.</p>
+  <div class="grid2">
+    <div class="box"><h3>1. An Err always sets the key aside</h3><p><span class="tag green">ruled 2026-11-03</span> <strong>Proposed, and the flatbed session's lean too:</strong> yes, in every worker, as 0.0.11's stated breaking change. An <code>Err</code> means the message is bad, and dropping it silently was the weak spot. The cost: a producer that counted on "Err, then the next pass resends" now has its key refused until it calls <code>requeue</code>. <strong>Alternative:</strong> the set is used only by a worker that sets <code>MAX_ATTEMPTS</code> or <code>HANDLE_TIMEOUT</code>, and an <code>Err</code> elsewhere is logged and dropped as today. Nothing changes for workers that don't opt in.</p></div>
+    <div class="box"><h3>A resend of a set-aside key is an error</h3><p><strong>Settled with the flatbed session:</strong> <code>send</code> returns <code>Err(SendError::DeadLettered)</code>, not <code>Ok</code> with an outcome, because an outcome is too easy to drop with <code>let _ =</code>. A producer brings a key back with <code>requeue</code>.</p></div>
+    <div class="box"><h3>2. The hook runs inside the line</h3><p><span class="tag green">ruled 2026-11-03</span> <strong>Proposed, and agreed by the flatbed session:</strong> the next message waits for <code>dead_letter</code> to return, under <code>HANDLE_TIMEOUT</code>, so cleaning up after a timed-out <code>handle</code>, like deleting its Job, finishes before anything else starts. A leadership loss cancels the hook as it cancels <code>handle</code>, so the hook is best effort and handlers clear stale work themselves. <strong>Alternative:</strong> the hook runs beside the line. The line moves faster, but the cleanup can overlap the next message, which for #6829 is the collision the queue exists to stop.</p></div>
+    <div class="box"><h3>3. A Retry counts as an attempt</h3><p><span class="tag green">ruled 2026-11-03</span> <strong>Proposed:</strong> yes, so a message that can never be ready is set aside too. The cost: while a server is down for a long time, its messages are set aside rather than waiting, and come back by <code>requeue</code> when it's up. <strong>Alternative:</strong> only <code>Err</code> and time-outs count, and a <code>Retry</code> loops as today. #6829 would then set a cap on its own retries.</p></div>
+    <div class="box"><h3>4. The limits #6829 sets</h3><p><span class="tag green">ruled 2026-11-03</span> <strong>Proposed:</strong> <code>HANDLE_TIMEOUT</code> of 15 minutes, well above a migration's few statements and a Job's start-up, and <code>MAX_ATTEMPTS</code> of 5, matching the five retries ruled for <code>plonk_migrate</code>. <strong>Alternative:</strong> other numbers; a timed run of a migrator Job on omega would ground the first, and it isn't measured yet.</p></div>
+    <div class="box tone-green"><h3>Next step</h3><p>The flatbed session builds and releases 0.0.11 against this page. #6829's page and issue take the operator half, and its spec epic is unparked.</p></div>
+  </div>
+</section>
+
+<script>
+Diagram.arch("f1", {
+  height: 470,
+  title: "The line hands a message to handle under a clock; Done ends it; Retry goes back in line until MAX_ATTEMPTS; a timeout, the last attempt, or an Err calls the dead_letter hook in the line, which puts the message in the dead-letter set; producers read status and call requeue.",
+  boxes: [
+    { kind: "ns", x: 20, y: 20, w: 1150, h: 430, name: "LocalQueueSender · one per worker type", tag: "FLATBED" },
+    { kind: "svc", x: 50, y: 80, w: 220, h: 70, name: "the line", sub: "queued · in hand" },
+    { kind: "svc", x: 340, y: 80, w: 260, h: 70, name: "handle", sub: "under HANDLE_TIMEOUT", isNew: true },
+    { kind: "pill", x: 690, y: 90, w: 140, h: 50, name: "Done" },
+    { kind: "svc", x: 340, y: 230, w: 260, h: 70, name: "attempt count", sub: "Retry until MAX_ATTEMPTS", isNew: true },
+    { kind: "svc", x: 690, y: 230, w: 260, h: 70, name: "dead_letter hook", sub: "the worker's; the line waits", isNew: true },
+    { kind: "svc", x: 690, y: 350, w: 260, h: 70, name: "dead-letter set", sub: "by key · cleared on lease loss", isNew: true },
+    { kind: "ext", x: 50, y: 330, w: 220, h: 90, tag: "PRODUCER", name: "a reconciler", sub: "send · status · requeue" },
+  ],
+  lines: [
+    { d: "M272,115 H338", label: "next", at: [305, 105], anchor: "middle" },
+    { d: "M602,115 H688", label: "Done", at: [645, 105], anchor: "middle" },
+    { k: "tool", d: "M470,152 V228", label: "Retry", at: [478, 195] },
+    { k: "tool", d: "M340,265 H160 V152", label: "back in line", at: [250, 257], anchor: "middle" },
+    { k: "tool", d: "M602,265 H688", label: "limit", at: [645, 257], anchor: "middle" },
+    { k: "tool", d: "M560,152 V190 H820 V228", label: "timed out · Err", at: [690, 182], anchor: "middle" },
+    { k: "tool", d: "M820,302 V348" },
+    { k: "wire", d: "M272,385 H688", label: "status · refused send · requeue", at: [480, 377], anchor: "middle" },
+    { k: "int", d: "M160,328 V152", label: "send", at: [168, 300] },
+  ],
+});
+</script>
+
+</div>
+</body>
+</html>
