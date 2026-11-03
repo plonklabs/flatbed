@@ -474,16 +474,28 @@ is persisted, so it suits level-triggered producers such as reconcilers, which
 resend whatever they still need after a restart. The context owns the queue:
 `FlatbedContext` implements `HasLocalQueues`, so a producer enqueues with
 `ctx.local_queue::<W>().send(msg)` and asks where a request stands with
-`.position(&key)`, with no field or wiring in the app. Register the worker
+`.status(&key)`, with no field or wiring in the app. Register the worker
 with `register_local_queue_worker!`.
 
-Sending a key that is already queued keeps the queued entry, its place and its
-payload; the key being handled is not queued, so a resend during handling runs
-again afterwards. `Retry` sends the message to the back of the line, `Err` logs
-and drops it, and neither touches health. With the `k8s` feature, messages are
-handled only while the process leads, after a `SETTLE` pause on each
-acquisition that lets a request the previous leader sent land first, and the
-queue is discarded when leadership is lost.
+Sending a key that is already queued keeps the queued entry, its place, its
+payload and its attempt count; the key being handled is not queued, so a
+resend during handling runs again afterwards. `Retry` sends the message to the
+back of the line, and none of the outcomes touch health.
+
+A message that keeps failing is set aside as a dead letter and the line moves
+on: a `Retry` on the `MAX_ATTEMPTS`th attempt, a `handle` outrunning
+`HANDLE_TIMEOUT`, an `Err`, or a panic. Both limits default to none; an `Err`
+or a panic always sets the message aside. The worker's `dead_letter` hook runs
+in the line, under its own `HANDLE_TIMEOUT`, before the next message starts,
+and defaults to logging. While a key is set aside, `send` returns
+`SendError::DeadLettered` and `status` reports the `DeadLetter`; `requeue`
+puts it back in line with its attempts reset, and `forget` drops it. At most
+`DEAD_LETTER_CAPACITY` (256) are kept; past it the oldest is evicted.
+
+With the `k8s` feature, messages are handled only while the process leads,
+after a `SETTLE` pause on each acquisition that lets a request the previous
+leader sent land first, and the queue and the dead letters are discarded when
+leadership is lost.
 
 ## Reporting errors (optional)
 

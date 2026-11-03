@@ -16,8 +16,8 @@ default = []
 openapi = ["utoipa"]
 telemetry = []
 prometheus = ["telemetry", "dep:prometheus"]
-nats = ["async-nats", "futures"]
-k8s = ["kube", "futures"]
+nats = ["async-nats"]
+k8s = ["kube"]
 pagination = ["hmac", "sha2", "base64"]
 sentry = ["dep:sentry", "dep:tracing-subscriber"]
 
@@ -31,7 +31,7 @@ utoipa = { version = "5", optional = true }
 uuid = { version = "1.11", features = ["v4"] }
 
 async-nats = { version = "0.38", optional = true }
-futures = { version = "0.3", optional = true }
+futures = "0.3"
 kube = { version = "1.1", features = ["runtime", "client"], optional = true }
 prometheus = { version = "0.14", optional = true }
 hmac = { version = "0.12", optional = true }

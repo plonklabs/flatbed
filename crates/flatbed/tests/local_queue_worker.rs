@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use flatbed::local_queue::{HasLocalQueues, LocalQueueResult, LocalQueueWorker};
+use flatbed::local_queue::{HasLocalQueues, KeyStatus, LocalQueueResult, LocalQueueWorker};
 use flatbed::{Flatbed, FlatbedConfig, FlatbedContext};
 use tokio::sync::watch;
 
@@ -140,8 +140,8 @@ async fn registered_local_queue_worker_handles_queued_messages_once_leading() {
     send("team-a", "s1", 2);
     assert_eq!(
         ctx.local_queue::<NamespaceSetup>()
-            .position(&("team-b", "s1")),
-        Some(2)
+            .status(&("team-b", "s1")),
+        KeyStatus::Queued(2)
     );
 
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -161,8 +161,8 @@ async fn registered_local_queue_worker_handles_queued_messages_once_leading() {
     assert_eq!(*ctx.handled.lock().unwrap(), ["team-a@s1#1", "team-b@s1#1"],);
     assert_eq!(
         ctx.local_queue::<NamespaceSetup>()
-            .position(&("team-a", "s1")),
-        None
+            .status(&("team-a", "s1")),
+        KeyStatus::Absent
     );
 
     let health = client.get(format!("{base}/healthz")).send().await.unwrap();

@@ -9,6 +9,34 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+### Added
+
+- Dead letters for `LocalQueueWorker`. A message is set aside, and the line
+  moves on, when a `Retry` comes on the `MAX_ATTEMPTS`th attempt
+  (`DeadLetterCause::Exhausted`), `handle` outruns `HANDLE_TIMEOUT`
+  (`TimedOut`, the future dropped), or `handle` returns `Err` or panics
+  (`Failed`). Both limits default to `None`. Every `handle` call counts as an
+  attempt, per key; a retry and a coalesced resend keep the count. The
+  `dead_letter` hook runs in the line under its own `HANDLE_TIMEOUT` and
+  defaults to logging at error. At most `DEAD_LETTER_CAPACITY` (256) letters
+  are kept; past it the oldest is evicted at warn and its key can be sent
+  again. `LocalQueueSender::requeue` puts a set-aside key back in line with
+  its attempts reset, and `forget` drops it. A leadership loss cancels the
+  hook and clears the dead letters and counts with the queue. New types:
+  `DeadLetter`, `DeadLetterCause`, `KeyStatus`, `SendError`.
+
+### Changed
+
+- **Breaking:** an `Err` from `LocalQueueWorker::handle` sets the message
+  aside as a dead letter instead of logging and dropping it, and a panic in
+  `handle` does the same instead of stopping the worker.
+- **Breaking:** `LocalQueueSender::send` returns `SendError` (`Full` or
+  `DeadLettered`, a resend of a set-aside key) instead of `LocalQueueFull`.
+- **Breaking:** `LocalQueueSender::position` is replaced by `status`, which
+  returns a `KeyStatus`: `InHand`, `Queued(n)` with `Queued(1)` next,
+  `DeadLettered(letter)` or `Absent`.
+- `futures` is a dependency in every build, not only under `nats` or `k8s`.
+
 ## [0.0.10] — 2026-11-01
 
 ### Added

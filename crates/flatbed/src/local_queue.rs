@@ -11,24 +11,42 @@
 //! ## Queue semantics
 //!
 //! - **Coalescing.** Every message has a [`key`](LocalQueueWorker::key). Sending
-//!   a key that is already queued adds nothing: the queued entry keeps both
-//!   its place in line and its original payload, and the new payload is
-//!   discarded. The message being handled counts as *not* queued, so a resend
-//!   during handling queues the key again, to run after the current attempt.
-//! - **Position.** [`LocalQueueSender::position`] is `Some(0)` for the message
-//!   being handled, `Some(1)` for the next one, and `None` for a key that is
-//!   neither.
+//!   a key that is already queued adds nothing: the queued entry keeps its
+//!   place in line, its original payload and its attempt count, and the new
+//!   payload is discarded. The message being handled counts as *not* queued,
+//!   so a resend during handling queues the key again, to run after the
+//!   current attempt.
+//! - **Status.** [`LocalQueueSender::status`] reports a key as
+//!   [`InHand`](KeyStatus::InHand) while it is being handled,
+//!   [`Queued(1)`](KeyStatus::Queued) when it is next,
+//!   [`DeadLettered`](KeyStatus::DeadLettered) while it is set aside, and
+//!   [`Absent`](KeyStatus::Absent) otherwise.
 //! - **Capacity.** At most [`CAPACITY`](LocalQueueWorker::CAPACITY) messages are
 //!   held, counting the one being handled. Sending a new key into a full
-//!   queue returns [`LocalQueueFull`]; coalescing into a queued key always
+//!   queue returns [`SendError::Full`]; coalescing into a queued key always
 //!   succeeds.
-//! - **Outcome.** [`LocalQueueResult::Retry`] puts the message back at the end
-//!   of the line, unless the same key was resent meanwhile, in which case the
-//!   queued resend stands in for it. After a retry the worker waits
-//!   [`RETRY_DELAY`](LocalQueueWorker::RETRY_DELAY) before taking the next
-//!   message, so messages that keep failing never spin. An `Err` from `handle`
-//!   is logged and the message dropped; it does not stop the worker or touch
-//!   health.
+//! - **Attempts.** Every call to `handle` is an attempt, counted per key. A
+//!   key's count survives a retry and a coalesced resend, and is cleared when
+//!   the key is done or set aside.
+//! - **Outcome.** [`LocalQueueResult::Done`] finishes the message.
+//!   [`LocalQueueResult::Retry`] puts it back at the end of the line, unless
+//!   the same key was resent meanwhile, in which case the queued resend
+//!   stands in for it and takes over its count. After a retry the worker
+//!   waits [`RETRY_DELAY`](LocalQueueWorker::RETRY_DELAY) before taking the
+//!   next message, so messages that keep failing never spin. A retry on the
+//!   [`MAX_ATTEMPTS`](LocalQueueWorker::MAX_ATTEMPTS)th attempt, an `Err`, a
+//!   panic, or a `handle` outrunning
+//!   [`HANDLE_TIMEOUT`](LocalQueueWorker::HANDLE_TIMEOUT) sets the message
+//!   aside as a dead letter. None of these stop the worker or touch health.
+//! - **Dead letters.** A message set aside joins the dead-letter set, kept by
+//!   key, and any queued resend of its key is dropped. The worker's
+//!   [`dead_letter`](LocalQueueWorker::dead_letter) hook then runs in the
+//!   line: the next message waits for it, under the same `HANDLE_TIMEOUT`.
+//!   While a key is set aside, sending it returns [`SendError::DeadLettered`];
+//!   [`requeue`](LocalQueueSender::requeue) puts it back at the end of the
+//!   line with its count reset, and [`forget`](LocalQueueSender::forget)
+//!   drops it. Past [`DEAD_LETTER_CAPACITY`](LocalQueueWorker::DEAD_LETTER_CAPACITY)
+//!   the oldest is evicted, and its key can be sent again.
 //!
 //! ## Leadership
 //!
@@ -37,21 +55,27 @@
 //! process leads. Each time it becomes leader the worker waits
 //! [`SETTLE`](LocalQueueWorker::SETTLE) before the first message, so a request
 //! the previous leader already sent lands first. When it loses leadership the
-//! message being handled is cancelled and the whole queue is discarded. Sends are accepted whether or not the process leads; what a
-//! follower queues waits for the next leadership term, and is discarded with
-//! the rest if leadership is lost first. With leader election disabled
+//! message being handled, or the `dead_letter` hook running, is cancelled, and
+//! the whole queue, the attempt counts and the dead-letter set are discarded.
+//! Sends are accepted whether or not the process leads; what a follower
+//! queues waits for the next leadership term, and is discarded with the rest
+//! if leadership is lost first. With leader election disabled
 //! (`ha_enabled() == false`), or without the `k8s` feature, the worker
 //! handles messages from startup, after one `SETTLE`.
 
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
+use std::num::NonZeroU32;
+use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
+use futures::FutureExt;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
+use crate::error_reporting::panic_message;
 use crate::{BoxFuture, FlatbedWorkerError};
 
 /// Outcome of handling one message.
@@ -62,13 +86,58 @@ pub enum LocalQueueResult {
     /// Put the message back at the end of the line; the reason is logged.
     /// Use it for an unmet precondition, such as a server that is not ready,
     /// never to poll work that is still running: the next message starts as
-    /// soon as `handle` returns.
+    /// soon as `handle` returns. It counts as an attempt.
     Retry(String),
+}
+
+/// A message set aside: why, and after how many attempts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeadLetter {
+    /// Why the message was set aside.
+    pub cause: DeadLetterCause,
+    /// How many times `handle` ran for the key.
+    pub attempts: u32,
+    /// The reason the latest `Retry` or `Err` for the key carried.
+    pub last_reason: Option<String>,
+    /// When the message was set aside.
+    pub at: SystemTime,
+}
+
+/// Why a message was set aside.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeadLetterCause {
+    /// `handle` returned `Retry` on the
+    /// [`MAX_ATTEMPTS`](LocalQueueWorker::MAX_ATTEMPTS)th attempt.
+    Exhausted,
+    /// `handle` ran longer than
+    /// [`HANDLE_TIMEOUT`](LocalQueueWorker::HANDLE_TIMEOUT) and was dropped.
+    TimedOut {
+        /// The timeout it ran into.
+        after: Duration,
+    },
+    /// `handle` returned `Err`, carrying its `Display`, or panicked, carrying
+    /// `"panicked: "` and the panic message.
+    Failed(String),
+}
+
+/// Where a key stands, from [`LocalQueueSender::status`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyStatus {
+    /// Being handled.
+    InHand,
+    /// Waiting in line; `Queued(1)` is next.
+    Queued(usize),
+    /// Set aside; see [`LocalQueueSender::requeue`] and
+    /// [`LocalQueueSender::forget`].
+    DeadLettered(DeadLetter),
+    /// Neither handled, queued nor set aside.
+    Absent,
 }
 
 /// Worker handling a keyed, in-process queue one message at a time.
 ///
-/// See the [module docs](self) for the queue and leadership semantics.
+/// See the [module docs](self) for the queue, dead-letter and leadership
+/// semantics.
 ///
 /// # Requirements
 ///
@@ -78,8 +147,10 @@ pub enum LocalQueueResult {
 /// # Example
 ///
 /// ```rust,ignore
-/// use flatbed::local_queue::{HasLocalQueues, LocalQueueResult, LocalQueueWorker};
+/// use flatbed::local_queue::{DeadLetter, HasLocalQueues, LocalQueueResult, LocalQueueWorker};
+/// use std::num::NonZeroU32;
 /// use std::sync::Arc;
+/// use std::time::Duration;
 ///
 /// type AppContext = flatbed::FlatbedContext<AppData>;
 ///
@@ -96,6 +167,8 @@ pub enum LocalQueueResult {
 ///     type Error = kube::Error;
 ///
 ///     const NAME: &'static str = "migrator-runner";
+///     const MAX_ATTEMPTS: Option<NonZeroU32> = NonZeroU32::new(5);
+///     const HANDLE_TIMEOUT: Option<Duration> = Some(Duration::from_secs(900));
 ///
 ///     fn key(msg: &RunMigrator) -> Self::Key {
 ///         (msg.server.clone(), msg.migrator.clone())
@@ -114,13 +187,22 @@ pub enum LocalQueueResult {
 ///             Ok(LocalQueueResult::Done)
 ///         })
 ///     }
+///
+///     fn dead_letter(
+///         &self,
+///         ctx: Arc<AppContext>,
+///         msg: RunMigrator,
+///         _letter: DeadLetter,
+///     ) -> flatbed::BoxFuture<()> {
+///         Box::pin(async move { delete_job(&ctx, &msg).await })
+///     }
 /// }
 ///
 /// flatbed::register_local_queue_worker!(MigratorRunner, AppContext);
 ///
 /// // In a reconciler holding `ctx: Arc<AppContext>`:
 /// ctx.local_queue::<MigratorRunner>().send(RunMigrator { server, migrator })?;
-/// let position = ctx.local_queue::<MigratorRunner>().position(&key);
+/// let status = ctx.local_queue::<MigratorRunner>().status(&key);
 /// ```
 pub trait LocalQueueWorker: Sized + Send + Sync + 'static {
     /// The message type carried by the queue. Cloned once per attempt so a
@@ -139,8 +221,8 @@ pub trait LocalQueueWorker: Sized + Send + Sync + 'static {
     #[cfg(not(feature = "k8s"))]
     type Context: HasLocalQueues + Send + Sync + 'static;
 
-    /// Error returned by [`handle`](Self::handle). The runtime logs it via
-    /// `Display` and drops the message.
+    /// Error returned by [`handle`](Self::handle). The runtime sets the
+    /// message aside as [`DeadLetterCause::Failed`] with its `Display`.
     type Error: fmt::Display + Send + 'static;
 
     /// Worker name used for logging and identification.
@@ -169,18 +251,52 @@ pub trait LocalQueueWorker: Sized + Send + Sync + 'static {
     /// taken.
     const RETRY_DELAY: Duration = Duration::from_secs(1);
 
+    /// Most times `handle` runs for one key before a `Retry` sets it aside as
+    /// [`DeadLetterCause::Exhausted`]. `None`, the default, retries without
+    /// limit.
+    const MAX_ATTEMPTS: Option<NonZeroU32> = None;
+
+    /// Longest one [`handle`](Self::handle) may run before it is dropped and
+    /// the message set aside as [`DeadLetterCause::TimedOut`]. It also bounds
+    /// [`dead_letter`](Self::dead_letter). `None`, the default, sets no limit.
+    const HANDLE_TIMEOUT: Option<Duration> = None;
+
+    /// Most messages kept set aside; past it the oldest is evicted.
+    const DEAD_LETTER_CAPACITY: usize = 256;
+
     /// The coalescing key of a message: two messages with equal keys are the
     /// same request.
     fn key(msg: &Self::Message) -> Self::Key;
 
     /// Handle one message. The next message is taken only after the
     /// returned future completes. The future is dropped mid-flight when
-    /// leadership is lost.
+    /// leadership is lost or `HANDLE_TIMEOUT` runs out.
     fn handle(
         &self,
         ctx: Arc<Self::Context>,
         msg: Self::Message,
     ) -> BoxFuture<Result<LocalQueueResult, Self::Error>>;
+
+    /// Called with each message set aside, after it has joined the
+    /// dead-letter set. The next message waits for the returned future,
+    /// under `HANDLE_TIMEOUT`. Best effort: a leadership loss cancels it, as
+    /// it cancels `handle`. Defaults to logging the letter at error.
+    fn dead_letter(
+        &self,
+        _ctx: Arc<Self::Context>,
+        _msg: Self::Message,
+        letter: DeadLetter,
+    ) -> BoxFuture<()> {
+        Box::pin(async move {
+            error!(
+                worker = Self::NAME,
+                cause = ?letter.cause,
+                attempts = letter.attempts,
+                last_reason = ?letter.last_reason,
+                "message dead-lettered"
+            );
+        })
+    }
 
     /// Finish in-progress work during graceful shutdown, within the
     /// configured shutdown budget. Defaults to a no-op.
@@ -210,6 +326,35 @@ impl fmt::Display for LocalQueueFull {
 }
 
 impl std::error::Error for LocalQueueFull {}
+
+/// Why [`LocalQueueSender::send`] refused a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SendError {
+    /// The key is new and the queue is full.
+    Full(LocalQueueFull),
+    /// The key is set aside; [`LocalQueueSender::requeue`] brings it back.
+    DeadLettered,
+}
+
+impl fmt::Display for SendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Full(full) => full.fmt(f),
+            Self::DeadLettered => {
+                f.write_str("the key is dead-lettered; requeue it to send it again")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SendError {}
+
+impl From<LocalQueueFull> for SendError {
+    fn from(full: LocalQueueFull) -> Self {
+        Self::Full(full)
+    }
+}
 
 /// Contexts that own the local queues: one queue per [`LocalQueueWorker`]
 /// type, shared by every clone of the context.
@@ -264,14 +409,93 @@ struct Shared<W: LocalQueueWorker> {
     wake: Notify,
 }
 
+struct Entry<W: LocalQueueWorker> {
+    key: W::Key,
+    msg: W::Message,
+    attempts: u32,
+    last_reason: Option<String>,
+}
+
+impl<W: LocalQueueWorker> Entry<W> {
+    fn new(key: W::Key, msg: W::Message) -> Self {
+        Self {
+            key,
+            msg,
+            attempts: 0,
+            last_reason: None,
+        }
+    }
+}
+
+struct InHand<W: LocalQueueWorker> {
+    key: W::Key,
+    attempts: u32,
+    last_reason: Option<String>,
+}
+
+struct Aside<W: LocalQueueWorker> {
+    key: W::Key,
+    msg: W::Message,
+    letter: DeadLetter,
+}
+
 struct State<W: LocalQueueWorker> {
-    queued: VecDeque<(W::Key, W::Message)>,
-    in_flight: Option<W::Key>,
+    queued: VecDeque<Entry<W>>,
+    in_flight: Option<InHand<W>>,
+    dead: VecDeque<Aside<W>>,
 }
 
 impl<W: LocalQueueWorker> State<W> {
-    fn is_queued(&self, key: &W::Key) -> bool {
-        self.queued.iter().any(|(queued, _)| queued == key)
+    fn queued_index(&self, key: &W::Key) -> Option<usize> {
+        self.queued.iter().position(|entry| &entry.key == key)
+    }
+
+    fn dead_index(&self, key: &W::Key) -> Option<usize> {
+        self.dead.iter().position(|aside| &aside.key == key)
+    }
+
+    fn has_room(&self) -> Result<(), LocalQueueFull> {
+        if self.queued.len() + usize::from(self.in_flight.is_some()) < W::CAPACITY {
+            return Ok(());
+        }
+        Err(LocalQueueFull {
+            worker: W::NAME,
+            capacity: W::CAPACITY,
+        })
+    }
+
+    fn set_aside(
+        &mut self,
+        hand: InHand<W>,
+        msg: W::Message,
+        cause: DeadLetterCause,
+    ) -> DeadLetter {
+        if let Some(index) = self.queued_index(&hand.key) {
+            self.queued.remove(index);
+        }
+        let letter = DeadLetter {
+            cause,
+            attempts: hand.attempts,
+            last_reason: hand.last_reason,
+            at: SystemTime::now(),
+        };
+        self.dead.push_back(Aside {
+            key: hand.key,
+            msg,
+            letter: letter.clone(),
+        });
+        while self.dead.len() > W::DEAD_LETTER_CAPACITY {
+            let Some(evicted) = self.dead.pop_front() else {
+                break;
+            };
+            warn!(
+                worker = W::NAME,
+                capacity = W::DEAD_LETTER_CAPACITY,
+                cause = ?evicted.letter.cause,
+                "dead-letter set full, evicted the oldest"
+            );
+        }
+        letter
     }
 }
 
@@ -282,6 +506,7 @@ impl<W: LocalQueueWorker> LocalQueueSender<W> {
                 state: Mutex::new(State {
                     queued: VecDeque::new(),
                     in_flight: None,
+                    dead: VecDeque::new(),
                 }),
                 wake: Notify::new(),
             }),
@@ -289,45 +514,80 @@ impl<W: LocalQueueWorker> LocalQueueSender<W> {
     }
 
     /// Enqueue `msg` at the end of the line, or coalesce it into the queued
-    /// message with the same key, which keeps its place and payload.
+    /// message with the same key, which keeps its place, payload and count.
     ///
     /// # Errors
     ///
-    /// [`LocalQueueFull`] when the key is not queued and the queue already holds
-    /// [`LocalQueueWorker::CAPACITY`] messages.
-    pub fn send(&self, msg: W::Message) -> Result<(), LocalQueueFull> {
+    /// [`SendError::DeadLettered`] when the key is set aside, and
+    /// [`SendError::Full`] when the key is not queued and the queue already
+    /// holds [`LocalQueueWorker::CAPACITY`] messages.
+    pub fn send(&self, msg: W::Message) -> Result<(), SendError> {
         let key = W::key(&msg);
         let mut state = self.lock();
-        if state.is_queued(&key) {
+        if state.dead_index(&key).is_some() {
+            return Err(SendError::DeadLettered);
+        }
+        if state.queued_index(&key).is_some() {
             return Ok(());
         }
-        if state.queued.len() + usize::from(state.in_flight.is_some()) >= W::CAPACITY {
-            return Err(LocalQueueFull {
-                worker: W::NAME,
-                capacity: W::CAPACITY,
-            });
-        }
-        state.queued.push_back((key, msg));
+        state.has_room()?;
+        state.queued.push_back(Entry::new(key, msg));
         drop(state);
         self.shared.wake.notify_one();
         Ok(())
     }
 
-    /// Where `key` stands: `Some(0)` while it is being handled, `Some(1)`
-    /// when it is next, `None` when it is neither handled nor queued. A key
-    /// resent during its own handling reports `Some(0)` until that attempt
-    /// finishes.
+    /// Where `key` stands. A key resent during its own handling reports
+    /// [`KeyStatus::InHand`] until that attempt finishes.
     #[must_use]
-    pub fn position(&self, key: &W::Key) -> Option<usize> {
+    pub fn status(&self, key: &W::Key) -> KeyStatus {
         let state = self.lock();
-        if state.in_flight.as_ref() == Some(key) {
-            return Some(0);
+        if state
+            .in_flight
+            .as_ref()
+            .is_some_and(|hand| &hand.key == key)
+        {
+            return KeyStatus::InHand;
         }
-        state
-            .queued
-            .iter()
-            .position(|(queued, _)| queued == key)
-            .map(|index| index + 1)
+        if let Some(index) = state.queued_index(key) {
+            return KeyStatus::Queued(index + 1);
+        }
+        state.dead_index(key).map_or(KeyStatus::Absent, |index| {
+            KeyStatus::DeadLettered(state.dead[index].letter.clone())
+        })
+    }
+
+    /// Put a set-aside key back at the end of the line with its attempt
+    /// count reset. A key that is not set aside is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`LocalQueueFull`] when the queue already holds
+    /// [`LocalQueueWorker::CAPACITY`] messages; the key stays set aside.
+    pub fn requeue(&self, key: &W::Key) -> Result<(), LocalQueueFull> {
+        let mut state = self.lock();
+        let Some(index) = state.dead_index(key) else {
+            return Ok(());
+        };
+        state.has_room()?;
+        let Some(aside) = state.dead.remove(index) else {
+            return Ok(());
+        };
+        state.queued.push_back(Entry::new(aside.key, aside.msg));
+        drop(state);
+        self.shared.wake.notify_one();
+        Ok(())
+    }
+
+    /// Drop a set-aside key, so it can be sent again. Returns whether it was
+    /// set aside.
+    pub fn forget(&self, key: &W::Key) -> bool {
+        let mut state = self.lock();
+        let Some(index) = state.dead_index(key) else {
+            return false;
+        };
+        state.dead.remove(index);
+        true
     }
 
     fn lock(&self) -> MutexGuard<'_, State<W>> {
@@ -337,33 +597,54 @@ impl<W: LocalQueueWorker> LocalQueueSender<W> {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    async fn next(&self) -> W::Message {
+    async fn next(&self) -> (W::Message, u32) {
         loop {
             let entry = {
                 let mut state = self.lock();
-                state.queued.pop_front().map(|(key, msg)| {
-                    state.in_flight = Some(key);
-                    msg
+                state.queued.pop_front().map(|entry| {
+                    let attempts = entry.attempts.saturating_add(1);
+                    state.in_flight = Some(InHand {
+                        key: entry.key,
+                        attempts,
+                        last_reason: entry.last_reason,
+                    });
+                    (entry.msg, attempts)
                 })
             };
-            if let Some(msg) = entry {
-                return msg;
+            if let Some(entry) = entry {
+                return entry;
             }
             self.shared.wake.notified().await;
         }
     }
 
-    fn finish(&self, retry: Option<W::Message>) {
+    fn retry(&self, msg: W::Message, reason: String) -> Option<DeadLetter> {
         let mut state = self.lock();
-        let Some(key) = state.in_flight.take() else {
-            return;
-        };
-        let Some(msg) = retry else {
-            return;
-        };
-        if !state.is_queued(&key) {
-            state.queued.push_back((key, msg));
+        let mut hand = state.in_flight.take()?;
+        hand.last_reason = Some(reason);
+        if W::MAX_ATTEMPTS.is_some_and(|max| hand.attempts >= max.get()) {
+            return Some(state.set_aside(hand, msg, DeadLetterCause::Exhausted));
         }
+        let Some(index) = state.queued_index(&hand.key) else {
+            let mut entry = Entry::new(hand.key, msg);
+            entry.attempts = hand.attempts;
+            entry.last_reason = hand.last_reason;
+            state.queued.push_back(entry);
+            return None;
+        };
+        let resend = &mut state.queued[index];
+        resend.attempts = hand.attempts;
+        resend.last_reason = hand.last_reason;
+        None
+    }
+
+    fn fail(&self, msg: W::Message, cause: DeadLetterCause) -> Option<DeadLetter> {
+        let mut state = self.lock();
+        let mut hand = state.in_flight.take()?;
+        if let DeadLetterCause::Failed(reason) = &cause {
+            hand.last_reason = Some(reason.clone());
+        }
+        Some(state.set_aside(hand, msg, cause))
     }
 
     fn release_in_flight(&self) {
@@ -371,12 +652,14 @@ impl<W: LocalQueueWorker> LocalQueueSender<W> {
     }
 
     #[cfg(feature = "k8s")]
-    fn clear(&self) -> usize {
+    fn clear(&self) -> (usize, usize) {
         let mut state = self.lock();
         let dropped = state.queued.len() + usize::from(state.in_flight.is_some());
+        let dead = state.dead.len();
         state.queued.clear();
         state.in_flight = None;
-        dropped
+        state.dead.clear();
+        (dropped, dead)
     }
 }
 
@@ -442,10 +725,10 @@ async fn serve<W: LocalQueueWorker>(
             () = handle_messages(&worker, &ctx, &sender) => {}
             () = wait_for_leadership_loss(&mut loss_rx, W::NAME) => {}
         }
-        let dropped = sender.clear();
+        let (dropped, dead_letters) = sender.clear();
         info!(
             worker = W::NAME,
-            dropped, "lost leadership, dropped queued messages"
+            dropped, dead_letters, "lost leadership, dropped queued and dead-lettered messages"
         );
     }
 }
@@ -470,26 +753,71 @@ async fn handle_messages<W: LocalQueueWorker>(
 ) {
     tokio::time::sleep(W::SETTLE).await;
     loop {
-        let msg = sender.next().await;
-        let retry = match worker.handle(Arc::clone(ctx), msg.clone()).await {
+        let (msg, attempts) = sender.next().await;
+        let letter = match attempt(worker, ctx, msg.clone()).await {
             Ok(LocalQueueResult::Done) => {
                 debug!(worker = W::NAME, "message done");
-                None
+                sender.release_in_flight();
+                continue;
             }
             Ok(LocalQueueResult::Retry(reason)) => {
-                warn!(worker = W::NAME, reason = %reason, "retrying message");
-                Some(msg)
+                let letter = sender.retry(msg.clone(), reason.clone());
+                if letter.is_none() {
+                    warn!(worker = W::NAME, reason = %reason, attempts, "retrying message");
+                    tokio::time::sleep(W::RETRY_DELAY).await;
+                }
+                letter
             }
-            Err(e) => {
-                error!(worker = W::NAME, error = %e, "message failed, dropping it");
-                None
-            }
+            Err(cause) => sender.fail(msg.clone(), cause),
         };
-        let retried = retry.is_some();
-        sender.finish(retry);
-        if retried {
-            tokio::time::sleep(W::RETRY_DELAY).await;
-        }
+        let Some(letter) = letter else {
+            continue;
+        };
+        dead_letter(worker, ctx, msg, letter).await;
+    }
+}
+
+async fn attempt<W: LocalQueueWorker>(
+    worker: &W,
+    ctx: &Arc<W::Context>,
+    msg: W::Message,
+) -> Result<LocalQueueResult, DeadLetterCause> {
+    let handled = AssertUnwindSafe(worker.handle(Arc::clone(ctx), msg)).catch_unwind();
+    let result = match W::HANDLE_TIMEOUT {
+        Some(after) => tokio::time::timeout(after, handled)
+            .await
+            .map_err(|_| DeadLetterCause::TimedOut { after })?,
+        None => handled.await,
+    };
+    match result {
+        Ok(Ok(outcome)) => Ok(outcome),
+        Ok(Err(e)) => Err(DeadLetterCause::Failed(e.to_string())),
+        Err(panic) => Err(DeadLetterCause::Failed(format!(
+            "panicked: {}",
+            panic_message(panic.as_ref())
+        ))),
+    }
+}
+
+async fn dead_letter<W: LocalQueueWorker>(
+    worker: &W,
+    ctx: &Arc<W::Context>,
+    msg: W::Message,
+    letter: DeadLetter,
+) {
+    let hook = AssertUnwindSafe(worker.dead_letter(Arc::clone(ctx), msg, letter)).catch_unwind();
+    let result = match W::HANDLE_TIMEOUT {
+        Some(after) => tokio::time::timeout(after, hook).await,
+        None => Ok(hook.await),
+    };
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(panic)) => error!(
+            worker = W::NAME,
+            panic = panic_message(panic.as_ref()),
+            "dead_letter hook panicked"
+        ),
+        Err(_) => warn!(worker = W::NAME, "dead_letter hook timed out, moving on"),
     }
 }
 
@@ -532,9 +860,9 @@ mod tests {
         Job { key, tag }
     }
 
-    const FAILING: u32 = 99;
     const SETTLE: Duration = Duration::from_secs(5);
     const RETRY_DELAY: Duration = Duration::from_secs(1);
+    const HANDLE_TIMEOUT: Duration = Duration::from_secs(300);
     const QUIET: Duration = Duration::from_secs(60);
 
     #[derive(Clone)]
@@ -563,11 +891,15 @@ mod tests {
 
     /// Reports each message as it starts, then holds it until the test
     /// releases a permit. A handle future dropped before it finishes counts
-    /// as cancelled.
+    /// as cancelled. A message tagged `err` fails and one tagged `panic`
+    /// panics. The dead-letter hook reports each letter, then holds the line
+    /// until it gets a hook permit.
     #[derive(Clone)]
     struct Recorder {
         started: mpsc::UnboundedSender<Job>,
+        letters: mpsc::UnboundedSender<(Job, DeadLetter)>,
         permits: Arc<Semaphore>,
+        hook_permits: Arc<Semaphore>,
         retries: Arc<Mutex<HashMap<u32, u32>>>,
         cancelled: Arc<AtomicUsize>,
     }
@@ -599,6 +931,9 @@ mod tests {
         const CAPACITY: usize = 3;
         const SETTLE: Duration = SETTLE;
         const RETRY_DELAY: Duration = RETRY_DELAY;
+        const MAX_ATTEMPTS: Option<NonZeroU32> = NonZeroU32::new(3);
+        const HANDLE_TIMEOUT: Option<Duration> = Some(HANDLE_TIMEOUT);
+        const DEAD_LETTER_CAPACITY: usize = 2;
 
         fn key(msg: &Job) -> u32 {
             msg.key
@@ -613,13 +948,24 @@ mod tests {
                 started.send(msg.clone()).unwrap();
                 permits.acquire().await.unwrap().forget();
                 std::mem::forget(guard);
-                if msg.key == FAILING {
-                    return Err("boom".to_string());
+                match msg.tag {
+                    "err" => return Err("boom".to_string()),
+                    "panic" => panic!("kaboom"),
+                    _ => {}
                 }
                 if take_retry(&retries, msg.key) {
                     return Ok(LocalQueueResult::Retry("again".to_string()));
                 }
                 Ok(LocalQueueResult::Done)
+            })
+        }
+
+        fn dead_letter(&self, _ctx: Arc<Ctx>, msg: Job, letter: DeadLetter) -> BoxFuture<()> {
+            let letters = self.letters.clone();
+            let hook_permits = Arc::clone(&self.hook_permits);
+            Box::pin(async move {
+                letters.send((msg, letter)).unwrap();
+                hook_permits.acquire().await.unwrap().forget();
             })
         }
     }
@@ -628,7 +974,9 @@ mod tests {
         ctx: Ctx,
         worker: Recorder,
         started: mpsc::UnboundedReceiver<Job>,
+        letters: mpsc::UnboundedReceiver<(Job, DeadLetter)>,
         permits: Arc<Semaphore>,
+        hook_permits: Arc<Semaphore>,
         retries: Arc<Mutex<HashMap<u32, u32>>>,
         cancelled: Arc<AtomicUsize>,
         task: Option<JoinHandle<Result<(), FlatbedWorkerError>>>,
@@ -651,7 +999,9 @@ mod tests {
 
         fn idle(permits: usize) -> Self {
             let (started_tx, started) = mpsc::unbounded_channel();
+            let (letters_tx, letters) = mpsc::unbounded_channel();
             let permits = Arc::new(Semaphore::new(permits));
+            let hook_permits = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
             let retries = Arc::default();
             let cancelled = Arc::default();
             Self {
@@ -662,12 +1012,16 @@ mod tests {
                 },
                 worker: Recorder {
                     started: started_tx,
+                    letters: letters_tx,
                     permits: Arc::clone(&permits),
+                    hook_permits: Arc::clone(&hook_permits),
                     retries: Arc::clone(&retries),
                     cancelled: Arc::clone(&cancelled),
                 },
                 started,
+                letters,
                 permits,
+                hook_permits,
                 retries,
                 cancelled,
                 task: None,
@@ -689,10 +1043,25 @@ mod tests {
             self.queue().send(job(key, tag)).unwrap();
         }
 
+        fn status(&self, key: u32) -> KeyStatus {
+            self.queue().status(&key)
+        }
+
+        fn is_dead_lettered(&self, key: u32) -> bool {
+            matches!(self.status(key), KeyStatus::DeadLettered(_))
+        }
+
         async fn next_started(&mut self) -> Job {
             timeout(QUIET, self.started.recv())
                 .await
                 .expect("a message started")
+                .unwrap()
+        }
+
+        async fn next_letter(&mut self) -> (Job, DeadLetter) {
+            timeout(HANDLE_TIMEOUT + QUIET, self.letters.recv())
+                .await
+                .expect("a message was dead-lettered")
                 .unwrap()
         }
 
@@ -701,6 +1070,17 @@ mod tests {
                 panic!("nothing should start, but {job:?} did");
             }
         }
+    }
+
+    fn assert_letter(
+        letter: &DeadLetter,
+        cause: DeadLetterCause,
+        attempts: u32,
+        last_reason: Option<&str>,
+    ) {
+        assert_eq!(letter.cause, cause);
+        assert_eq!(letter.attempts, attempts);
+        assert_eq!(letter.last_reason.as_deref(), last_reason);
     }
 
     #[tokio::test(start_paused = true)]
@@ -743,8 +1123,8 @@ mod tests {
         h.send(2, "b");
         h.send(1, "second");
 
-        assert_eq!(h.queue().position(&1), Some(1));
-        assert_eq!(h.queue().position(&2), Some(2));
+        assert_eq!(h.status(1), KeyStatus::Queued(1));
+        assert_eq!(h.status(2), KeyStatus::Queued(2));
         assert_eq!(h.next_started().await, job(1, "first"));
         assert_eq!(h.next_started().await, job(2, "b"));
         h.assert_quiet(QUIET).await;
@@ -757,31 +1137,31 @@ mod tests {
         assert_eq!(h.next_started().await, job(1, "first"));
 
         h.send(1, "second");
-        assert_eq!(h.queue().position(&1), Some(0));
+        assert_eq!(h.status(1), KeyStatus::InHand);
         h.permits.add_permits(1);
         assert_eq!(h.next_started().await, job(1, "second"));
     }
 
     #[tokio::test(start_paused = true)]
-    async fn position_counts_from_the_message_being_handled() {
+    async fn status_counts_the_line_from_the_next_message() {
         let mut h = Harness::standalone(0);
         h.send(1, "a");
         h.send(2, "b");
         h.send(3, "c");
-        assert_eq!(h.queue().position(&1), Some(1));
-        assert_eq!(h.queue().position(&3), Some(3));
-        assert_eq!(h.queue().position(&4), None);
+        assert_eq!(h.status(1), KeyStatus::Queued(1));
+        assert_eq!(h.status(3), KeyStatus::Queued(3));
+        assert_eq!(h.status(4), KeyStatus::Absent);
 
         h.next_started().await;
-        assert_eq!(h.queue().position(&1), Some(0));
-        assert_eq!(h.queue().position(&2), Some(1));
-        assert_eq!(h.queue().position(&3), Some(2));
+        assert_eq!(h.status(1), KeyStatus::InHand);
+        assert_eq!(h.status(2), KeyStatus::Queued(1));
+        assert_eq!(h.status(3), KeyStatus::Queued(2));
 
         h.permits.add_permits(1);
         h.next_started().await;
-        assert_eq!(h.queue().position(&1), None);
-        assert_eq!(h.queue().position(&2), Some(0));
-        assert_eq!(h.queue().position(&3), Some(1));
+        assert_eq!(h.status(1), KeyStatus::Absent);
+        assert_eq!(h.status(2), KeyStatus::InHand);
+        assert_eq!(h.status(3), KeyStatus::Queued(1));
     }
 
     #[tokio::test(start_paused = true)]
@@ -817,16 +1197,185 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_failed_message_is_dropped_and_the_worker_keeps_going() {
+    async fn retrying_on_the_last_attempt_dead_letters_as_exhausted() {
         let mut h = Harness::standalone(10);
-        h.send(FAILING, "boom");
+        h.retries.lock().unwrap().insert(1, 10);
         h.send(1, "a");
+        h.send(2, "b");
 
-        assert_eq!(h.next_started().await, job(FAILING, "boom"));
+        assert_eq!(h.next_started().await, job(1, "a"));
+        assert_eq!(h.next_started().await, job(2, "b"));
+        h.send(1, "resent");
+        assert_eq!(h.next_started().await, job(1, "a"));
+        assert_eq!(h.next_started().await, job(1, "a"));
+        let (msg, letter) = h.next_letter().await;
+        assert_eq!(msg, job(1, "a"));
+        assert_letter(&letter, DeadLetterCause::Exhausted, 3, Some("again"));
+        assert_eq!(h.status(1), KeyStatus::DeadLettered(letter));
+        h.assert_quiet(QUIET).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_handle_outrunning_the_timeout_is_dropped_and_dead_lettered() {
+        let mut h = Harness::standalone(0);
+        h.send(1, "a");
+        h.send(2, "b");
+        assert_eq!(h.next_started().await, job(1, "a"));
+        let started_at = Instant::now();
+
+        let (msg, letter) = h.next_letter().await;
+        assert_eq!(started_at.elapsed(), HANDLE_TIMEOUT);
+        assert_eq!(msg, job(1, "a"));
+        assert_letter(
+            &letter,
+            DeadLetterCause::TimedOut {
+                after: HANDLE_TIMEOUT,
+            },
+            1,
+            None,
+        );
+        assert_eq!(h.cancelled.load(Ordering::SeqCst), 1);
+        h.permits.add_permits(1);
+        assert_eq!(h.next_started().await, job(2, "b"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_err_dead_letters_the_message_as_failed_and_the_worker_keeps_going() {
+        let mut h = Harness::standalone(10);
+        h.send(1, "err");
+        h.send(2, "b");
+
+        assert_eq!(h.next_started().await, job(1, "err"));
+        let (msg, letter) = h.next_letter().await;
+        assert_eq!(msg, job(1, "err"));
+        assert_letter(
+            &letter,
+            DeadLetterCause::Failed("boom".into()),
+            1,
+            Some("boom"),
+        );
+        assert_eq!(h.next_started().await, job(2, "b"));
+        assert!(h.is_dead_lettered(1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_panic_dead_letters_the_message_as_failed_and_the_worker_keeps_going() {
+        let mut h = Harness::standalone(10);
+        h.send(1, "panic");
+        h.send(2, "b");
+
+        assert_eq!(h.next_started().await, job(1, "panic"));
+        let (_, letter) = h.next_letter().await;
+        let failed = DeadLetterCause::Failed("panicked: kaboom".into());
+        assert_letter(&letter, failed, 1, Some("panicked: kaboom"));
+        assert_eq!(h.next_started().await, job(2, "b"));
+        h.send(3, "c");
+        assert_eq!(h.next_started().await, job(3, "c"));
+        assert!(!h.task.as_ref().unwrap().is_finished());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_dead_letter_hook_holds_the_line_until_it_returns() {
+        let mut h = Harness::standalone(10);
+        h.hook_permits.forget_permits(Semaphore::MAX_PERMITS);
+        h.send(1, "err");
+        h.send(2, "b");
+
+        assert_eq!(h.next_started().await, job(1, "err"));
+        h.next_letter().await;
+        assert!(h.is_dead_lettered(1));
+        h.assert_quiet(QUIET).await;
+        h.hook_permits.add_permits(1);
+        assert_eq!(h.next_started().await, job(2, "b"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_dead_letter_hook_outrunning_the_timeout_lets_the_line_move_on() {
+        let mut h = Harness::standalone(10);
+        h.hook_permits.forget_permits(Semaphore::MAX_PERMITS);
+        h.send(1, "err");
+        h.send(2, "b");
+
+        assert_eq!(h.next_started().await, job(1, "err"));
+        h.next_letter().await;
+        h.assert_quiet(HANDLE_TIMEOUT - Duration::from_millis(1))
+            .await;
+        assert_eq!(
+            timeout(Duration::from_millis(2), h.started.recv()).await,
+            Ok(Some(job(2, "b")))
+        );
+        assert!(h.is_dead_lettered(1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_dead_lettered_key_refuses_resends_and_drops_a_queued_one() {
+        let mut h = Harness::standalone(0);
+        h.send(1, "err");
+        assert_eq!(h.next_started().await, job(1, "err"));
+        h.send(1, "resent while in hand");
+
+        h.permits.add_permits(10);
+        h.next_letter().await;
+        assert!(h.is_dead_lettered(1));
+        assert_eq!(
+            h.queue().send(job(1, "again")),
+            Err(SendError::DeadLettered)
+        );
+        h.assert_quiet(QUIET).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn requeue_puts_the_key_back_in_line_with_its_attempts_reset() {
+        let mut h = Harness::standalone(10);
+        h.retries.lock().unwrap().insert(1, 4);
+        h.send(1, "a");
+        for _ in 0..3 {
+            assert_eq!(h.next_started().await, job(1, "a"));
+        }
+        let (_, letter) = h.next_letter().await;
+        assert_letter(&letter, DeadLetterCause::Exhausted, 3, Some("again"));
+
+        assert_eq!(h.queue().requeue(&1), Ok(()));
+        assert_eq!(h.status(1), KeyStatus::Queued(1));
+        assert_eq!(h.next_started().await, job(1, "a"));
         assert_eq!(h.next_started().await, job(1, "a"));
         h.assert_quiet(QUIET).await;
-        h.send(2, "b");
-        assert_eq!(h.next_started().await, job(2, "b"));
+        assert_eq!(h.status(1), KeyStatus::Absent);
+        assert!(h.letters.try_recv().is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn forget_drops_a_dead_letter_so_its_key_can_be_sent_again() {
+        let mut h = Harness::standalone(10);
+        h.send(1, "err");
+        h.next_letter().await;
+
+        assert!(h.queue().forget(&1));
+        assert!(!h.queue().forget(&1));
+        assert_eq!(h.status(1), KeyStatus::Absent);
+        h.send(1, "b");
+        h.next_started().await;
+        assert_eq!(h.next_started().await, job(1, "b"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_oldest_dead_letter_is_evicted_past_capacity() {
+        let mut h = Harness::standalone(10);
+        h.send(1, "err");
+        h.send(2, "err");
+        h.send(3, "err");
+        for _ in 0..3 {
+            h.next_letter().await;
+        }
+
+        assert_eq!(h.status(1), KeyStatus::Absent);
+        assert!(h.is_dead_lettered(2));
+        assert!(h.is_dead_lettered(3));
+        h.send(1, "a");
+        for _ in 0..3 {
+            h.next_started().await;
+        }
+        assert_eq!(h.next_started().await, job(1, "a"));
     }
 
     #[tokio::test(start_paused = true)]
@@ -835,10 +1384,10 @@ mod tests {
         h.send(1, "a");
         h.send(2, "b");
         h.send(3, "c");
-        let full = LocalQueueFull {
+        let full = SendError::Full(LocalQueueFull {
             worker: "recorder",
             capacity: 3,
-        };
+        });
         assert_eq!(h.queue().send(job(4, "d")), Err(full));
         assert_eq!(h.queue().send(job(2, "again")), Ok(()));
 
@@ -861,12 +1410,12 @@ mod tests {
         first.abort();
         assert!(first.await.unwrap_err().is_cancelled());
         assert_eq!(h.cancelled.load(Ordering::SeqCst), 1);
-        assert_eq!(h.queue().position(&1), Some(0));
+        assert_eq!(h.status(1), KeyStatus::InHand);
 
         h.start();
         tokio::time::sleep(Duration::from_millis(1)).await;
-        assert_eq!(h.queue().position(&1), None);
-        assert_eq!(h.queue().position(&2), Some(1));
+        assert_eq!(h.status(1), KeyStatus::Absent);
+        assert_eq!(h.status(2), KeyStatus::Queued(1));
         h.permits.add_permits(10);
         assert_eq!(h.next_started().await, job(2, "b"));
         h.assert_quiet(QUIET).await;
@@ -879,7 +1428,7 @@ mod tests {
         h.send(1, "a");
 
         h.assert_quiet(QUIET).await;
-        assert_eq!(h.queue().position(&1), Some(1));
+        assert_eq!(h.status(1), KeyStatus::Queued(1));
     }
 
     #[cfg(feature = "k8s")]
@@ -908,13 +1457,42 @@ mod tests {
         h.ctx.leader.as_ref().unwrap().send(false).unwrap();
         tokio::time::sleep(Duration::from_millis(1)).await;
         assert_eq!(h.cancelled.load(Ordering::SeqCst), 1);
-        assert_eq!(h.queue().position(&1), None);
-        assert_eq!(h.queue().position(&2), None);
+        assert_eq!(h.status(1), KeyStatus::Absent);
+        assert_eq!(h.status(2), KeyStatus::Absent);
 
         h.ctx.leader.as_ref().unwrap().send(true).unwrap();
         h.permits.add_permits(10);
         h.assert_quiet(QUIET).await;
         h.send(3, "c");
         assert_eq!(h.next_started().await, job(3, "c"));
+    }
+
+    #[cfg(feature = "k8s")]
+    #[tokio::test(start_paused = true)]
+    async fn losing_leadership_clears_the_dead_letters_and_the_attempt_counts() {
+        let mut h = Harness::ha(2, true);
+        h.retries.lock().unwrap().insert(2, 10);
+        h.send(1, "err");
+        h.send(2, "a");
+        assert_eq!(h.next_started().await, job(1, "err"));
+        h.next_letter().await;
+        assert_eq!(h.next_started().await, job(2, "a"));
+        assert_eq!(h.next_started().await, job(2, "a"));
+
+        h.ctx.leader.as_ref().unwrap().send(false).unwrap();
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        assert_eq!(h.status(1), KeyStatus::Absent);
+        assert_eq!(h.status(2), KeyStatus::Absent);
+
+        h.ctx.leader.as_ref().unwrap().send(true).unwrap();
+        h.send(1, "x");
+        h.send(2, "a");
+        h.permits.add_permits(10);
+        assert_eq!(h.next_started().await, job(1, "x"));
+        for _ in 0..3 {
+            assert_eq!(h.next_started().await, job(2, "a"));
+        }
+        let (_, letter) = h.next_letter().await;
+        assert_letter(&letter, DeadLetterCause::Exhausted, 3, Some("again"));
     }
 }
