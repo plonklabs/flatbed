@@ -97,7 +97,7 @@ pub struct DeadLetter {
     pub cause: DeadLetterCause,
     /// How many times `handle` ran for the key.
     pub attempts: u32,
-    /// The reason the latest `Retry` or `Err` for the key carried.
+    /// The reason the latest `Retry`, `Err` or panic for the key carried.
     pub last_reason: Option<String>,
     /// When the message was set aside.
     pub at: SystemTime,
