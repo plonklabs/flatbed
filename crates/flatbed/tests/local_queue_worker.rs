@@ -1,13 +1,19 @@
 //! End-to-end check of a registered `LocalQueueWorker` under `Flatbed::run`
 //! with a `FlatbedContext`: messages sent while the process does not lead
-//! wait, are handled in order with duplicates coalesced once it leads, and the
-//! worker reports `running`.
+//! wait, are handled in order with duplicates coalesced once it leads, the
+//! worker reports `running`, and a panic in `handle` reaches the error
+//! reporter with a backtrace and dead-letters the message.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use flatbed::local_queue::{HasLocalQueues, KeyStatus, LocalQueueResult, LocalQueueWorker};
-use flatbed::{Flatbed, FlatbedConfig, FlatbedContext};
+use flatbed::local_queue::{
+    DeadLetterCause, HasLocalQueues, KeyStatus, LocalQueueResult, LocalQueueWorker,
+};
+use flatbed::{
+    ErrorReporter, Flatbed, FlatbedConfig, FlatbedContext, PanicReport, PanicSite, RouteFailure,
+    WorkerFailure,
+};
 use tokio::sync::watch;
 
 #[derive(Clone, Default)]
@@ -63,6 +69,9 @@ impl LocalQueueWorker for NamespaceSetup {
         msg: SetupNamespace,
     ) -> flatbed::BoxFuture<Result<LocalQueueResult, String>> {
         Box::pin(async move {
+            if msg.namespace == "doomed" {
+                panic!("handle panicked on purpose");
+            }
             ctx.handled
                 .lock()
                 .unwrap()
@@ -73,6 +82,26 @@ impl LocalQueueWorker for NamespaceSetup {
 }
 
 flatbed::register_local_queue_worker!(NamespaceSetup, AppContext);
+
+#[derive(Default)]
+struct Recorder(Mutex<Vec<(String, String, bool)>>);
+
+impl ErrorReporter for Recorder {
+    fn route_error(&self, _failure: &RouteFailure<'_>) {}
+
+    fn panic(&self, panic: &PanicReport<'_>) {
+        let PanicSite::Worker(worker) = panic.site else {
+            return;
+        };
+        self.0.lock().unwrap().push((
+            worker.to_string(),
+            panic.message.to_string(),
+            panic.backtrace.is_some(),
+        ));
+    }
+
+    fn worker_failure(&self, _failure: &WorkerFailure<'_>) {}
+}
 
 fn running(metrics: &str) -> bool {
     metrics.lines().any(|line| {
@@ -98,10 +127,13 @@ async fn registered_local_queue_worker_handles_queued_messages_once_leading() {
     let telemetry: Arc<dyn flatbed::TelemetryService> = <flatbed::telemetry::prometheus::PrometheusTelemetryService as flatbed::TelemetryService>::new(
         telemetry_config,
     );
+    let recorder = Arc::new(Recorder::default());
+    let reporter: Arc<dyn ErrorReporter> = recorder.clone();
     let config = FlatbedConfig::new("Local Queue Worker Test")
         .host("127.0.0.1")
         .port(port)
-        .with_telemetry(telemetry);
+        .with_telemetry(telemetry)
+        .with_error_reporter(reporter);
 
     let ctx = app_context().await;
     let boot_ctx = ctx.clone();
@@ -163,6 +195,31 @@ async fn registered_local_queue_worker_handles_queued_messages_once_leading() {
         ctx.local_queue::<NamespaceSetup>()
             .status(&("team-a", "s1")),
         KeyStatus::Absent
+    );
+
+    send("doomed", "s1", 1);
+    send("team-c", "s1", 1);
+    for _ in 0..100 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        if ctx.handled.lock().unwrap().len() >= 3 {
+            break;
+        }
+    }
+    assert_eq!(ctx.handled.lock().unwrap().last().unwrap(), "team-c@s1#1");
+    let message = "handle panicked on purpose";
+    assert_eq!(
+        *recorder.0.lock().unwrap(),
+        [("namespace-setup".to_string(), message.to_string(), true)]
+    );
+    let KeyStatus::DeadLettered(letter) = ctx
+        .local_queue::<NamespaceSetup>()
+        .status(&("doomed", "s1"))
+    else {
+        panic!("the panicked message is dead-lettered");
+    };
+    assert_eq!(
+        letter.cause,
+        DeadLetterCause::Failed(format!("panicked: {message}"))
     );
 
     let health = client.get(format!("{base}/healthz")).send().await.unwrap();

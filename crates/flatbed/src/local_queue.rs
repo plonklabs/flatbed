@@ -75,7 +75,7 @@ use futures::FutureExt;
 use tokio::sync::Notify;
 use tracing::{debug, error, info, warn};
 
-use crate::error_reporting::panic_message;
+use crate::error_reporting::{caught_panic, report_panic, PanicSite};
 use crate::{BoxFuture, FlatbedWorkerError};
 
 /// Outcome of handling one message.
@@ -792,10 +792,11 @@ async fn attempt<W: LocalQueueWorker>(
     match result {
         Ok(Ok(outcome)) => Ok(outcome),
         Ok(Err(e)) => Err(DeadLetterCause::Failed(e.to_string())),
-        Err(panic) => Err(DeadLetterCause::Failed(format!(
-            "panicked: {}",
-            panic_message(panic.as_ref())
-        ))),
+        Err(payload) => {
+            let panic = caught_panic(payload.as_ref());
+            report_panic(PanicSite::Worker(W::NAME), &panic);
+            Err(DeadLetterCause::Failed(format!("panicked: {panic}")))
+        }
     }
 }
 
@@ -812,11 +813,11 @@ async fn dead_letter<W: LocalQueueWorker>(
     };
     match result {
         Ok(Ok(())) => {}
-        Ok(Err(panic)) => error!(
-            worker = W::NAME,
-            panic = panic_message(panic.as_ref()),
-            "dead_letter hook panicked"
-        ),
+        Ok(Err(payload)) => {
+            let panic = caught_panic(payload.as_ref());
+            report_panic(PanicSite::Worker(W::NAME), &panic);
+            error!(worker = W::NAME, panic = %panic, "dead_letter hook panicked");
+        }
         Err(_) => warn!(worker = W::NAME, "dead_letter hook timed out, moving on"),
     }
 }

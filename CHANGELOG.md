@@ -29,7 +29,9 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 - **Breaking:** an `Err` from `LocalQueueWorker::handle` sets the message
   aside as a dead letter instead of logging and dropping it, and a panic in
-  `handle` does the same instead of stopping the worker.
+  `handle` does the same instead of stopping the worker. The panic still
+  reaches the error reporter as `PanicSite::Worker`, as does one in the
+  `dead_letter` hook.
 - **Breaking:** `LocalQueueSender::send` returns `SendError` (`Full` or
   `DeadLettered`, a resend of a set-aside key) instead of `LocalQueueFull`.
 - **Breaking:** `LocalQueueSender::position` is replaced by `status`, which
