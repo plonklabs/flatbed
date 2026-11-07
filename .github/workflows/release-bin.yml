@@ -7,7 +7,10 @@ name: Build flatbed binary
 #     linux (amd64 + arm64) and darwin (arm64) binaries and their sha256
 #     checksums attached. Intel macOS (darwin-amd64) is not built — install
 #     there with `cargo install`.
-#   - run via `workflow_dispatch` → publishes a pre-release tagged
+#   - run via `workflow_dispatch` with a `tag` input → builds that
+#     existing tag and cuts its versioned release, for a tag whose push
+#     run failed.
+#   - run via `workflow_dispatch` without one → publishes a pre-release tagged
 #     `flatbed-dev-<short-sha>` so a feature branch can hand someone
 #     a binary without minting a real version. Pre-release flag is
 #     set so dispatch builds don't appear as the "latest" versioned
@@ -20,9 +23,14 @@ on:
   push:
     tags: ['flatbed-v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing flatbed-vX.Y.Z tag to build and release; empty for a dev pre-release
+        required: false
+        default: ''
 
 concurrency:
-  group: build-flatbed-bin-${{ github.ref }}
+  group: build-flatbed-bin-${{ inputs.tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -39,13 +47,15 @@ jobs:
           - runner: ubuntu-24.04-arm
             os: linux
             arch: arm64
-          - runner: macos-14
+          - runner: macos-15
             os: darwin
             arch: arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -101,8 +111,13 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           REF_NAME: ${{ github.ref_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [ "$EVENT_NAME" = "push" ]; then
+          if [ -n "$INPUT_TAG" ]; then
+            case "$INPUT_TAG" in flatbed-v*) ;; *) echo "tag must be flatbed-v*" >&2; exit 1 ;; esac
+            echo "tag=$INPUT_TAG" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          elif [ "$EVENT_NAME" = "push" ]; then
             echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
