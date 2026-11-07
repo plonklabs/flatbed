@@ -33,7 +33,7 @@ use ::sentry::integrations::tracing::{
     breadcrumb_from_event, event_from_event, log_from_event, EventMapping, SentryLayer,
 };
 use ::sentry::protocol::{Event, Exception, Frame, Level, Mechanism, Stacktrace, Value};
-use ::sentry::{ClientInitGuard, ClientOptions, Hub, Integration};
+use ::sentry::{BeforeCallback, ClientInitGuard, ClientOptions, Hub, Integration};
 use tracing::field::{Field, Visit};
 use tracing::Subscriber;
 use tracing_subscriber::layer::Context;
@@ -59,10 +59,12 @@ pub struct SentryReporter {
 
 impl SentryReporter {
     /// Initialize the Sentry client from `SENTRY_DSN`, `SENTRY_ENVIRONMENT`,
-    /// and `SENTRY_RELEASE`, binding it to the calling thread's hub. Call it
-    /// first thing in `main`, before anything else touches Sentry (and so
-    /// before a tracing subscriber exists: an unparsable DSN is reported on
-    /// stderr), and keep the reporter alive for the life of the process:
+    /// `SENTRY_RELEASE`, and `SENTRY_TAGS`, binding it to the calling thread's
+    /// hub. `SENTRY_TAGS` is a comma-separated `key=value` list added to every
+    /// event that does not already carry that tag. Call it first thing in
+    /// `main`, before anything else touches Sentry (and so before a tracing
+    /// subscriber exists: an unparsable DSN or `SENTRY_TAGS` pair is reported
+    /// on stderr), and keep the reporter alive for the life of the process:
     /// dropping it flushes and closes the client.
     pub fn from_env() -> Self {
         if std::env::var("SENTRY_DSN").is_ok_and(|dsn| dsn.parse::<::sentry::types::Dsn>().is_err())
@@ -126,7 +128,48 @@ fn client_options() -> ClientOptions {
     options.send_default_pii = false;
     options.default_integrations = false;
     options.integrations = integrations;
+    options.before_send = tags_hook(parse_tags(
+        &std::env::var("SENTRY_TAGS").unwrap_or_default(),
+    ));
     options
+}
+
+fn parse_tags(raw: &str) -> Vec<(String, String)> {
+    let mut malformed = Vec::new();
+    let tags = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|pair| !pair.is_empty())
+        .filter_map(|pair| {
+            let tag = pair
+                .split_once('=')
+                .map(|(key, value)| (key.trim(), value.trim()))
+                .filter(|(key, _)| !key.is_empty());
+            if tag.is_none() {
+                malformed.push(pair);
+            }
+            tag.map(|(key, value)| (key.to_owned(), value.to_owned()))
+        })
+        .collect();
+    if !malformed.is_empty() {
+        eprintln!("flatbed: SENTRY_TAGS pairs {malformed:?} are not key=value; skipped them");
+    }
+    tags
+}
+
+fn tags_hook(tags: Vec<(String, String)>) -> Option<BeforeCallback<Event<'static>>> {
+    if tags.is_empty() {
+        return None;
+    }
+    Some(Arc::new(move |mut event: Event<'static>| {
+        for (key, value) in &tags {
+            event
+                .tags
+                .entry(key.clone())
+                .or_insert_with(|| value.clone());
+        }
+        Some(event)
+    }))
 }
 
 fn reported(event: &tracing::Event<'_>) -> bool {
@@ -353,10 +396,13 @@ mod tests {
 
     use ::sentry::protocol::Event;
     use ::sentry::protocol::{EnvelopeItem, ItemContainer};
-    use ::sentry::test::{with_captured_envelopes, with_captured_events};
+    use ::sentry::test::{
+        with_captured_envelopes, with_captured_events, with_captured_events_options,
+    };
+    use ::sentry::ClientOptions;
     use tracing_subscriber::layer::SubscriberExt;
 
-    use super::{client_options, stacktrace_from_str, SentryReporter};
+    use super::{client_options, parse_tags, stacktrace_from_str, tags_hook, SentryReporter};
     use crate::{
         ErrorReporter, FlatbedWorkerError, PanicReport, PanicSite, RouteFailure, RouteRequest,
         Transport, WorkerFailure,
@@ -669,5 +715,51 @@ mod tests {
             .integrations
             .iter()
             .all(|integration| integration.name() != "panic"));
+    }
+
+    fn tags(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn empty_sentry_tags_means_no_hook() {
+        assert!(parse_tags("").is_empty());
+        assert!(parse_tags(" , ,").is_empty());
+        assert!(tags_hook(parse_tags("")).is_none());
+    }
+
+    #[test]
+    fn sentry_tags_trim_whitespace_and_skip_malformed_pairs() {
+        assert_eq!(
+            parse_tags(" namespace = shop ,, missing, =orphan,cluster=eu-1 , url=a=b"),
+            tags(&[("namespace", "shop"), ("cluster", "eu-1"), ("url", "a=b")])
+        );
+    }
+
+    #[test]
+    fn sentry_tags_reach_every_event_without_overriding_its_own() {
+        let mut options = ClientOptions::default();
+        options.before_send = tags_hook(tags(&[("namespace", "shop"), ("route", "env")]));
+        let events = with_captured_events_options(
+            || {
+                reporter().route_error(&RouteFailure {
+                    request: request(),
+                    status: 500,
+                    code: None,
+                    message: "oops",
+                });
+                ::sentry::capture_message("plain", ::sentry::Level::Error);
+            },
+            options,
+        );
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(tag(&events[0], "namespace"), Some("shop"));
+        assert_eq!(tag(&events[0], "route"), Some("/users/{id}"));
+        assert_eq!(tag(&events[1], "namespace"), Some("shop"));
+        assert_eq!(tag(&events[1], "route"), Some("env"));
     }
 }
