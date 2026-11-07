@@ -9,6 +9,8 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+## [0.0.12] — 2026-11-07
+
 ### Added
 
 - `SentryReporter::from_env` reads `SENTRY_TAGS`, a comma-separated
@@ -302,7 +304,8 @@ contain breaking changes during the pre-1.0 stabilization window.
   server, and the optional `openapi` / `telemetry` / `nats` / `k8s`
   feature gates.
 
-[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.11...HEAD
+[Unreleased]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.12...HEAD
+[0.0.12]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.11...flatbed-v0.0.12
 [0.0.11]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.10...flatbed-v0.0.11
 [0.0.10]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.9...flatbed-v0.0.10
 [0.0.9]: https://github.com/plonklabs/flatbed/compare/flatbed-v0.0.8...flatbed-v0.0.9
