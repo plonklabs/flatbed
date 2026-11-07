@@ -547,7 +547,11 @@ tracing_subscriber::registry()
 let config = FlatbedConfig::new("My API").with_error_reporter(reporter);
 ```
 
-`from_env()` reads `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, and `SENTRY_RELEASE`.
+`from_env()` reads `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE`, and
+`SENTRY_TAGS`: a comma-separated `key=value` list (say
+`SENTRY_TAGS=namespace=shop,cluster=eu-1`) added to every event, the reporter's
+and the tracing layer's alike, that does not already carry that tag. A pair
+without `=` or with an empty key is skipped with a note on stderr.
 Without a DSN it does nothing: no client, no thread, no network. Call it first
 thing in `main` and keep the reporter alive; dropping it flushes the client.
 flatbed also flushes it (up to 2 s) when graceful shutdown starts.

@@ -9,6 +9,13 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+### Added
+
+- `SentryReporter::from_env` reads `SENTRY_TAGS`, a comma-separated
+  `key=value` list, and adds those tags to every event that does not already
+  carry them. Whitespace around keys and values is trimmed; a pair without `=`
+  or with an empty key is skipped with a note on stderr.
+
 ## [0.0.11] — 2026-11-03
 
 ### Added
