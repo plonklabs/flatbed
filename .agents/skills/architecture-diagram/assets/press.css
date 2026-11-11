@@ -96,6 +96,8 @@ tr:last-child td { border-bottom: 0; }
 .tag.ochre { background: var(--ochre-tint); border-left: 6px solid var(--ochre); }
 .tag.red { background: var(--red-tint); border-left: 6px solid var(--red); }
 .tag.grey { background: var(--grey-tint); border-left: 6px solid var(--grey); }
+.src { margin: 0; padding: 14px 16px; background: var(--paper); color: var(--ink); border-radius: 10px; overflow-x: auto; font-family: var(--mono); font-variant-ligatures: none; font-size: 13px; line-height: 1.55; white-space: pre; }
+.src .c { color: var(--caption); }
 ol, ul { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; max-width: 72ch; }
 ol li::marker { font-family: var(--mono); font-weight: 800; }
 .note { font-size: 14px; opacity: .85; }
