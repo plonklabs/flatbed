@@ -238,6 +238,9 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let body_type = &request_info.body_type;
+    if let Err(err) = refuse_passthrough(body_type) {
+        return err.to_compile_error().into();
+    }
     let body_type_str = body_type.to_token_stream().to_string();
     let response_type_str = &response_info.body_type_str;
 
@@ -379,9 +382,41 @@ pub fn nats_route_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(expanded)
 }
 
+/// Refuse a `Passthrough` body, named by its last path segment: the NATS
+/// wrapper decodes its payload itself and `Passthrough` decodes as neither.
+fn refuse_passthrough(body_type: &syn::Type) -> syn::Result<()> {
+    let syn::Type::Path(path) = body_type else {
+        return Ok(());
+    };
+    if path.path.segments.last().map(|s| s.ident == "Passthrough") != Some(true) {
+        return Ok(());
+    }
+    Err(syn::Error::new_spanned(
+        body_type,
+        "`#[nats_route]` does not accept `Passthrough`: a NATS payload is decoded as JSON or \
+         FlatBuffers",
+    ))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_subject;
+    use super::{parse_subject, refuse_passthrough};
+
+    #[test]
+    fn a_passthrough_body_is_refused_by_name() {
+        for body_type in [
+            syn::parse_quote!(Passthrough),
+            syn::parse_quote!(flatbed::Passthrough),
+        ] {
+            let err = refuse_passthrough(&body_type).unwrap_err();
+            assert!(
+                err.to_string()
+                    .starts_with("`#[nats_route]` does not accept `Passthrough`"),
+                "{err}"
+            );
+        }
+        assert!(refuse_passthrough(&syn::parse_quote!(OrderRequest)).is_ok());
+    }
 
     #[test]
     fn a_literal_subject_subscribes_verbatim_and_captures_nothing() {

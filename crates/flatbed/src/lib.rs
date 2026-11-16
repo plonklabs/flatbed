@@ -807,6 +807,69 @@ impl FromFlatBuffer for () {
     }
 }
 
+/// A request body a `#[route]` handler can take as `Request<T>`.
+///
+/// Implemented for every generated type, which is decoded from JSON or
+/// FlatBuffers by the request's content type, and for [`Passthrough`], which
+/// keeps the bytes as sent.
+pub trait FromBody: Sized {
+    /// The body's schema in `/openapi.json`; `None` for an opaque body.
+    const SCHEMA: Option<SchemaInfo>;
+
+    /// Build the body from the bytes read off the request, in `codec`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DeserializationError`] when the bytes do not decode.
+    fn from_body(bytes: bytes::Bytes, codec: Codec) -> Result<Self, Error>;
+}
+
+impl<T> FromBody for T
+where
+    T: ToFlatBuffer + FromFlatBuffer + serde::de::DeserializeOwned,
+{
+    const SCHEMA: Option<SchemaInfo> = Some(SchemaInfo {
+        name: T::SCHEMA_NAME,
+        fields: T::SCHEMA_FIELDS,
+    });
+
+    fn from_body(bytes: bytes::Bytes, codec: Codec) -> Result<Self, Error> {
+        match codec {
+            Codec::Json => serde_json::from_slice(&bytes).map_err(|e| {
+                Error::DeserializationError(format!("JSON deserialization error: {e}"))
+            }),
+            Codec::FlatBuffer => T::from_flatbuffer(&bytes).map_err(|e| {
+                Error::DeserializationError(format!("FlatBuffer deserialization error: {e}"))
+            }),
+        }
+    }
+}
+
+/// A request body kept as sent, for a route that forwards it untouched.
+///
+/// The request still needs a JSON or FlatBuffers content type for a method
+/// that carries a body; nothing is decoded and the bytes are not copied after
+/// they are read. A request with neither content type (a GET, say) holds
+/// `{}`.
+///
+/// ```rust,ignore
+/// #[route("/v1/responses", method = "POST", max_body = 25 * 1024 * 1024)]
+/// async fn responses(req: Request<Passthrough>) -> Result<Response<()>, FlatbedRouteError> {
+///     let upstream = forward(req.body.0).await?;
+///     Ok(Response::stream("text/event-stream", upstream.bytes_stream()))
+/// }
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Passthrough(pub bytes::Bytes);
+
+impl FromBody for Passthrough {
+    const SCHEMA: Option<SchemaInfo> = None;
+
+    fn from_body(bytes: bytes::Bytes, _codec: Codec) -> Result<Self, Error> {
+        Ok(Self(bytes))
+    }
+}
+
 /// Trait connecting FlatBuffer types to their plain struct companions
 ///
 /// This allows the `#[route]` macro to discover the plain struct type

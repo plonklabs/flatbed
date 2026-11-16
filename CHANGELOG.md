@@ -36,6 +36,12 @@ contain breaking changes during the pre-1.0 stabilization window.
   hyper closes the HTTP/1.1 connection, so a client still sending sees a
   reset; one that sends `Expect: 100-continue` reads the `413` before sending
   a byte. `RouteInfo.max_body` carries the route's limit.
+- `Request<Passthrough>`: a route receives the request body as sent, as
+  `Passthrough(pub Bytes)`, without decoding it and without a copy after it
+  is read. The `415` rule stays: a body needs a JSON or FlatBuffers content
+  type. Request bodies go through the new `FromBody` trait, implemented for
+  every generated type and for `Passthrough`; `#[nats_route]` refuses
+  `Passthrough` at compile time.
 
 ### Changed
 

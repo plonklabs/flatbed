@@ -127,19 +127,6 @@ impl Parse for RouteAttrs {
     }
 }
 
-/// Helper to extract the type name without module path and lifetime parameters
-fn extract_type_name(ty: &Type) -> String {
-    let full = ty.to_token_stream().to_string();
-    // Extract just the type name (last segment of path), removing any lifetime params
-    let name = full.split("::").last().unwrap_or(&full).trim();
-    // Remove lifetime parameters like <'a> or <'_>
-    if let Some(idx) = name.find('<') {
-        name[..idx].trim().to_string()
-    } else {
-        name.to_string()
-    }
-}
-
 /// Extract the inner type from Arc<C>
 fn extract_arc_inner_type(ty: &Type) -> Option<Type> {
     let Type::Path(type_path) = ty else {
@@ -425,7 +412,6 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Extract type names for metadata
     let body_type_str = body_type.to_token_stream().to_string();
-    let body_type_name = extract_type_name(body_type);
     let response_body_type_name = {
         let full = response_body_type_str;
         let name = full.split("::").last().unwrap_or(full).trim();
@@ -459,8 +445,6 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
         None => quote! { None },
     };
 
-    // Schema names for OpenAPI
-    let request_schema_name = body_type_name.clone();
     let response_schema_name = response_body_type_name;
 
     // Generate context extraction code based on whether handler uses context
@@ -529,36 +513,16 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                     None => is_flatbuffer,
                 };
 
-                // Deserialize request body
-                let request_body: #body_type = if is_json {
-                    match ::flatbed::serde_json::from_slice(&body) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            return Err(::flatbed::Error::DeserializationError(
-                                format!("JSON deserialization error: {}", e)
-                            ));
-                        }
-                    }
+                // A request with neither content type (a GET, say) decodes as `{}`.
+                let (request_bytes, request_codec) = if is_json {
+                    (body, ::flatbed::Codec::Json)
                 } else if is_flatbuffer {
-                    match #body_type::from_flatbuffer(&body) {
-                        Ok(b) => b,
-                        Err(e) => {
-                            return Err(::flatbed::Error::DeserializationError(
-                                format!("FlatBuffer deserialization error: {}", e)
-                            ));
-                        }
-                    }
+                    (body, ::flatbed::Codec::FlatBuffer)
                 } else {
-                    // Empty body for methods that don't require one
-                    match ::flatbed::serde_json::from_slice(b"{}") {
-                        Ok(b) => b,
-                        Err(e) => {
-                            return Err(::flatbed::Error::DeserializationError(
-                                format!("Empty body deserialization error: {}", e)
-                            ));
-                        }
-                    }
+                    (::flatbed::bytes::Bytes::from_static(b"{}"), ::flatbed::Codec::Json)
                 };
+                let request_body =
+                    <#body_type as ::flatbed::FromBody>::from_body(request_bytes, request_codec)?;
 
                 // Extract application context (if handler uses Request<T, C>)
                 #ctx_extraction
@@ -720,10 +684,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                     summary: #summary_token,
                     operation_id: #operation_id_token,
                     deprecated: #deprecated_token,
-                    request_schema: Some(::flatbed::SchemaInfo {
-                        name: #request_schema_name,
-                        fields: <#body_type as ::flatbed::ToFlatBuffer>::SCHEMA_FIELDS,
-                    }),
+                    request_schema: <#body_type as ::flatbed::FromBody>::SCHEMA,
                     response_schema: Some(::flatbed::SchemaInfo {
                         name: #response_schema_name,
                         fields: <#response_body_type as ::flatbed::ToFlatBuffer>::SCHEMA_FIELDS,
