@@ -818,7 +818,7 @@ pub trait FromBody: Sized {
 
     /// Build the body from the bytes read off the request, in `codec`;
     /// `None` when the request has neither a JSON nor a FlatBuffers content
-    /// type, as a GET usually has not.
+    /// type.
     ///
     /// # Errors
     ///
