@@ -87,6 +87,46 @@ async fn read_head(tcp: &mut tokio::net::TcpStream) -> String {
     String::from_utf8_lossy(&received).into_owned()
 }
 
+/// Declare a body of `len` bytes to `path` with
+/// `Expect: 100-continue`, send none of it, and read the answer's head.
+async fn expect_continue_head(port: u16, path: &str, len: usize, request_id: &str) -> String {
+    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nhost: localhost\r\ncontent-type: application/json\r\n\
+         content-length: {len}\r\nexpect: 100-continue\r\nx-request-id: {request_id}\r\n\r\n"
+    );
+    tcp.write_all(head.as_bytes()).await.unwrap();
+    read_head(&mut tcp).await
+}
+
+/// Send a chunked body of `total` bytes to `path` in 512-byte chunks,
+/// stopping when the server stops reading, and read the answer's head.
+async fn chunked_head(port: u16, path: &str, total: usize, request_id: &str) -> String {
+    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .unwrap();
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nhost: localhost\r\ncontent-type: application/json\r\n\
+         transfer-encoding: chunked\r\nx-request-id: {request_id}\r\n\r\n"
+    );
+    tcp.write_all(head.as_bytes()).await.unwrap();
+    let chunk = json_body(SERVICE_LIMIT / 2);
+    for _ in 0..total.div_ceil(chunk.len()) {
+        let framed = [
+            format!("{:x}\r\n", chunk.len()).into_bytes(),
+            chunk.clone(),
+            b"\r\n".to_vec(),
+        ]
+        .concat();
+        if tcp.write_all(&framed).await.is_err() {
+            break;
+        }
+    }
+    read_head(&mut tcp).await
+}
+
 #[tokio::test]
 async fn a_body_at_the_limit_passes_and_one_byte_over_is_413() {
     let port = serve().await;
@@ -119,6 +159,11 @@ async fn a_route_max_body_overrides_the_service_limit() {
         post(port, "/upload", json_body(ROUTE_LIMIT)).await.status(),
         200
     );
+
+    let declared = expect_continue_head(port, "/upload", ROUTE_LIMIT + 1, "route-declared").await;
+    assert!(declared.starts_with("HTTP/1.1 413"), "{declared}");
+    let chunked = chunked_head(port, "/upload", ROUTE_LIMIT + 1024, "route-chunked").await;
+    assert!(chunked.starts_with("HTTP/1.1 413"), "{chunked}");
 }
 
 #[tokio::test]
@@ -149,17 +194,7 @@ async fn a_413_speaks_the_request_wire_format() {
 async fn a_declared_upload_over_the_limit_is_413_before_a_body_byte_with_expect_continue() {
     let port = serve().await;
 
-    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .unwrap();
-    let head = format!(
-        "POST /upload HTTP/1.1\r\nhost: localhost\r\ncontent-type: application/json\r\n\
-         content-length: {}\r\nexpect: 100-continue\r\nx-request-id: limit-expect\r\n\r\n",
-        7 * 1024 * 1024
-    );
-    tcp.write_all(head.as_bytes()).await.unwrap();
-
-    let answer = read_head(&mut tcp).await;
+    let answer = expect_continue_head(port, "/upload", 7 * 1024 * 1024, "limit-expect").await;
     assert!(answer.starts_with("HTTP/1.1 413"), "{answer}");
     assert!(answer.contains("x-request-id: limit-expect"), "{answer}");
 }
@@ -187,26 +222,7 @@ async fn a_declared_upload_over_the_limit_without_expect_never_hangs() {
 async fn a_chunked_body_growing_past_the_limit_is_413() {
     let port = serve().await;
 
-    let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
-        .await
-        .unwrap();
-    let head = "POST /small HTTP/1.1\r\nhost: localhost\r\ncontent-type: application/json\r\n\
-                transfer-encoding: chunked\r\nx-request-id: limit-chunked\r\n\r\n";
-    tcp.write_all(head.as_bytes()).await.unwrap();
-    let chunk = json_body(SERVICE_LIMIT / 2);
-    for _ in 0..3 {
-        let framed = [
-            format!("{:x}\r\n", chunk.len()).into_bytes(),
-            chunk.clone(),
-            b"\r\n".to_vec(),
-        ]
-        .concat();
-        if tcp.write_all(&framed).await.is_err() {
-            break;
-        }
-    }
-
-    let answer = read_head(&mut tcp).await;
+    let answer = chunked_head(port, "/small", SERVICE_LIMIT * 3 / 2, "limit-chunked").await;
     assert!(answer.starts_with("HTTP/1.1 413"), "{answer}");
     assert!(answer.contains("x-request-id: limit-chunked"), "{answer}");
 }
