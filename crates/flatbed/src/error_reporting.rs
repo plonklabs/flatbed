@@ -45,7 +45,8 @@ use crate::FlatbedWorkerError;
 /// channel, background transport) rather than block on I/O. `flush` runs on
 /// a blocking thread.
 pub trait ErrorReporter: Send + Sync + 'static {
-    /// A route answered with a 5xx status. Never called for 4xx.
+    /// A route answered with a 5xx status, or a streamed reply failed after
+    /// its status (any status) was sent. Never called for a 4xx answer.
     fn route_error(&self, failure: &RouteFailure<'_>);
 
     /// A route handler or worker panicked and flatbed caught it.
@@ -102,7 +103,8 @@ pub struct RouteFailure<'a> {
     /// `None` when the answer carries no code. `STREAM_ERROR` for a streamed
     /// reply that failed, which puts no code on the wire.
     pub code: Option<&'a str>,
-    /// Error message put on the wire.
+    /// Error message put on the wire; for a streamed reply that failed, the
+    /// stream's error, which reaches no client.
     pub message: &'a str,
 }
 
