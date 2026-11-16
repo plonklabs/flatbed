@@ -41,7 +41,6 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 - BREAKING: request bodies are limited to 16 MiB by default
   (`DEFAULT_MAX_REQUEST_BODY`), where they were read whole with no limit.
-
 - BREAKING: `FlatbedService`'s `Response` is `http::Response<FlatbedBody>`
   (a boxed `UnsyncBoxBody<Bytes, BoxError>`), was `Response<Full<Bytes>>`.
 - BREAKING: `ResponseParts.body` is a `ReplyBody` (`Full(Vec<u8>)` or
