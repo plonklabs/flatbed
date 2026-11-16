@@ -151,6 +151,10 @@ required-features = ["openapi"]
 name = "serde_defaults"
 required-features = ["openapi"]
 
+[[test]]
+name = "streaming"
+required-features = ["openapi"]
+
 [[example]]
 name = "routes"
 required-features = ["openapi"]

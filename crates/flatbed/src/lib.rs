@@ -148,6 +148,43 @@ pub use include_dir;
 /// in every file that implements a Flatbed trait.
 pub type BoxFuture<T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send>>;
 
+/// The error a streamed reply body yields.
+pub type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+/// The body flatbed answers every HTTP request with.
+///
+/// `Send` but not `Sync`: hyper's connection driver needs no more, and a
+/// handler's stream (a `reqwest` byte stream, say) is rarely `Sync`.
+pub type FlatbedBody = http_body_util::combinators::UnsyncBoxBody<bytes::Bytes, BoxError>;
+
+/// Re-exported so a handler can name the chunk type of
+/// [`Response::stream`] without its own `bytes` dependency.
+pub use bytes;
+
+/// The body of a reply: bytes held whole, or a stream sent as it is
+/// produced.
+pub enum ReplyBody {
+    /// A body held whole in memory.
+    Full(Vec<u8>),
+    /// A body sent chunk by chunk, built by [`Response::stream`].
+    Stream(FlatbedBody),
+}
+
+impl std::fmt::Debug for ReplyBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Full(bytes) => f.debug_tuple("Full").field(bytes).finish(),
+            Self::Stream(_) => f.write_str("Stream(..)"),
+        }
+    }
+}
+
+impl From<Vec<u8>> for ReplyBody {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Full(bytes)
+    }
+}
+
 // Re-export http types so users don't need to add the dependency
 pub use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode};
 
@@ -945,7 +982,7 @@ pub struct Response<T> {
     pub status: StatusCode,
     /// Response headers
     pub headers: HeaderMap,
-    raw: Option<(Vec<u8>, Cow<'static, str>)>,
+    reply: Option<(ReplyBody, Cow<'static, str>)>,
 }
 
 impl<T> Response<T> {
@@ -955,7 +992,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::OK,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -965,7 +1002,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::CREATED,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -975,7 +1012,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::ACCEPTED,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -985,7 +1022,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::NO_CONTENT,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -995,7 +1032,7 @@ impl<T> Response<T> {
             body,
             status,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -1016,11 +1053,12 @@ impl<T> Response<T> {
         self
     }
 
-    /// Yields `Some((bytes, content_type))` only for a response constructed as a
-    /// raw response, and `None` for all other constructors.
+    /// Yields `Some((body, content_type))` only for a response constructed by
+    /// [`Response::raw`] or [`Response::stream`], and `None` for all other
+    /// constructors.
     #[doc(hidden)]
-    pub fn take_raw(&mut self) -> Option<(Vec<u8>, Cow<'static, str>)> {
-        self.raw.take()
+    pub fn take_body(&mut self) -> Option<(ReplyBody, Cow<'static, str>)> {
+        self.reply.take()
     }
 }
 
@@ -1045,7 +1083,42 @@ impl Response<()> {
             body: (),
             status: StatusCode::OK,
             headers: HeaderMap::new(),
-            raw: Some((bytes.into(), content_type.into())),
+            reply: Some((ReplyBody::Full(bytes.into()), content_type.into())),
+        }
+    }
+
+    /// Create a response that sends `stream`'s chunks under `content_type`
+    /// as the stream yields them, instead of buffering a whole body.
+    ///
+    /// The response owns the stream: when the client goes away, hyper drops
+    /// the body and the stream with it, so whatever the stream holds (an
+    /// upstream connection, say) is released then. An `Err` from the stream
+    /// aborts the transfer.
+    ///
+    /// ```rust,ignore
+    /// #[route("/v1/responses", method = "POST")]
+    /// async fn responses(req: Request<Prompt>) -> Result<Response<()>, FlatbedRouteError> {
+    ///     let upstream = call_provider(&req.body).await?;
+    ///     Ok(Response::stream("text/event-stream", upstream.bytes_stream()))
+    /// }
+    /// ```
+    pub fn stream<S, E>(content_type: impl Into<Cow<'static, str>>, stream: S) -> Self
+    where
+        S: futures::Stream<Item = Result<bytes::Bytes, E>> + Send + 'static,
+        E: Into<BoxError> + 'static,
+    {
+        use futures::TryStreamExt;
+        use http_body_util::BodyExt;
+
+        let frames = stream
+            .map_ok(::hyper::body::Frame::data)
+            .map_err(Into::into);
+        let body = http_body_util::StreamBody::new(frames).boxed_unsync();
+        Self {
+            body: (),
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            reply: Some((ReplyBody::Stream(body), content_type.into())),
         }
     }
 }
@@ -1284,8 +1357,8 @@ impl RequestParts {
 /// Parts for constructing an HTTP response (used internally by macro)
 #[derive(Debug)]
 pub struct ResponseParts {
-    /// Response body bytes
-    pub body: Vec<u8>,
+    /// Response body
+    pub body: ReplyBody,
     /// HTTP status code
     pub status: StatusCode,
     /// Response headers
@@ -1296,9 +1369,9 @@ pub struct ResponseParts {
 
 impl ResponseParts {
     /// Create new ResponseParts with 200 OK status
-    pub fn ok(body: Vec<u8>, content_type: impl Into<Cow<'static, str>>) -> Self {
+    pub fn ok(body: impl Into<ReplyBody>, content_type: impl Into<Cow<'static, str>>) -> Self {
         Self {
-            body,
+            body: body.into(),
             status: StatusCode::OK,
             headers: HeaderMap::new(),
             content_type: content_type.into(),
@@ -1307,12 +1380,12 @@ impl ResponseParts {
 
     /// Create new ResponseParts with custom status
     pub fn with_status(
-        body: Vec<u8>,
+        body: impl Into<ReplyBody>,
         status: StatusCode,
         content_type: impl Into<Cow<'static, str>>,
     ) -> Self {
         Self {
-            body,
+            body: body.into(),
             status,
             headers: HeaderMap::new(),
             content_type: content_type.into(),
@@ -1581,7 +1654,7 @@ pub fn accepted_codec(headers: &HeaderMap) -> Option<Codec> {
 /// downcasted to the concrete type by the `#[route]` macro wrapper.
 pub type AsyncHandlerFn = fn(
     RequestParts,
-    Vec<u8>,
+    bytes::Bytes,
     &str,
     std::sync::Arc<dyn std::any::Any + Send + Sync>,
 ) -> std::pin::Pin<
@@ -3287,7 +3360,7 @@ mod tests {
     #[test]
     fn test_response_parts_ok() {
         let parts = ResponseParts::ok(vec![1, 2, 3], "application/json");
-        assert_eq!(parts.body, vec![1, 2, 3]);
+        assert!(matches!(parts.body, ReplyBody::Full(ref b) if b == &[1, 2, 3]));
         assert_eq!(parts.status, StatusCode::OK);
         assert_eq!(parts.content_type, "application/json");
     }
@@ -3303,22 +3376,22 @@ mod tests {
     fn test_response_raw() {
         let mut resp = Response::raw(b"<h1>hi</h1>".to_vec(), "text/html; charset=utf-8");
         assert_eq!(resp.status, StatusCode::OK);
-        let (bytes, content_type) = resp.take_raw().expect("raw payload set");
-        assert_eq!(bytes, b"<h1>hi</h1>");
+        let (body, content_type) = resp.take_body().expect("raw payload set");
+        assert!(matches!(body, ReplyBody::Full(ref b) if b == b"<h1>hi</h1>"));
         assert_eq!(content_type, "text/html; charset=utf-8");
     }
 
     #[test]
     fn test_response_ok_has_no_raw() {
         let mut resp = Response::ok(());
-        assert!(resp.take_raw().is_none());
+        assert!(resp.take_body().is_none());
     }
 
     #[test]
     fn test_response_raw_status_builder_preserves_raw() {
         let mut resp = Response::raw(b"data".to_vec(), "text/plain").status(StatusCode::CREATED);
         assert_eq!(resp.status, StatusCode::CREATED);
-        assert!(resp.take_raw().is_some(), "status() must preserve raw");
+        assert!(resp.take_body().is_some(), "status() must preserve raw");
     }
 
     #[test]

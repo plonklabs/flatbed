@@ -34,7 +34,7 @@ use tracing::{error, info, warn};
 use crate::error_reporting::{self, RouteFailure, RouteRequest, Transport};
 use crate::nats::HasNatsClient;
 use crate::{
-    FlatbedRouteError, FlatbedWorkerError, HeaderMap, HeaderName, HeaderValue, Response,
+    FlatbedRouteError, FlatbedWorkerError, HeaderMap, HeaderName, HeaderValue, ReplyBody, Response,
     ToFlatBuffer,
 };
 
@@ -245,8 +245,16 @@ pub fn reply_ok<T: ToFlatBuffer>(
     request_id: &str,
     mut response: Response<T>,
 ) -> NatsReply {
-    let (payload, content_type) = match response.take_raw() {
-        Some((bytes, raw_content_type)) => (bytes, raw_content_type.into_owned()),
+    let (payload, content_type) = match response.take_body() {
+        Some((ReplyBody::Full(bytes), raw_content_type)) => (bytes, raw_content_type.into_owned()),
+        Some((ReplyBody::Stream(_), _)) => {
+            return reply_err(
+                encoding,
+                request_id,
+                &FlatbedRouteError::internal("a NATS reply cannot be streamed")
+                    .code(STREAM_NOT_SUPPORTED),
+            )
+        }
         None if encoding == NatsEncoding::Json => match serde_json::to_vec(&response.body) {
             Ok(bytes) => (bytes, encoding.content_type().to_string()),
             Err(e) => {
@@ -273,6 +281,10 @@ pub fn reply_ok<T: ToFlatBuffer>(
 
     NatsReply { payload, headers }
 }
+
+/// The code a handler's [`Response::stream`] is answered with: a NATS reply
+/// is one message, so the stream is dropped unpolled.
+pub const STREAM_NOT_SUPPORTED: &str = "STREAM_NOT_SUPPORTED";
 
 #[derive(serde::Serialize)]
 struct ErrorBody<'a, D: serde::Serialize> {
@@ -740,6 +752,48 @@ mod tests {
         assert_eq!(
             reports_for("nats-5xx"),
             vec![expected("route_error", "nats-5xx", "503 STORE_DOWN")]
+        );
+    }
+
+    fn streaming_handler(
+        parts: NatsRequestParts,
+        _: Vec<u8>,
+        _: Arc<dyn Any + Send + Sync>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = NatsReply> + Send>> {
+        Box::pin(async move {
+            let never_polled = futures::stream::poll_fn(
+                |_| -> std::task::Poll<Option<Result<bytes::Bytes, std::io::Error>>> {
+                    panic!("a NATS reply polled the stream")
+                },
+            );
+            reply_ok(
+                parts.encoding,
+                &parts.request_id,
+                Response::stream("text/event-stream", never_polled),
+            )
+        })
+    }
+
+    #[tokio::test]
+    async fn a_streamed_reply_is_answered_with_stream_not_supported_and_reported_once() {
+        recorder();
+        let reply = dispatch_to(streaming_handler, "nats-stream").await;
+        assert_eq!(
+            header_value(&reply.headers, ERROR_CODE_HEADER),
+            Some(STREAM_NOT_SUPPORTED)
+        );
+        assert_eq!(
+            header_value(&reply.headers, ERROR_STATUS_HEADER),
+            Some("500")
+        );
+
+        assert_eq!(
+            reports_for("nats-stream"),
+            vec![expected(
+                "route_error",
+                "nats-stream",
+                "500 STREAM_NOT_SUPPORTED"
+            )]
         );
     }
 

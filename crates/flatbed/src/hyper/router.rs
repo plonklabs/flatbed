@@ -24,7 +24,7 @@ pub struct RouteEntry {
 /// returns response parts.
 pub type HandlerFn = fn(
     crate::RequestParts,
-    Vec<u8>,
+    bytes::Bytes,
     &str,
     std::sync::Arc<dyn std::any::Any + Send + Sync>,
 ) -> std::pin::Pin<

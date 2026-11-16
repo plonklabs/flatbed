@@ -153,6 +153,14 @@ fn extension(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ReplyBody;
+
+    fn bytes(parts: &ResponseParts) -> &[u8] {
+        let ReplyBody::Full(bytes) = &parts.body else {
+            panic!("a static file is served whole");
+        };
+        bytes
+    }
 
     #[test]
     fn strip_mount_root() {
@@ -263,7 +271,7 @@ mod tests {
     async fn serves_existing_asset_with_type() {
         let route = fixture("asset");
         let parts = serve_one(&route, "/assets/app.js").await.expect("hit");
-        assert_eq!(parts.body, b"console.log(1)");
+        assert_eq!(bytes(&parts), b"console.log(1)");
         assert_eq!(parts.content_type, "text/javascript; charset=utf-8");
     }
 
@@ -272,7 +280,7 @@ mod tests {
         let route = fixture("root");
         let parts = serve_one(&route, "/").await.expect("fallback");
         assert_eq!(parts.content_type, "text/html; charset=utf-8");
-        assert!(parts.body.starts_with(b"<!doctype"));
+        assert!(bytes(&parts).starts_with(b"<!doctype"));
     }
 
     #[tokio::test]
@@ -327,7 +335,7 @@ mod tests {
             },
         ];
         let parts = serve(&routes, "/app.js").await.expect("hit");
-        assert_eq!(parts.body, b"first");
+        assert_eq!(bytes(&parts), b"first");
     }
 
     #[tokio::test]
@@ -377,7 +385,7 @@ mod tests {
         let route = embedded("/", Some("index.html"));
         let parts = serve_one(&route, "/app.js").await.expect("hit");
         assert_eq!(
-            parts.body,
+            bytes(&parts),
             std::fs::read("tests/static_fixture/app.js").unwrap()
         );
         assert_eq!(parts.content_type, "text/javascript; charset=utf-8");
@@ -393,7 +401,7 @@ mod tests {
         for path in ["/", "/dashboard", "/v2.0"] {
             let parts = serve_one(&route, path).await.expect(path);
             assert_eq!(parts.content_type, "text/html; charset=utf-8", "{path}");
-            assert!(parts.body.starts_with(b"<!doctype"), "{path}");
+            assert!(bytes(&parts).starts_with(b"<!doctype"), "{path}");
             assert_eq!(parts.headers.get("cache-control").unwrap(), "no-cache");
         }
     }

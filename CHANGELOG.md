@@ -9,6 +9,29 @@ contain breaking changes during the pre-1.0 stabilization window.
 
 ## [Unreleased]
 
+### Added
+
+- `Response::stream(content_type, stream)` sends a reply chunk by chunk as a
+  `Stream<Item = Result<Bytes, E>>` yields it, instead of buffering a whole
+  body. The response owns the stream, so a client that goes away drops it.
+  A HEAD on a streaming route answers without polling the stream and without
+  `content-length`. A `#[nats_route]` handler returning one is answered with
+  a 500 `STREAM_NOT_SUPPORTED` reply, reported once, and the stream is
+  dropped unpolled. New types: `ReplyBody`, `FlatbedBody`, `BoxError`;
+  `flatbed::bytes` is re-exported.
+
+### Changed
+
+- BREAKING: `FlatbedService`'s `Response` is `http::Response<FlatbedBody>`
+  (a boxed `UnsyncBoxBody<Bytes, BoxError>`), was `Response<Full<Bytes>>`.
+- BREAKING: `ResponseParts.body` is a `ReplyBody` (`Full(Vec<u8>)` or
+  `Stream(FlatbedBody)`), was `Vec<u8>`. `ResponseParts::ok` and
+  `with_status` take `impl Into<ReplyBody>`, so a `Vec<u8>` still works.
+- BREAKING: `Response::take_raw` is `take_body` and yields a `ReplyBody`.
+- BREAKING: `AsyncHandlerFn` and `hyper::HandlerFn` take the request body as
+  `Bytes`, was `Vec<u8>`; the body reaches the handler without a copy after
+  it is read.
+
 ## [0.0.12] — 2026-11-07
 
 ### Added

@@ -18,9 +18,16 @@ async fn echo(req: Request<Ingest>) -> Result<Response<Ingest>, FlatbedRouteErro
 async fn call_echo(body: Vec<u8>, content_type: &str) -> flatbed::ResponseParts {
     let parts = flatbed::RequestParts::new(flatbed::Method::POST, "/ingest".to_string());
     let ctx: std::sync::Arc<dyn std::any::Any + Send + Sync> = std::sync::Arc::new(());
-    __hyper_handler_echo(parts, body, content_type, ctx)
+    __hyper_handler_echo(parts, body.into(), content_type, ctx)
         .await
         .expect("echo route succeeds")
+}
+
+fn full_body(parts: &flatbed::ResponseParts) -> &[u8] {
+    let flatbed::ReplyBody::Full(bytes) = &parts.body else {
+        panic!("a typed reply is built whole");
+    };
+    bytes
 }
 
 fn mail_ingest() -> Ingest {
@@ -183,12 +190,12 @@ async fn a_route_echoes_union_and_flags_in_both_codecs() {
 
     let json_response = call_echo(serde_json::to_vec(&original).unwrap(), "application/json").await;
     assert_eq!(json_response.content_type, "application/json");
-    let echoed: Ingest = serde_json::from_slice(&json_response.body).unwrap();
+    let echoed: Ingest = serde_json::from_slice(full_body(&json_response)).unwrap();
     assert_eq!(echoed, original);
 
     let fb_response = call_echo(original.to_flatbuffer(), "application/x-flatbuffers").await;
     assert_eq!(
-        Ingest::from_flatbuffer(&fb_response.body).unwrap(),
+        Ingest::from_flatbuffer(full_body(&fb_response)).unwrap(),
         original
     );
 }
