@@ -159,6 +159,7 @@ mod tests {
                     Box::pin(async { Err(crate::Error::Custom("test".into())) })
                 },
                 openapi: OpenApiRouteInfo::default(),
+                max_body: None,
             },
             handler: |_, _, _, _| Box::pin(async { Err(crate::Error::Custom("test".into())) }),
         }

@@ -55,6 +55,7 @@ struct RouteAttrs {
     summary: Option<LitStr>,
     operation_id: Option<LitStr>,
     deprecated: bool,
+    max_body: Option<syn::Expr>,
 }
 
 impl Parse for RouteAttrs {
@@ -70,6 +71,7 @@ impl Parse for RouteAttrs {
             summary: None,
             operation_id: None,
             deprecated: false,
+            max_body: None,
         };
 
         // Parse optional key = value attributes
@@ -108,6 +110,9 @@ impl Parse for RouteAttrs {
                 "deprecated" => {
                     let val: LitBool = input.parse()?;
                     attrs.deprecated = val.value();
+                }
+                "max_body" => {
+                    attrs.max_body = Some(input.parse()?);
                 }
                 _ => {
                     return Err(syn::Error::new(
@@ -278,6 +283,9 @@ fn parse_response_type(ty: &Type) -> Option<ResponseTypeInfo> {
 /// - `summary` (optional): Short description
 /// - `operation_id` (optional): Unique operation identifier
 /// - `deprecated` (optional): Mark as deprecated (default: false)
+/// - `max_body` (optional): The largest request body this route reads, in
+///   bytes, overriding `FlatbedConfig::max_request_body`; any constant
+///   `usize` expression, such as `25 * 1024 * 1024`
 ///
 /// # Example
 ///
@@ -446,6 +454,10 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
         None => quote! { None },
     };
     let deprecated_token = attrs.deprecated;
+    let max_body_token = match &attrs.max_body {
+        Some(expr) => quote! { Some({ const MAX_BODY: usize = #expr; MAX_BODY }) },
+        None => quote! { None },
+    };
 
     // Schema names for OpenAPI
     let request_schema_name = body_type_name.clone();
@@ -717,6 +729,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                         fields: <#response_body_type as ::flatbed::ToFlatBuffer>::SCHEMA_FIELDS,
                     }),
                 },
+                max_body: #max_body_token,
             }
         }
     };

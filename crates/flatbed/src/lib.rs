@@ -142,6 +142,9 @@ pub use utoipa;
 #[doc(hidden)]
 pub use include_dir;
 
+/// The request body limit a [`FlatbedConfig`] starts with: 16 MiB.
+pub const DEFAULT_MAX_REQUEST_BODY: usize = 16 * 1024 * 1024;
+
 /// Boxed, Send future alias for trait return types.
 ///
 /// Eliminates the need for `use std::future::Future; use std::pin::Pin;`
@@ -247,6 +250,9 @@ pub struct FlatbedConfig {
     /// Receives the server failures flatbed observes (see
     /// [`FlatbedConfig::with_error_reporter`]).
     pub error_reporter: Option<Arc<dyn ErrorReporter>>,
+    /// The largest request body a route reads, in bytes, unless the route
+    /// sets its own `max_body` (see [`FlatbedConfig::max_request_body`]).
+    pub max_request_body: usize,
     /// Telemetry service for health endpoints (when telemetry feature is enabled)
     #[cfg(feature = "telemetry")]
     pub telemetry: Option<Arc<dyn TelemetryService>>,
@@ -264,6 +270,7 @@ impl Default for FlatbedConfig {
             before_request: None,
             readiness: Readiness::new(),
             error_reporter: None,
+            max_request_body: DEFAULT_MAX_REQUEST_BODY,
             #[cfg(feature = "telemetry")]
             telemetry: None,
         }
@@ -288,7 +295,8 @@ impl fmt::Debug for FlatbedConfig {
             .field(
                 "error_reporter",
                 &self.error_reporter.as_ref().map(|_| "<ErrorReporter>"),
-            );
+            )
+            .field("max_request_body", &self.max_request_body);
         #[cfg(feature = "telemetry")]
         debug.field(
             "telemetry",
@@ -401,6 +409,22 @@ impl FlatbedConfig {
     /// supplies it for all of them.
     pub fn with_error_reporter(mut self, reporter: Arc<dyn ErrorReporter>) -> Self {
         self.error_reporter = Some(reporter);
+        self
+    }
+
+    /// Set the largest request body a route reads, in bytes (default
+    /// [`DEFAULT_MAX_REQUEST_BODY`], 16 MiB). A route's own
+    /// `#[route(.., max_body = ..)]` overrides it.
+    ///
+    /// A request past the limit is answered `413` with code
+    /// `PAYLOAD_TOO_LARGE`: before the body is read when its
+    /// `content-length` says so, or as soon as a chunked body grows past it.
+    /// An early `413` leaves the body unread, so hyper closes the HTTP/1.1
+    /// connection after answering and a client still sending sees a reset;
+    /// a client that sends `Expect: 100-continue` reads the `413` before
+    /// sending a byte.
+    pub fn max_request_body(mut self, bytes: usize) -> Self {
+        self.max_request_body = bytes;
         self
     }
 
@@ -1704,6 +1728,9 @@ pub struct RouteInfo {
     pub handler: HandlerFn,
     pub async_handler: AsyncHandlerFn,
     pub openapi: OpenApiRouteInfo,
+    /// The route's own request body limit, overriding
+    /// [`FlatbedConfig::max_request_body`].
+    pub max_body: Option<usize>,
 }
 
 // Manual Debug implementation to avoid printing function pointers
@@ -1717,6 +1744,7 @@ impl std::fmt::Debug for RouteInfo {
             .field("handler", &"<function>")
             .field("async_handler", &"<async_function>")
             .field("openapi", &self.openapi)
+            .field("max_body", &self.max_body)
             .finish()
     }
 }

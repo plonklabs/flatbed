@@ -27,9 +27,20 @@ contain breaking changes during the pre-1.0 stabilization window.
   status already sent and the error's message, and aborts the transfer: the
   HTTP/1.1 connection closes without the final chunk, the HTTP/2 stream is
   reset.
+- A request body limit: `FlatbedConfig::max_request_body(bytes)` service-wide
+  and `#[route(.., max_body = ..)]` per route, any constant `usize`
+  expression such as `25 * 1024 * 1024`. A body past it is answered `413`
+  with code `PAYLOAD_TOO_LARGE`, `x-request-id` and the request's wire
+  format: before the body is read when `content-length` declares it, as soon
+  as a chunked body grows past it. An early `413` leaves the body unread and
+  hyper closes the HTTP/1.1 connection, so a client still sending sees a
+  reset; one that sends `Expect: 100-continue` reads the `413` before sending
+  a byte. `RouteInfo.max_body` carries the route's limit.
 
 ### Changed
 
+- BREAKING: request bodies are limited to 16 MiB by default
+  (`DEFAULT_MAX_REQUEST_BODY`), where they were read whole with no limit.
 - BREAKING: `FlatbedService`'s `Response` is `http::Response<FlatbedBody>`
   (a boxed `UnsyncBoxBody<Bytes, BoxError>`), was `Response<Full<Bytes>>`.
 - BREAKING: `ResponseParts.body` is a `ReplyBody` (`Full(Vec<u8>)` or
