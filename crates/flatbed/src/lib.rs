@@ -816,12 +816,14 @@ pub trait FromBody: Sized {
     /// The body's schema in `/openapi.json`; `None` for an opaque body.
     const SCHEMA: Option<SchemaInfo>;
 
-    /// Build the body from the bytes read off the request, in `codec`.
+    /// Build the body from the bytes read off the request, in `codec`;
+    /// `None` when the request has neither a JSON nor a FlatBuffers content
+    /// type, as a GET usually has not.
     ///
     /// # Errors
     ///
     /// Returns [`Error::DeserializationError`] when the bytes do not decode.
-    fn from_body(bytes: bytes::Bytes, codec: Codec) -> Result<Self, Error>;
+    fn from_body(bytes: bytes::Bytes, codec: Option<Codec>) -> Result<Self, Error>;
 }
 
 impl<T> FromBody for T
@@ -833,7 +835,13 @@ where
         fields: T::SCHEMA_FIELDS,
     });
 
-    fn from_body(bytes: bytes::Bytes, codec: Codec) -> Result<Self, Error> {
+    /// Without a content type the bytes are ignored and the body is the
+    /// type's `{}`.
+    fn from_body(bytes: bytes::Bytes, codec: Option<Codec>) -> Result<Self, Error> {
+        let (bytes, codec) = match codec {
+            Some(codec) => (bytes, codec),
+            None => (bytes::Bytes::from_static(b"{}"), Codec::Json),
+        };
         match codec {
             Codec::Json => serde_json::from_slice(&bytes).map_err(|e| {
                 Error::DeserializationError(format!("JSON deserialization error: {e}"))
@@ -849,8 +857,7 @@ where
 ///
 /// The request still needs a JSON or FlatBuffers content type for a method
 /// that carries a body; nothing is decoded and the bytes are not copied after
-/// they are read. A request with neither content type (a GET, say) holds
-/// `{}`.
+/// they are read.
 ///
 /// ```rust,ignore
 /// #[route("/v1/responses", method = "POST", max_body = 25 * 1024 * 1024)]
@@ -865,7 +872,7 @@ pub struct Passthrough(pub bytes::Bytes);
 impl FromBody for Passthrough {
     const SCHEMA: Option<SchemaInfo> = None;
 
-    fn from_body(bytes: bytes::Bytes, _codec: Codec) -> Result<Self, Error> {
+    fn from_body(bytes: bytes::Bytes, _codec: Option<Codec>) -> Result<Self, Error> {
         Ok(Self(bytes))
     }
 }

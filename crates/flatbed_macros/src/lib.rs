@@ -513,16 +513,15 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                     None => is_flatbuffer,
                 };
 
-                // A request with neither content type (a GET, say) decodes as `{}`.
-                let (request_bytes, request_codec) = if is_json {
-                    (body, ::flatbed::Codec::Json)
+                let request_codec = if is_json {
+                    Some(::flatbed::Codec::Json)
                 } else if is_flatbuffer {
-                    (body, ::flatbed::Codec::FlatBuffer)
+                    Some(::flatbed::Codec::FlatBuffer)
                 } else {
-                    (::flatbed::bytes::Bytes::from_static(b"{}"), ::flatbed::Codec::Json)
+                    None
                 };
                 let request_body =
-                    <#body_type as ::flatbed::FromBody>::from_body(request_bytes, request_codec)?;
+                    <#body_type as ::flatbed::FromBody>::from_body(body, request_codec)?;
 
                 // Extract application context (if handler uses Request<T, C>)
                 #ctx_extraction

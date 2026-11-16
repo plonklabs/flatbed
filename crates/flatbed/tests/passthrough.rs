@@ -19,6 +19,14 @@ async fn echo(req: Request<Passthrough>) -> Result<Response<()>, FlatbedRouteErr
     ))
 }
 
+#[route("/echo", method = "GET")]
+async fn echo_get(req: Request<Passthrough>) -> Result<Response<()>, FlatbedRouteError> {
+    Ok(Response::raw(
+        req.body.0.to_vec(),
+        "application/octet-stream",
+    ))
+}
+
 #[tokio::test]
 async fn the_handler_holds_the_bytes_it_was_given() {
     for content_type in ["application/json", "application/x-flatbuffers"] {
@@ -76,4 +84,11 @@ async fn a_passthrough_route_echoes_the_body_as_sent() {
 
     let refused = send("text/plain", b"hello").await.unwrap();
     assert_eq!(refused.status(), 415);
+
+    let get = client.get(&url).send().await.unwrap();
+    assert_eq!(get.status(), 200);
+    assert!(
+        get.bytes().await.unwrap().is_empty(),
+        "a GET holds no bytes"
+    );
 }
