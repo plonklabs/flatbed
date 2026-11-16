@@ -19,9 +19,7 @@ const spec = {
     },
     // JSON-only — not advertising x-flatbuffers, so skipped.
     "/health": { get: { responses: { "200": { content: { "application/json": json("Health") } } } } },
-    // A streamed route: its success response sends a media type that is
-    // neither JSON nor FlatBuffers, so it is skipped though its request speaks
-    // FlatBuffers.
+    // A streamed route — sends text/event-stream, so skipped.
     "/v1/responses": {
       post: {
         requestBody: { content: { "application/json": json("TestRequest"), "application/x-flatbuffers": fb } },

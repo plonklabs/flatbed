@@ -196,12 +196,13 @@ fn operation_body_references_component_and_keeps_both_content_types() {
 fn a_produces_route_lists_exactly_its_media_types_opaquely() {
     let s = spec();
     let content = &s["paths"]["/v1/responses"]["post"]["responses"]["200"]["content"];
-    let media_types: Vec<&str> = content
+    let mut media_types: Vec<&str> = content
         .as_object()
         .unwrap()
         .keys()
         .map(String::as_str)
         .collect();
+    media_types.sort_unstable();
     assert_eq!(media_types, ["application/json", "text/event-stream"]);
     assert_eq!(content["application/json"]["schema"], serde_json::json!({}));
     assert_eq!(
