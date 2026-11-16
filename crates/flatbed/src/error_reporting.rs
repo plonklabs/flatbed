@@ -5,7 +5,8 @@
 //! flatbed calls it for every server-side failure it observes:
 //!
 //! - a `#[route]` or `#[nats_route]` handler failing with a 5xx status, or the
-//!   framework answering a matched route with one ([`ErrorReporter::route_error`]);
+//!   framework answering a matched route with one, or a streamed reply failing
+//!   after its status was sent ([`ErrorReporter::route_error`]);
 //! - a route handler or worker panicking ([`ErrorReporter::panic`]);
 //! - a worker returning `Err`, exiting, or exhausting its restart policy
 //!   ([`ErrorReporter::worker_failure`]).
@@ -170,7 +171,7 @@ fn reporter() -> Option<&'static dyn ErrorReporter> {
     REPORTER.get().map(|reporter| &**reporter)
 }
 
-/// Report and log a 5xx answer to a route.
+/// Report and log a 5xx answer to a route, or a streamed reply that failed.
 pub(crate) fn route_error(failure: &RouteFailure<'_>) {
     let reporter = reporter();
     if let Some(reporter) = reporter {
