@@ -1,7 +1,7 @@
 name: Build flatbed binary
 
 # Publishes the `flatbed` codegen helper as a standalone binary in a
-# GitHub Release. Two trigger paths:
+# GitHub Release. Three trigger paths:
 #
 #   - push a `flatbed-vX.Y.Z` tag → cuts a versioned release with the
 #     linux (amd64 + arm64) and darwin (arm64) binaries and their sha256
