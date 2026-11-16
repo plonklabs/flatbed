@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { readOperations } from "./read-openapi.js";
+import { readOperations, readSkipped } from "./read-openapi.js";
 
 const fb = { schema: { type: "string" } };
 const json = (ref: string) => ({ schema: { $ref: `#/components/schemas/${ref}` } });
@@ -19,6 +19,15 @@ const spec = {
     },
     // JSON-only — not advertising x-flatbuffers, so skipped.
     "/health": { get: { responses: { "200": { content: { "application/json": json("Health") } } } } },
+    // A streamed route — sends text/event-stream, so skipped.
+    "/v1/responses": {
+      post: {
+        requestBody: { content: { "application/json": json("TestRequest"), "application/x-flatbuffers": fb } },
+        responses: {
+          "200": { content: { "text/event-stream": { schema: { type: "string" } }, "application/json": { schema: {} } } },
+        },
+      },
+    },
     // Success under a non-200 code, response-only (no request body).
     "/users/{id}": {
       get: {
@@ -35,6 +44,10 @@ test("picks only operations advertising application/x-flatbuffers", () => {
     readOperations(spec).map((o) => `${o.method} ${o.path}`),
     ["POST /echo", "GET /users/{id}"],
   );
+});
+
+test("names an operation skipped for sending neither JSON nor FlatBuffers", () => {
+  assert.deepEqual(readSkipped(spec), ["POST /v1/responses (sends text/event-stream)"]);
 });
 
 test("parses operationId and $ref request/response types", () => {

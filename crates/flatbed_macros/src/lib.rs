@@ -56,6 +56,7 @@ struct RouteAttrs {
     operation_id: Option<LitStr>,
     deprecated: bool,
     max_body: Option<syn::Expr>,
+    produces: Option<LitStr>,
 }
 
 impl Parse for RouteAttrs {
@@ -72,6 +73,7 @@ impl Parse for RouteAttrs {
             operation_id: None,
             deprecated: false,
             max_body: None,
+            produces: None,
         };
 
         // Parse optional key = value attributes
@@ -113,6 +115,9 @@ impl Parse for RouteAttrs {
                 }
                 "max_body" => {
                     attrs.max_body = Some(input.parse()?);
+                }
+                "produces" => {
+                    attrs.produces = Some(input.parse()?);
                 }
                 _ => {
                     return Err(syn::Error::new(
@@ -273,6 +278,10 @@ fn parse_response_type(ty: &Type) -> Option<ResponseTypeInfo> {
 /// - `max_body` (optional): The largest request body this route reads, in
 ///   bytes, overriding `FlatbedConfig::max_request_body`; any constant
 ///   `usize` expression, such as `25 * 1024 * 1024`
+/// - `produces` (optional): The media types a raw or streamed route sends,
+///   comma-separated (`"text/event-stream, application/json"`), listed as
+///   the route's `200` in `/openapi.json` in place of the typed JSON and
+///   FlatBuffers entries
 ///
 /// # Example
 ///
@@ -440,6 +449,10 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
         None => quote! { None },
     };
     let deprecated_token = attrs.deprecated;
+    let produces_token = match &attrs.produces {
+        Some(p) => quote! { Some(#p) },
+        None => quote! { None },
+    };
     let max_body_token = match &attrs.max_body {
         Some(expr) => quote! { Some({ const MAX_BODY: usize = #expr; MAX_BODY }) },
         None => quote! { None },
@@ -684,6 +697,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                     operation_id: #operation_id_token,
                     deprecated: #deprecated_token,
                     request_schema: <#body_type as ::flatbed::FromBody>::SCHEMA,
+                    produces: #produces_token,
                     response_schema: Some(::flatbed::SchemaInfo {
                         name: #response_schema_name,
                         fields: <#response_body_type as ::flatbed::ToFlatBuffer>::SCHEMA_FIELDS,

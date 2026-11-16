@@ -968,6 +968,10 @@ pub struct OpenApiRouteInfo {
     pub deprecated: bool,
     pub request_schema: Option<SchemaInfo>,
     pub response_schema: Option<SchemaInfo>,
+    /// The media types a raw or streamed route sends, comma-separated, from
+    /// `#[route(.., produces = ..)]`. Set, they replace the typed JSON and
+    /// FlatBuffers entries of the route's `200` in `/openapi.json`.
+    pub produces: Option<&'static str>,
 }
 
 // Re-export the route macro from flatbed_macros
@@ -3030,6 +3034,36 @@ mod openapi_generation {
             .build()
     }
 
+    /// The `200` of a route declaring `produces`: one entry per media type,
+    /// each opaque, JSON as `{}` and any other as binary.
+    fn produced_response(produces: &str) -> utoipa::openapi::Response {
+        let media_types = produces
+            .split(',')
+            .map(str::trim)
+            .filter(|media_type| !media_type.is_empty());
+        media_types
+            .fold(
+                ResponseBuilder::new().description("Successful response"),
+                |response, media_type| {
+                    let schema = if media_type == "application/json" {
+                        ObjectBuilder::new()
+                            .schema_type(SchemaType::AnyValue)
+                            .build()
+                    } else {
+                        ObjectBuilder::new()
+                            .schema_type(SchemaType::new(Type::String))
+                            .format(Some(SchemaFormat::Custom("binary".to_string())))
+                            .build()
+                    };
+                    let content = ContentBuilder::new()
+                        .schema(Some(Schema::Object(schema)))
+                        .build();
+                    response.content(media_type, content)
+                },
+            )
+            .build()
+    }
+
     /// JSON content for a route body. Generated types reference their shared
     /// component by `$ref`; a hand-written `ToFlatBuffer` that never registered
     /// a component is inlined instead, so the `$ref` never dangles.
@@ -3094,21 +3128,24 @@ mod openapi_generation {
             .required(Some(Required::True))
             .build();
 
-        let response = ResponseBuilder::new()
-            .description("Successful response")
-            .content(
-                "application/json",
-                json_ref_content(
-                    route.openapi.response_schema.as_ref(),
-                    type_names,
-                    enum_names,
-                ),
-            )
-            .content(
-                "application/x-flatbuffers",
-                flatbuffers_content(route.openapi.response_schema.as_ref()),
-            )
-            .build();
+        let response = match route.openapi.produces {
+            Some(produces) => produced_response(produces),
+            None => ResponseBuilder::new()
+                .description("Successful response")
+                .content(
+                    "application/json",
+                    json_ref_content(
+                        route.openapi.response_schema.as_ref(),
+                        type_names,
+                        enum_names,
+                    ),
+                )
+                .content(
+                    "application/x-flatbuffers",
+                    flatbuffers_content(route.openapi.response_schema.as_ref()),
+                )
+                .build(),
+        };
 
         // Build operation
         let mut operation_builder = OperationBuilder::new()

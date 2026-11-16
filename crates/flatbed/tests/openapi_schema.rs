@@ -57,6 +57,16 @@ async fn notify(_req: Request<TestRequest>) -> Result<Response<HandWritten>, Fla
     Ok(Response::ok(HandWritten::default()))
 }
 
+#[route(
+    "/v1/responses",
+    method = "POST",
+    version = "v1",
+    produces = "text/event-stream, application/json"
+)]
+async fn responses(_req: Request<TestRequest>) -> Result<Response<()>, FlatbedRouteError> {
+    Ok(Response::raw(Vec::new(), "application/json"))
+}
+
 fn spec() -> Value {
     let config = FlatbedConfig::new("Test API");
     let json = flatbed::get_openapi_json_for_version(&config, "v1");
@@ -180,6 +190,25 @@ fn operation_body_references_component_and_keeps_both_content_types() {
     );
     assert!(post["requestBody"]["content"]["application/x-flatbuffers"].is_object());
     assert!(post["responses"]["200"]["content"]["application/x-flatbuffers"].is_object());
+}
+
+#[test]
+fn a_produces_route_lists_exactly_its_media_types_opaquely() {
+    let s = spec();
+    let content = &s["paths"]["/v1/responses"]["post"]["responses"]["200"]["content"];
+    let mut media_types: Vec<&str> = content
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    media_types.sort_unstable();
+    assert_eq!(media_types, ["application/json", "text/event-stream"]);
+    assert_eq!(content["application/json"]["schema"], serde_json::json!({}));
+    assert_eq!(
+        content["text/event-stream"]["schema"],
+        serde_json::json!({ "type": "string", "format": "binary" })
+    );
 }
 
 #[test]

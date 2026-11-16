@@ -34,9 +34,16 @@ const successContent = (op: Record<string, unknown>): unknown => {
   return code !== undefined ? asObject(responses[code])?.["content"] : undefined;
 };
 
+const WIRE_MEDIA_TYPES = new Set(["application/json", "application/x-flatbuffers"]);
+
+/** The media types the operation's success response sends besides JSON and FlatBuffers. */
+const foreignMediaTypes = (op: Record<string, unknown>): readonly string[] =>
+  Object.keys(asObject(successContent(op)) ?? {}).filter((type) => !WIRE_MEDIA_TYPES.has(type));
+
 const operationFrom = (method: string, path: string, op: Record<string, unknown>): Operation | undefined => {
   const request = asObject(op["requestBody"])?.["content"];
   const response = successContent(op);
+  if (foreignMediaTypes(op).length > 0) return undefined;
   if (!advertisesFlatbuffers(request) && !advertisesFlatbuffers(response)) return undefined;
   const operationId = op["operationId"];
   const supportsJson =
@@ -54,14 +61,30 @@ const operationFrom = (method: string, path: string, op: Record<string, unknown>
   };
 };
 
-/** The `application/x-flatbuffers` operations advertised by a parsed OpenAPI spec. */
-export const readOperations = (spec: unknown): readonly Operation[] =>
+/** Every operation of a parsed OpenAPI spec, as `[method, path, operation]`. */
+const allOperations = (spec: unknown): readonly (readonly [string, string, Record<string, unknown>])[] =>
   Object.entries(asObject(asObject(spec)?.["paths"]) ?? {}).flatMap(([path, item]) =>
     Object.entries(asObject(item) ?? {})
       .filter(([method]) => HTTP_METHODS.has(method))
       .flatMap(([method, op]) => {
         const parsed = asObject(op);
-        const found = parsed !== undefined ? operationFrom(method, path, parsed) : undefined;
-        return found !== undefined ? [found] : [];
+        return parsed !== undefined ? [[method, path, parsed] as const] : [];
       }),
   );
+
+/** The `application/x-flatbuffers` operations advertised by a parsed OpenAPI spec. */
+export const readOperations = (spec: unknown): readonly Operation[] =>
+  allOperations(spec).flatMap(([method, path, op]) => {
+    const found = operationFrom(method, path, op);
+    return found !== undefined ? [found] : [];
+  });
+
+/**
+ * The operations left out because their success response sends a media type
+ * that is neither JSON nor FlatBuffers (a stream, say), named with what they send.
+ */
+export const readSkipped = (spec: unknown): readonly string[] =>
+  allOperations(spec).flatMap(([method, path, op]) => {
+    const foreign = foreignMediaTypes(op);
+    return foreign.length > 0 ? [`${method.toUpperCase()} ${path} (sends ${foreign.join(", ")})`] : [];
+  });
