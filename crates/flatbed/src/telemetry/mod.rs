@@ -1,12 +1,12 @@
 //! Telemetry module for health endpoints and metrics.
 //!
 //! Defines the [`TelemetryService`] trait + supporting types
-//! ([`Counter`], [`Gauge`], [`GaugeVec`], [`MetricType`],
+//! ([`Counter`], [`CounterVec`], [`Gauge`], [`GaugeVec`], [`MetricType`],
 //! [`MetricValue`], [`TelemetryError`], [`TelemetryConfig`])
 //! consumers implement to plug a backend into a flatbed service. A
 //! Prometheus-backed implementation ships behind the `prometheus`
 //! feature flag at [`prometheus::PrometheusTelemetryService`];
-//! it covers counters and labeled gauges. Consumers needing
+//! it covers counters, labeled counters and labeled gauges. Consumers needing
 //! histograms supply their own backend.
 
 mod config;
@@ -18,6 +18,7 @@ mod types;
 pub use config::TelemetryConfig;
 pub use service::TelemetryService;
 pub use types::Counter;
+pub use types::CounterVec;
 pub use types::Gauge;
 pub use types::GaugeVec;
 pub use types::MetricType;

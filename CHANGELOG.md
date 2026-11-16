@@ -50,6 +50,11 @@ contain breaking changes during the pre-1.0 stabilization window.
 - `@plonklabs/flatbed-client` skips an operation whose success response
   sends a media type that is neither JSON nor FlatBuffers, and the CLI names
   each one it skips.
+- `TelemetryService::register_u64_counter_vec(name, help, label_names)`, the
+  counter twin of `register_u64_gauge_vec`, returning a `CounterVec<u64>`
+  whose `inc_by(label_values, value)` logs and skips a label-arity mismatch.
+  It defaults to `Err`; `PrometheusTelemetryService` implements it over
+  `IntCounterVec` with the service's constant labels.
 
 ### Changed
 

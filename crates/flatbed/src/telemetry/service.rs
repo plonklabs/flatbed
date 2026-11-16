@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use super::{Counter, GaugeVec, TelemetryConfig, TelemetryError};
+use super::{Counter, CounterVec, GaugeVec, TelemetryConfig, TelemetryError};
 
 /// Trait for telemetry services that collect and expose metrics.
 pub trait TelemetryService: Send + Sync {
@@ -44,6 +44,25 @@ pub trait TelemetryService: Send + Sync {
     ) -> Result<Arc<dyn GaugeVec<u64>>, TelemetryError> {
         Err(TelemetryError::RegisterGaugeError(
             "register_u64_gauge_vec not implemented for this TelemetryService backend".to_string(),
+        ))
+    }
+
+    /// Register a labeled counter metric with u64 values, the counter twin
+    /// of [`register_u64_gauge_vec`](Self::register_u64_gauge_vec):
+    /// `label_names` is the schema every `inc_by` must supply, in order,
+    /// and the const labels are attached by the backend.
+    ///
+    /// Defaults to `Err` so counter-only implementations compile
+    /// without overriding this method.
+    fn register_u64_counter_vec(
+        &self,
+        _name: &str,
+        _help: &str,
+        _label_names: &[&str],
+    ) -> Result<Arc<dyn CounterVec<u64>>, TelemetryError> {
+        Err(TelemetryError::RegisterCounterError(
+            "register_u64_counter_vec not implemented for this TelemetryService backend"
+                .to_string(),
         ))
     }
 

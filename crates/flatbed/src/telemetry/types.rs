@@ -44,6 +44,16 @@ pub trait GaugeVec<T: MetricValue>: Send + Sync {
     fn reset(&self);
 }
 
+/// Trait for labeled counter metrics: one metric name, one series per
+/// label-value combination.
+pub trait CounterVec<T: MetricValue>: Send + Sync {
+    /// Increment the counter child for `label_values` by `value`. The
+    /// number and order of `label_values` must match the `label_names` the
+    /// vec was registered with; a mismatch is logged and the increment
+    /// skipped rather than panicking.
+    fn inc_by(&self, label_values: &[&str], value: T);
+}
+
 /// Trait for metric value types.
 pub trait MetricValue: Send + Sync {
     const METRIC_TYPE: MetricType;
