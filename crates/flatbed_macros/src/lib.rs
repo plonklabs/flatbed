@@ -490,7 +490,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
         #[doc(hidden)]
         pub fn #wrapper_name(
             request_parts: ::flatbed::RequestParts,
-            body: Vec<u8>,
+            body: ::flatbed::bytes::Bytes,
             content_type: &str,
             ctx_any: ::std::sync::Arc<dyn ::std::any::Any + Send + Sync>,
         ) -> ::std::pin::Pin<Box<dyn ::std::future::Future<Output = Result<::flatbed::ResponseParts, ::flatbed::Error>> + Send>> {
@@ -571,12 +571,12 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 match result {
                     Ok(mut response) => {
-                        let (response_bytes, response_content_type): (Vec<u8>, ::std::borrow::Cow<'static, str>) =
-                            if let Some((bytes, content_type)) = response.take_raw() {
-                                (bytes, content_type)
+                        let (response_body, response_content_type): (::flatbed::ReplyBody, ::std::borrow::Cow<'static, str>) =
+                            if let Some((body, content_type)) = response.take_body() {
+                                (body, content_type)
                             } else if respond_json {
                                 match ::flatbed::serde_json::to_vec(&response.body) {
-                                    Ok(b) => (b, ::std::borrow::Cow::Borrowed("application/json")),
+                                    Ok(b) => (::flatbed::ReplyBody::Full(b), ::std::borrow::Cow::Borrowed("application/json")),
                                     Err(e) => {
                                         return Err(::flatbed::Error::SerializationError(
                                             format!("JSON serialization error: {}", e)
@@ -585,14 +585,14 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 }
                             } else {
                                 (
-                                    response.body.to_flatbuffer(),
+                                    ::flatbed::ReplyBody::Full(response.body.to_flatbuffer()),
                                     ::std::borrow::Cow::Borrowed("application/x-flatbuffers"),
                                 )
                             };
 
                         // Build response parts
                         let mut parts = ::flatbed::ResponseParts::with_status(
-                            response_bytes,
+                            response_body,
                             response.status,
                             response_content_type,
                         );
@@ -681,7 +681,7 @@ pub fn route(attr: TokenStream, item: TokenStream) -> TokenStream {
                         };
 
                         Ok(::flatbed::ResponseParts {
-                            body,
+                            body: ::flatbed::ReplyBody::Full(body),
                             status: err.status,
                             headers,
                             content_type: content_type.into(),

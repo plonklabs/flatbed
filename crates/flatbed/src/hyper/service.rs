@@ -17,8 +17,8 @@ use tokio::sync::{watch, RwLock};
 use super::router::Router;
 use crate::error_reporting::{self, RouteFailure, RouteRequest, Transport};
 use crate::{
-    Error, FlatbedConfig, FlatbedRouteError, HeaderMap, HeaderName, HeaderValue, Method,
-    RequestParts, ResponseParts,
+    Error, FlatbedBody, FlatbedConfig, FlatbedRouteError, HeaderMap, HeaderName, HeaderValue,
+    Method, ReplyBody, RequestParts, ResponseParts,
 };
 
 #[cfg(feature = "openapi")]
@@ -117,7 +117,7 @@ impl<C> Clone for FlatbedService<C> {
 }
 
 impl<C: Clone + Send + Sync + 'static> Service<Request<Incoming>> for FlatbedService<C> {
-    type Response = Response<Full<Bytes>>;
+    type Response = Response<FlatbedBody>;
     type Error = Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -127,26 +127,53 @@ impl<C: Clone + Send + Sync + 'static> Service<Request<Incoming>> for FlatbedSer
     }
 }
 
-/// Handle an incoming HTTP request.
-///
-/// Dispatches to build the response, then enforces RFC 9110 §9.3.2 for HEAD:
-/// the response carries the same headers a GET would (including
-/// `content-length`) but no body.
-async fn handle_request<C: Clone + Send + Sync + 'static>(
-    req: Request<Incoming>,
-    ctx: ServiceContext<C>,
-) -> Response<Full<Bytes>> {
-    let is_head = req.method() == http::Method::HEAD;
-    let response = dispatch(req, ctx).await;
-    if is_head {
-        strip_body_for_head(response).await
-    } else {
-        response
+/// What [`dispatch`] answered: a response a built-in tier finished itself,
+/// or a route's parts still to be finished into one.
+enum Reply {
+    Built(Response<FlatbedBody>),
+    Parts(ResponseParts),
+}
+
+impl From<Response<FlatbedBody>> for Reply {
+    fn from(response: Response<FlatbedBody>) -> Self {
+        Self::Built(response)
     }
 }
 
-/// Strip a response's body for a HEAD request while preserving its headers,
-/// setting `content-length` to the size the body would have had.
+/// Handle an incoming HTTP request.
+///
+/// Dispatches to build the response, then enforces RFC 9110 §9.3.2 for HEAD:
+/// the response carries the same headers a GET would but no body.
+async fn handle_request<C: Clone + Send + Sync + 'static>(
+    req: Request<Incoming>,
+    ctx: ServiceContext<C>,
+) -> Response<FlatbedBody> {
+    let is_head = req.method() == http::Method::HEAD;
+    match dispatch(req, ctx).await {
+        Reply::Parts(parts) if is_head => build_success_response(strip_parts_for_head(parts)),
+        Reply::Parts(parts) => build_success_response(parts),
+        Reply::Built(response) if is_head => strip_body_for_head(response).await,
+        Reply::Built(response) => response,
+    }
+}
+
+/// Strip a route reply's body for a HEAD request before it is finished.
+///
+/// A whole body's length becomes `content-length`. A stream is dropped
+/// unpolled and no `content-length` is set: its length is unknown without
+/// running it.
+fn strip_parts_for_head(mut parts: ResponseParts) -> ResponseParts {
+    if let ReplyBody::Full(bytes) = &parts.body {
+        parts
+            .headers
+            .insert(http::header::CONTENT_LENGTH, HeaderValue::from(bytes.len()));
+    }
+    parts.body = ReplyBody::Full(Vec::new());
+    parts
+}
+
+/// Strip a built-in tier's response body for a HEAD request while preserving
+/// its headers, setting `content-length` to the size the body would have had.
 ///
 /// `hyper`'s HTTP/1.1 encoder already special-cases HEAD, but its HTTP/2
 /// encoder does not: a response built with a real body is sent with one,
@@ -154,21 +181,23 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
 /// contradicts the `content-length` a HEAD response is still expected to
 /// carry). Stripping the body here, uniformly, keeps every transport
 /// correct regardless of what a lower layer happens to already handle.
-async fn strip_body_for_head(response: Response<Full<Bytes>>) -> Response<Full<Bytes>> {
+async fn strip_body_for_head(response: Response<FlatbedBody>) -> Response<FlatbedBody> {
     let (mut parts, body) = response.into_parts();
-    let Ok(collected) = body.collect().await;
-    let len = collected.to_bytes().len();
+    let len = body
+        .collect()
+        .await
+        .map_or(0, |collected| collected.to_bytes().len());
     parts
         .headers
         .insert(http::header::CONTENT_LENGTH, HeaderValue::from(len));
-    Response::from_parts(parts, Full::new(Bytes::new()))
+    Response::from_parts(parts, full(Bytes::new()))
 }
 
 /// Build the response for a request, including any body.
 async fn dispatch<C: Clone + Send + Sync + 'static>(
     req: Request<Incoming>,
     ctx: ServiceContext<C>,
-) -> Response<Full<Bytes>> {
+) -> Reply {
     // Extract method and path before consuming req
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
@@ -177,23 +206,23 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
     // Check for built-in endpoints first
 
     if let Some(response) = handle_splash_endpoint(&method, &path, &ctx.config) {
-        return response;
+        return response.into();
     }
 
     #[cfg(feature = "telemetry")]
     if ctx.config.telemetry.is_some() {
         if let Some(response) = handle_telemetry_endpoint(&method, &path, &ctx) {
-            return response;
+            return response.into();
         }
     }
 
     #[cfg(feature = "openapi")]
     if let Some(response) = handle_openapi_endpoint(&method, &path, &ctx.config) {
-        return response;
+        return response.into();
     }
 
     if let Some(response) = handle_schema_endpoint(&method, &path) {
-        return response;
+        return response.into();
     }
 
     if !ctx.is_ready() {
@@ -204,7 +233,7 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
                 "Server is starting up, please retry shortly".to_string(),
             ),
         };
-        return build_error_response(StatusCode::SERVICE_UNAVAILABLE, code, &message);
+        return build_error_response(StatusCode::SERVICE_UNAVAILABLE, code, &message).into();
     }
 
     // Try to match a user-defined route
@@ -212,14 +241,14 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         // Check if path exists but method is not allowed
         let allowed = ctx.router.get_allowed_methods(&path);
         if !allowed.is_empty() {
-            return build_method_not_allowed(&allowed);
+            return build_method_not_allowed(&allowed).into();
         }
         if is_get_or_head(&method) && !ctx.static_routes.is_empty() {
             if let Some(parts) = super::static_files::serve(&ctx.static_routes, &path).await {
-                return build_success_response(parts);
+                return Reply::Parts(parts);
             }
         }
-        return build_not_found();
+        return build_not_found().into();
     };
 
     // Extract content type
@@ -298,23 +327,25 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
                     message: &err.message,
                 });
             }
-            return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id);
+            return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id)
+                .into();
         }
     }
 
     // For methods with body, require valid content type
     let needs_body = matches!(method.to_uppercase().as_str(), "POST" | "PUT" | "PATCH");
     if needs_body && !is_json && !is_flatbuffer {
-        return build_unsupported_media_type();
+        return build_unsupported_media_type().into();
     }
 
     // Read body (consumes req)
     let body_bytes = match req.into_body().collect().await {
-        Ok(collected) => collected.to_bytes().to_vec(),
+        Ok(collected) => collected.to_bytes(),
         Err(e) => {
             let err = FlatbedRouteError::bad_request(format!("Failed to read request body: {e}"))
                 .code("BODY_READ_ERROR");
-            return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id);
+            return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id)
+                .into();
         }
     };
 
@@ -329,13 +360,14 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
 
     let handled = (route_entry.handler)(request_parts.clone(), body_bytes, &content_type, app_ctx);
     let e = match error_reporting::catch_panic(handled).await {
-        Ok(Ok(response_parts)) => return build_success_response(response_parts),
+        Ok(Ok(response_parts)) => return Reply::Parts(response_parts),
         Ok(Err(e)) => e,
         Err(panic) => {
             error_reporting::route_panic(route, &panic);
             let err =
                 FlatbedRouteError::internal("handler panicked").code(error_reporting::PANIC_CODE);
-            return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id);
+            return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id)
+                .into();
         }
     };
 
@@ -354,7 +386,7 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
             message: &err.message,
         });
     }
-    build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id)
+    build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id).into()
 }
 
 fn is_get_or_head(method: &str) -> bool {
@@ -365,7 +397,7 @@ fn handle_splash_endpoint(
     method: &str,
     path: &str,
     config: &FlatbedConfig,
-) -> Option<Response<Full<Bytes>>> {
+) -> Option<Response<FlatbedBody>> {
     if !is_get_or_head(method) || path != "/" {
         return None;
     }
@@ -376,7 +408,7 @@ fn handle_splash_endpoint(
         Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "text/plain; charset=utf-8")
-            .body(Full::new(Bytes::from(splash.clone())))
+            .body(full(Bytes::from(splash.clone())))
             .unwrap(),
     )
 }
@@ -387,7 +419,7 @@ fn handle_telemetry_endpoint<C>(
     method: &str,
     path: &str,
     ctx: &ServiceContext<C>,
-) -> Option<Response<Full<Bytes>>> {
+) -> Option<Response<FlatbedBody>> {
     if !is_get_or_head(method) {
         return None;
     }
@@ -451,7 +483,7 @@ fn handle_openapi_endpoint(
     method: &str,
     path: &str,
     config: &FlatbedConfig,
-) -> Option<Response<Full<Bytes>>> {
+) -> Option<Response<FlatbedBody>> {
     if !is_get_or_head(method) {
         return None;
     }
@@ -478,7 +510,7 @@ fn handle_openapi_endpoint(
 
 // Response builders
 
-fn build_success_response(parts: ResponseParts) -> Response<Full<Bytes>> {
+fn build_success_response(parts: ResponseParts) -> Response<FlatbedBody> {
     let mut builder = Response::builder().status(parts.status);
 
     // Set content type
@@ -491,38 +523,46 @@ fn build_success_response(parts: ResponseParts) -> Response<Full<Bytes>> {
         }
     }
 
-    builder
-        .body(Full::new(Bytes::from(parts.body)))
-        .unwrap_or_else(|_| {
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Full::new(Bytes::from("Failed to build response")))
-                .unwrap()
-        })
+    let body = match parts.body {
+        ReplyBody::Full(bytes) => full(bytes),
+        ReplyBody::Stream(body) => body,
+    };
+    builder.body(body).unwrap_or_else(|_| {
+        Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(full(Bytes::from("Failed to build response")))
+            .unwrap()
+    })
 }
 
-fn build_not_found() -> Response<Full<Bytes>> {
+fn full(bytes: impl Into<Bytes>) -> FlatbedBody {
+    Full::new(bytes.into())
+        .map_err(|never| match never {})
+        .boxed_unsync()
+}
+
+fn build_not_found() -> Response<FlatbedBody> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
         .header("content-type", "text/plain")
-        .body(Full::new(Bytes::from("Not Found")))
+        .body(full(Bytes::from("Not Found")))
         .unwrap()
 }
 
-fn build_method_not_allowed(allowed: impl AsRef<[String]>) -> Response<Full<Bytes>> {
+fn build_method_not_allowed(allowed: impl AsRef<[String]>) -> Response<FlatbedBody> {
     Response::builder()
         .status(StatusCode::METHOD_NOT_ALLOWED)
         .header("content-type", "text/plain")
         .header("allow", allowed.as_ref().join(", "))
-        .body(Full::new(Bytes::from("Method Not Allowed")))
+        .body(full(Bytes::from("Method Not Allowed")))
         .unwrap()
 }
 
-fn build_unsupported_media_type() -> Response<Full<Bytes>> {
+fn build_unsupported_media_type() -> Response<FlatbedBody> {
     Response::builder()
         .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
         .header("content-type", "text/plain")
-        .body(Full::new(Bytes::from(
+        .body(full(Bytes::from(
             "Content-Type must be application/json or application/x-flatbuffers",
         )))
         .unwrap()
@@ -532,7 +572,7 @@ fn build_route_error_response(
     err: &FlatbedRouteError,
     is_flatbuffer: bool,
     request_id: &str,
-) -> Response<Full<Bytes>> {
+) -> Response<FlatbedBody> {
     let error_code = wire_code(err);
 
     let mut headers = HeaderMap::new();
@@ -569,14 +609,12 @@ fn build_route_error_response(
             builder = builder.header(key.as_str(), val);
         }
     }
-    builder
-        .body(Full::new(Bytes::from(body)))
-        .unwrap_or_else(|_| {
-            Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Full::new(Bytes::from("Failed to build response")))
-                .unwrap()
-        })
+    builder.body(full(Bytes::from(body))).unwrap_or_else(|_| {
+        Response::builder()
+            .status(StatusCode::INTERNAL_SERVER_ERROR)
+            .body(full(Bytes::from("Failed to build response")))
+            .unwrap()
+    })
 }
 
 /// The code put on the wire for `err`: its own, or `ERROR` when it set none.
@@ -588,7 +626,7 @@ fn wire_code(err: &FlatbedRouteError) -> &str {
     }
 }
 
-fn build_error_response(status: StatusCode, code: &str, message: &str) -> Response<Full<Bytes>> {
+fn build_error_response(status: StatusCode, code: &str, message: &str) -> Response<FlatbedBody> {
     let body = serde_json::json!({
         "code": code,
         "message": message
@@ -597,38 +635,38 @@ fn build_error_response(status: StatusCode, code: &str, message: &str) -> Respon
     Response::builder()
         .status(status)
         .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(body.to_string())))
+        .body(full(Bytes::from(body.to_string())))
         .unwrap()
 }
 
 #[cfg(feature = "telemetry")]
-fn build_text_response(status: StatusCode, body: &str) -> Response<Full<Bytes>> {
+fn build_text_response(status: StatusCode, body: &str) -> Response<FlatbedBody> {
     Response::builder()
         .status(status)
         .header("content-type", "text/plain")
-        .body(Full::new(Bytes::from(body.to_string())))
+        .body(full(Bytes::from(body.to_string())))
         .unwrap()
 }
 
 #[cfg(feature = "telemetry")]
-fn build_metrics_response(metrics: String) -> Response<Full<Bytes>> {
+fn build_metrics_response(metrics: String) -> Response<FlatbedBody> {
     Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "text/plain; version=0.0.4; charset=utf-8")
-        .body(Full::new(Bytes::from(metrics)))
+        .body(full(Bytes::from(metrics)))
         .unwrap()
 }
 
 #[cfg(feature = "openapi")]
-fn build_json_response(json: String) -> Response<Full<Bytes>> {
+fn build_json_response(json: String) -> Response<FlatbedBody> {
     Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(json)))
+        .body(full(Bytes::from(json)))
         .unwrap()
 }
 
-fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<Full<Bytes>>> {
+fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<FlatbedBody>> {
     if !is_get_or_head(method) || path != "/schema.bfbs" {
         return None;
     }
@@ -639,7 +677,7 @@ fn handle_schema_endpoint(method: &str, path: &str) -> Option<Response<Full<Byte
         Response::builder()
             .status(StatusCode::OK)
             .header("content-type", "application/octet-stream")
-            .body(Full::new(Bytes::from_static(bfbs)))
+            .body(full(Bytes::from_static(bfbs)))
             .unwrap(),
     )
 }

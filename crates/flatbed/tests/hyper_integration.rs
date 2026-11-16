@@ -32,6 +32,14 @@ fn dummy_ctx() -> Arc<dyn Any + Send + Sync> {
     Arc::new(())
 }
 
+/// The bytes of a reply the typed path built whole.
+fn full_body(parts: &flatbed::ResponseParts) -> &[u8] {
+    let flatbed::ReplyBody::Full(bytes) = &parts.body else {
+        panic!("a typed reply is built whole");
+    };
+    bytes
+}
+
 // ============================================================================
 // Test handlers using async pattern with Request<T> and Response<T>
 // ============================================================================
@@ -188,9 +196,13 @@ async fn test_hyper_handler_json() {
     let parts = flatbed::RequestParts::new(flatbed::Method::POST, "/api/ping".to_string());
 
     // Call the handler
-    let result =
-        __hyper_handler_test_ping_handler(parts, request_bytes, "application/json", dummy_ctx())
-            .await;
+    let result = __hyper_handler_test_ping_handler(
+        parts,
+        request_bytes.into(),
+        "application/json",
+        dummy_ctx(),
+    )
+    .await;
     assert!(result.is_ok(), "Handler should succeed");
 
     let response_parts = result.unwrap();
@@ -198,8 +210,8 @@ async fn test_hyper_handler_json() {
     assert_eq!(response_parts.content_type, "application/json");
 
     // Parse response
-    let response: TestResponse =
-        flatbed::serde_json::from_slice(&response_parts.body).expect("Should deserialize response");
+    let response: TestResponse = flatbed::serde_json::from_slice(full_body(&response_parts))
+        .expect("Should deserialize response");
     assert!(response.success);
     assert_eq!(response.value, 9999 + 100);
     assert!(response
@@ -222,7 +234,7 @@ async fn test_hyper_handler_flatbuffer() {
 
     let result = __hyper_handler_test_ping_handler(
         parts,
-        request_bytes,
+        request_bytes.into(),
         "application/x-flatbuffers",
         dummy_ctx(),
     )
@@ -233,8 +245,8 @@ async fn test_hyper_handler_flatbuffer() {
     assert_eq!(response_parts.content_type, "application/x-flatbuffers");
 
     // Parse response
-    let response =
-        TestResponse::from_flatbuffer(&response_parts.body).expect("Should deserialize response");
+    let response = TestResponse::from_flatbuffer(full_body(&response_parts))
+        .expect("Should deserialize response");
     assert!(response.success);
     assert_eq!(response.value, 1234 + 100);
 }
@@ -248,9 +260,13 @@ async fn test_error_response_json() {
     let request_bytes = flatbed::serde_json::to_vec(&request).unwrap();
     let parts = flatbed::RequestParts::new(flatbed::Method::POST, "/api/error".to_string());
 
-    let result =
-        __hyper_handler_test_error_handler(parts, request_bytes, "application/json", dummy_ctx())
-            .await;
+    let result = __hyper_handler_test_error_handler(
+        parts,
+        request_bytes.into(),
+        "application/json",
+        dummy_ctx(),
+    )
+    .await;
     assert!(result.is_ok());
 
     let response_parts = result.unwrap();
@@ -258,7 +274,7 @@ async fn test_error_response_json() {
 
     // Parse error body
     let error_body: serde_json::Value =
-        serde_json::from_slice(&response_parts.body).expect("Should deserialize error");
+        serde_json::from_slice(full_body(&response_parts)).expect("Should deserialize error");
     assert_eq!(error_body["code"], "TEST_ERROR");
     assert_eq!(error_body["message"], "Test error message");
 }
@@ -278,9 +294,13 @@ async fn test_request_id_propagation() {
     );
     parts = parts.with_request_id_from_header();
 
-    let result =
-        __hyper_handler_test_ping_handler(parts, request_bytes, "application/json", dummy_ctx())
-            .await;
+    let result = __hyper_handler_test_ping_handler(
+        parts,
+        request_bytes.into(),
+        "application/json",
+        dummy_ctx(),
+    )
+    .await;
     assert!(result.is_ok());
 
     let response_parts = result.unwrap();
@@ -304,7 +324,7 @@ async fn test_response_with_custom_headers() {
 
     let result = __hyper_handler_test_response_headers_handler(
         parts,
-        request_bytes,
+        request_bytes.into(),
         "application/json",
         dummy_ctx(),
     )
@@ -340,7 +360,7 @@ async fn test_error_with_details() {
 
     let result = __hyper_handler_test_error_with_details_handler(
         parts,
-        request_bytes,
+        request_bytes.into(),
         "application/json",
         dummy_ctx(),
     )
@@ -361,7 +381,7 @@ async fn test_error_with_details() {
 
     // Parse error body
     let error_body: serde_json::Value =
-        serde_json::from_slice(&response_parts.body).expect("Should deserialize error");
+        serde_json::from_slice(full_body(&response_parts)).expect("Should deserialize error");
     assert_eq!(error_body["code"], "VALIDATION_ERROR");
     assert_eq!(error_body["message"], "Validation failed");
     assert!(error_body["details"].is_object());
@@ -380,7 +400,7 @@ async fn test_error_with_custom_headers() {
 
     let result = __hyper_handler_test_error_with_headers_handler(
         parts,
-        request_bytes,
+        request_bytes.into(),
         "application/json",
         dummy_ctx(),
     )
@@ -418,7 +438,7 @@ async fn test_flatbuffer_hyphenated_content_type() {
 
     let result = __hyper_handler_test_ping_handler(
         parts,
-        request_bytes,
+        request_bytes.into(),
         "application/x-flat-buffers",
         dummy_ctx(),
     )
@@ -429,8 +449,8 @@ async fn test_flatbuffer_hyphenated_content_type() {
     // Response uses non-hyphenated form
     assert_eq!(response_parts.content_type, "application/x-flatbuffers");
 
-    let response =
-        TestResponse::from_flatbuffer(&response_parts.body).expect("Should deserialize response");
+    let response = TestResponse::from_flatbuffer(full_body(&response_parts))
+        .expect("Should deserialize response");
     assert!(response.success);
     assert_eq!(response.value, 5678 + 100);
 }

@@ -13,7 +13,7 @@ use crate::{get_latest_version, get_openapi_json_for_version, get_route_versions
 /// Build a health check response
 pub fn health_response() -> ResponseParts {
     ResponseParts {
-        body: b"OK".to_vec(),
+        body: b"OK".to_vec().into(),
         status: StatusCode::OK,
         headers: crate::HeaderMap::new(),
         content_type: "text/plain".into(),
@@ -23,7 +23,7 @@ pub fn health_response() -> ResponseParts {
 /// Build a readiness response
 pub fn ready_response() -> ResponseParts {
     ResponseParts {
-        body: b"Ready".to_vec(),
+        body: b"Ready".to_vec().into(),
         status: StatusCode::OK,
         headers: crate::HeaderMap::new(),
         content_type: "text/plain".into(),
@@ -34,7 +34,7 @@ pub fn ready_response() -> ResponseParts {
 #[cfg(feature = "telemetry")]
 pub fn metrics_response(metrics: String) -> ResponseParts {
     ResponseParts {
-        body: metrics.into_bytes(),
+        body: metrics.into_bytes().into(),
         status: StatusCode::OK,
         headers: crate::HeaderMap::new(),
         content_type: "text/plain; version=0.0.4; charset=utf-8".into(),
@@ -49,7 +49,7 @@ pub fn openapi_response(config: &FlatbedConfig, version: Option<&str>) -> Respon
     let json = get_openapi_json_for_version(config, version);
 
     ResponseParts {
-        body: json.into_bytes(),
+        body: json.into_bytes().into(),
         status: StatusCode::OK,
         headers: crate::HeaderMap::new(),
         content_type: "application/json".into(),
