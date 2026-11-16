@@ -32,7 +32,6 @@ fn dummy_ctx() -> Arc<dyn Any + Send + Sync> {
     Arc::new(())
 }
 
-/// The bytes of a reply the typed path built whole.
 fn full_body(parts: &flatbed::ResponseParts) -> &[u8] {
     let flatbed::ReplyBody::Full(bytes) = &parts.body else {
         panic!("a typed reply is built whole");

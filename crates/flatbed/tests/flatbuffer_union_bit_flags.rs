@@ -23,7 +23,6 @@ async fn call_echo(body: Vec<u8>, content_type: &str) -> flatbed::ResponseParts 
         .expect("echo route succeeds")
 }
 
-/// The bytes of a reply the typed path built whole.
 fn full_body(parts: &flatbed::ResponseParts) -> &[u8] {
     let flatbed::ReplyBody::Full(bytes) = &parts.body else {
         panic!("a typed reply is built whole");
