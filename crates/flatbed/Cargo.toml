@@ -155,6 +155,10 @@ required-features = ["openapi"]
 name = "streaming"
 required-features = ["openapi"]
 
+[[test]]
+name = "body_limit"
+required-features = ["openapi"]
+
 [[example]]
 name = "routes"
 required-features = ["openapi"]

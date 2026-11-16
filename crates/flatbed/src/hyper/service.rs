@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use http::{Request, Response, StatusCode};
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use hyper::body::Incoming;
 use hyper::service::Service;
 use tokio::sync::{watch, RwLock};
@@ -342,12 +342,36 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         return build_unsupported_media_type().into();
     }
 
+    let limit = route_entry
+        .info
+        .max_body
+        .unwrap_or(ctx.config.max_request_body);
+    let too_large = || {
+        FlatbedRouteError::with_status(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!("Request body exceeds {limit} bytes"),
+        )
+        .code("PAYLOAD_TOO_LARGE")
+    };
+    if declared_length(req.headers()).is_some_and(|length| length > limit) {
+        return build_route_error_response(
+            &too_large(),
+            respond_flatbuffer,
+            &request_parts.request_id,
+        )
+        .into();
+    }
+
     // Read body (consumes req)
-    let body_bytes = match req.into_body().collect().await {
+    let body_bytes = match Limited::new(req.into_body(), limit).collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            let err = FlatbedRouteError::bad_request(format!("Failed to read request body: {e}"))
-                .code("BODY_READ_ERROR");
+            let err = if e.downcast_ref::<LengthLimitError>().is_some() {
+                too_large()
+            } else {
+                FlatbedRouteError::bad_request(format!("Failed to read request body: {e}"))
+                    .code("BODY_READ_ERROR")
+            };
             return build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id)
                 .into();
         }
@@ -399,6 +423,17 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         });
     }
     build_route_error_response(&err, respond_flatbuffer, &request_parts.request_id).into()
+}
+
+/// The body length a request's `content-length` declares, when it has a
+/// readable one.
+fn declared_length(headers: &http::HeaderMap) -> Option<usize> {
+    headers
+        .get(http::header::CONTENT_LENGTH)?
+        .to_str()
+        .ok()?
+        .parse()
+        .ok()
 }
 
 fn is_get_or_head(method: &str) -> bool {
