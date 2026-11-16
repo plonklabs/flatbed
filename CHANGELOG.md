@@ -69,6 +69,14 @@ contain breaking changes during the pre-1.0 stabilization window.
 - BREAKING: `AsyncHandlerFn` and `hyper::HandlerFn` take the request body as
   `Bytes`, was `Vec<u8>`; the body reaches the handler without a copy after
   it is read.
+- Graceful shutdown holds in-flight replies, streamed or buffered, up to
+  the shutdown budget instead of cutting every connection at `SIGTERM`.
+  Readiness drops first, through a `shutdown` gate, so `/readyz` reports
+  `Not Ready: shutdown`; each connection stops taking requests and finishes
+  the ones it has; a connection still open past the budget is cut. The
+  wait ends when the last connection and worker drain are done rather than
+  after a fixed sleep, and the `ErrorReporter` is flushed again after it, so
+  a stream that fails during the hold is reported.
 
 ## [0.0.12] — 2026-11-07
 
