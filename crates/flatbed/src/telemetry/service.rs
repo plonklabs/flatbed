@@ -47,10 +47,12 @@ pub trait TelemetryService: Send + Sync {
         ))
     }
 
-    /// Register a labeled counter metric with u64 values, the counter twin
-    /// of [`register_u64_gauge_vec`](Self::register_u64_gauge_vec):
-    /// `label_names` is the schema every `inc_by` must supply, in order,
-    /// and the const labels are attached by the backend.
+    /// Register a labeled counter metric with u64 values. `label_names`
+    /// is the schema for the labels every `inc_by` call must supply, in
+    /// order. Const labels (`service` / `ip_address` from
+    /// `TelemetryConfig`) are attached to the metric descriptor by the
+    /// backend automatically and must **not** be passed to `inc_by` — only
+    /// the schema's `label_names` count toward the arity check.
     ///
     /// Defaults to `Err` so counter-only implementations compile
     /// without overriding this method.
