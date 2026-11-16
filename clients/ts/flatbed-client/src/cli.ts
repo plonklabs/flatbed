@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { fetchInput, generateFiles, readInput, writeFiles, type GenerateInput } from "./generate/generate.js";
+import { readSkipped } from "./generate/read-openapi.js";
 
 const USAGE =
   "usage: flatbed-client generate (--server <url> | --openapi <file> --schema <file>) --out <dir>";
@@ -25,7 +26,10 @@ const run = (): Promise<void> => {
   const out = flag("out");
   if (process.argv[2] !== "generate" || out === undefined) return Promise.reject(new Error(USAGE));
   return inputFrom()
-    .then(generateFiles)
+    .then((input) => {
+      readSkipped(input.spec).forEach((skipped) => console.warn(`flatbed-client: skipped ${skipped}`));
+      return generateFiles(input);
+    })
     .then((files) =>
       writeFiles(out, files).then(() =>
         console.log(`flatbed-client: wrote ${Object.keys(files).join(", ")} to ${out}`),

@@ -13,7 +13,13 @@ use generated::report::{BadgeRequest, CsvRequest};
 use flatbed::{route, Flatbed, FlatbedConfig, FlatbedRouteError, Request, Response};
 
 /// A CSV report built at request time, returned as `text/csv`.
-#[route("/report.csv", method = "POST", tag = "Raw", summary = "CSV report")]
+#[route(
+    "/report.csv",
+    method = "POST",
+    tag = "Raw",
+    summary = "CSV report",
+    produces = "text/csv"
+)]
 async fn report_csv(req: Request<CsvRequest>) -> Result<Response<()>, FlatbedRouteError> {
     let label = csv_field(req.body.label.as_deref().unwrap_or("row"));
     let mut csv = String::from("index,label\n");
@@ -24,7 +30,13 @@ async fn report_csv(req: Request<CsvRequest>) -> Result<Response<()>, FlatbedRou
 }
 
 /// An SVG badge generated at request time, returned as `image/svg+xml`.
-#[route("/badge.svg", method = "POST", tag = "Raw", summary = "SVG badge")]
+#[route(
+    "/badge.svg",
+    method = "POST",
+    tag = "Raw",
+    summary = "SVG badge",
+    produces = "image/svg+xml"
+)]
 async fn badge_svg(req: Request<BadgeRequest>) -> Result<Response<()>, FlatbedRouteError> {
     let label = xml_escape(req.body.label.as_deref().unwrap_or("flatbed"));
     let svg = format!(

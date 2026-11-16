@@ -42,6 +42,14 @@ contain breaking changes during the pre-1.0 stabilization window.
   type. Request bodies go through the new `FromBody` trait, implemented for
   every generated type and for `Passthrough`; `#[nats_route]` refuses
   `Passthrough` at compile time.
+- `#[route(.., produces = "text/event-stream, application/json")]` lists a
+  raw or streamed route's media types as its `200` in `/openapi.json`, each
+  with an opaque schema (`{}` for JSON, a binary string otherwise), in place
+  of the typed JSON and FlatBuffers entries. `OpenApiRouteInfo.produces`
+  carries it.
+- `@plonklabs/flatbed-client` skips an operation whose success response
+  sends a media type that is neither JSON nor FlatBuffers, and the CLI names
+  each one it skips.
 
 ### Changed
 
