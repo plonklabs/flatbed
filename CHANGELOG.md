@@ -19,6 +19,14 @@ contain breaking changes during the pre-1.0 stabilization window.
   a 500 `STREAM_NOT_SUPPORTED` reply, reported once, and the stream is
   dropped unpolled. New types: `ReplyBody`, `FlatbedBody`, `BoxError`;
   `flatbed::bytes` is re-exported.
+- A streamed reply logs `stream ended` exactly once, with its route, path,
+  request id, status, byte count, duration and `outcome`: `completed` when
+  the stream ends, `disconnected` when the body is dropped first (the client
+  went away), `failed` when the stream yields an `Err`. A failure is reported
+  to the `ErrorReporter` as a `RouteFailure` with code `STREAM_ERROR`, the
+  status already sent and the error's message, and aborts the transfer: the
+  HTTP/1.1 connection closes without the final chunk, the HTTP/2 stream is
+  reset.
 
 ### Changed
 

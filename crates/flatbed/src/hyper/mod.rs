@@ -28,6 +28,7 @@
 //! ```
 
 mod endpoints;
+mod observed;
 mod router;
 mod server;
 mod service;

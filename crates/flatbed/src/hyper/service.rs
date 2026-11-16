@@ -14,6 +14,7 @@ use hyper::body::Incoming;
 use hyper::service::Service;
 use tokio::sync::{watch, RwLock};
 
+use super::observed::{Observed, Site};
 use super::router::Router;
 use crate::error_reporting::{self, RouteFailure, RouteRequest, Transport};
 use crate::{
@@ -128,10 +129,11 @@ impl<C: Clone + Send + Sync + 'static> Service<Request<Incoming>> for FlatbedSer
 }
 
 /// What [`dispatch`] answered: a response a built-in tier finished itself,
-/// or a route's parts still to be finished into one.
+/// or parts still to be finished into one, with the route they answer when
+/// a route built them.
 enum Reply {
     Built(Response<FlatbedBody>),
-    Parts(ResponseParts),
+    Parts(ResponseParts, Option<Site>),
 }
 
 impl From<Response<FlatbedBody>> for Reply {
@@ -150,8 +152,10 @@ async fn handle_request<C: Clone + Send + Sync + 'static>(
 ) -> Response<FlatbedBody> {
     let is_head = req.method() == http::Method::HEAD;
     match dispatch(req, ctx).await {
-        Reply::Parts(parts) if is_head => build_success_response(strip_parts_for_head(parts)),
-        Reply::Parts(parts) => build_success_response(parts),
+        Reply::Parts(parts, _) if is_head => {
+            build_success_response(strip_parts_for_head(parts), None)
+        }
+        Reply::Parts(parts, site) => build_success_response(parts, site),
         Reply::Built(response) if is_head => strip_body_for_head(response).await,
         Reply::Built(response) => response,
     }
@@ -245,7 +249,7 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
         }
         if is_get_or_head(&method) && !ctx.static_routes.is_empty() {
             if let Some(parts) = super::static_files::serve(&ctx.static_routes, &path).await {
-                return Reply::Parts(parts);
+                return Reply::Parts(parts, None);
             }
         }
         return build_not_found().into();
@@ -360,7 +364,15 @@ async fn dispatch<C: Clone + Send + Sync + 'static>(
 
     let handled = (route_entry.handler)(request_parts.clone(), body_bytes, &content_type, app_ctx);
     let e = match error_reporting::catch_panic(handled).await {
-        Ok(Ok(response_parts)) => return Reply::Parts(response_parts),
+        Ok(Ok(response_parts)) => {
+            let site = Site {
+                method,
+                route: route_entry.info.path,
+                path,
+                request_id: request_parts.request_id,
+            };
+            return Reply::Parts(response_parts, Some(site));
+        }
         Ok(Err(e)) => e,
         Err(panic) => {
             error_reporting::route_panic(route, &panic);
@@ -510,7 +522,9 @@ fn handle_openapi_endpoint(
 
 // Response builders
 
-fn build_success_response(parts: ResponseParts) -> Response<FlatbedBody> {
+/// Finish route or static-file parts into a response. A streamed body
+/// answering a route is wrapped in [`Observed`].
+fn build_success_response(parts: ResponseParts, site: Option<Site>) -> Response<FlatbedBody> {
     let mut builder = Response::builder().status(parts.status);
 
     // Set content type
@@ -523,9 +537,10 @@ fn build_success_response(parts: ResponseParts) -> Response<FlatbedBody> {
         }
     }
 
-    let body = match parts.body {
-        ReplyBody::Full(bytes) => full(bytes),
-        ReplyBody::Stream(body) => body,
+    let body = match (parts.body, site) {
+        (ReplyBody::Full(bytes), _) => full(bytes),
+        (ReplyBody::Stream(body), Some(site)) => Observed::wrap(body, site, parts.status.as_u16()),
+        (ReplyBody::Stream(body), None) => body,
     };
     builder.body(body).unwrap_or_else(|_| {
         Response::builder()

@@ -5,7 +5,8 @@
 //! flatbed calls it for every server-side failure it observes:
 //!
 //! - a `#[route]` or `#[nats_route]` handler failing with a 5xx status, or the
-//!   framework answering a matched route with one ([`ErrorReporter::route_error`]);
+//!   framework answering a matched route with one, or a streamed reply failing
+//!   after its status was sent ([`ErrorReporter::route_error`]);
 //! - a route handler or worker panicking ([`ErrorReporter::panic`]);
 //! - a worker returning `Err`, exiting, or exhausting its restart policy
 //!   ([`ErrorReporter::worker_failure`]).
@@ -45,7 +46,8 @@ use crate::FlatbedWorkerError;
 /// channel, background transport) rather than block on I/O. `flush` runs on
 /// a blocking thread.
 pub trait ErrorReporter: Send + Sync + 'static {
-    /// A route answered with a 5xx status. Never called for 4xx.
+    /// A route answered with a 5xx status, or a streamed reply failed after
+    /// its status (any status) was sent. Never called for a 4xx answer.
     fn route_error(&self, failure: &RouteFailure<'_>);
 
     /// A route handler or worker panicked and flatbed caught it.
@@ -89,17 +91,21 @@ pub struct RouteRequest<'a> {
     pub request_id: &'a str,
 }
 
-/// A route answered with a 5xx status.
+/// A route answered with a 5xx status, or a streamed reply failed after its
+/// status was sent.
 #[derive(Clone, Copy, Debug)]
 pub struct RouteFailure<'a> {
     /// The failed request.
     pub request: RouteRequest<'a>,
-    /// HTTP status of the answer (the `x-error-status` of a NATS reply).
+    /// HTTP status of the answer (the `x-error-status` of a NATS reply). For
+    /// a streamed reply that failed, the status already sent.
     pub status: u16,
     /// Error code put on the wire (`ERROR` for an error that set none);
-    /// `None` when the answer carries no code.
+    /// `None` when the answer carries no code. `STREAM_ERROR` for a streamed
+    /// reply that failed, which puts no code on the wire.
     pub code: Option<&'a str>,
-    /// Error message put on the wire.
+    /// Error message put on the wire; for a streamed reply that failed, the
+    /// stream's error, which reaches no client.
     pub message: &'a str,
 }
 
@@ -165,7 +171,7 @@ fn reporter() -> Option<&'static dyn ErrorReporter> {
     REPORTER.get().map(|reporter| &**reporter)
 }
 
-/// Report and log a 5xx answer to a route.
+/// Report and log a 5xx answer to a route, or a streamed reply that failed.
 pub(crate) fn route_error(failure: &RouteFailure<'_>) {
     let reporter = reporter();
     if let Some(reporter) = reporter {
