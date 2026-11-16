@@ -982,7 +982,7 @@ pub struct Response<T> {
     pub status: StatusCode,
     /// Response headers
     pub headers: HeaderMap,
-    raw: Option<(ReplyBody, Cow<'static, str>)>,
+    reply: Option<(ReplyBody, Cow<'static, str>)>,
 }
 
 impl<T> Response<T> {
@@ -992,7 +992,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::OK,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -1002,7 +1002,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::CREATED,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -1012,7 +1012,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::ACCEPTED,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -1022,7 +1022,7 @@ impl<T> Response<T> {
             body,
             status: StatusCode::NO_CONTENT,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -1032,7 +1032,7 @@ impl<T> Response<T> {
             body,
             status,
             headers: HeaderMap::new(),
-            raw: None,
+            reply: None,
         }
     }
 
@@ -1058,7 +1058,7 @@ impl<T> Response<T> {
     /// constructors.
     #[doc(hidden)]
     pub fn take_body(&mut self) -> Option<(ReplyBody, Cow<'static, str>)> {
-        self.raw.take()
+        self.reply.take()
     }
 }
 
@@ -1083,7 +1083,7 @@ impl Response<()> {
             body: (),
             status: StatusCode::OK,
             headers: HeaderMap::new(),
-            raw: Some((ReplyBody::Full(bytes.into()), content_type.into())),
+            reply: Some((ReplyBody::Full(bytes.into()), content_type.into())),
         }
     }
 
@@ -1118,7 +1118,7 @@ impl Response<()> {
             body: (),
             status: StatusCode::OK,
             headers: HeaderMap::new(),
-            raw: Some((ReplyBody::Stream(body), content_type.into())),
+            reply: Some((ReplyBody::Stream(body), content_type.into())),
         }
     }
 }
