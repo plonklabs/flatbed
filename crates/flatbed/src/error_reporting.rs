@@ -89,15 +89,18 @@ pub struct RouteRequest<'a> {
     pub request_id: &'a str,
 }
 
-/// A route answered with a 5xx status.
+/// A route answered with a 5xx status, or a streamed reply failed after its
+/// status was sent.
 #[derive(Clone, Copy, Debug)]
 pub struct RouteFailure<'a> {
     /// The failed request.
     pub request: RouteRequest<'a>,
-    /// HTTP status of the answer (the `x-error-status` of a NATS reply).
+    /// HTTP status of the answer (the `x-error-status` of a NATS reply). For
+    /// a streamed reply that failed, the status already sent.
     pub status: u16,
     /// Error code put on the wire (`ERROR` for an error that set none);
-    /// `None` when the answer carries no code.
+    /// `None` when the answer carries no code. `STREAM_ERROR` for a streamed
+    /// reply that failed, which puts no code on the wire.
     pub code: Option<&'a str>,
     /// Error message put on the wire.
     pub message: &'a str,
