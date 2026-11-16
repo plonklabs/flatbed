@@ -101,7 +101,7 @@ async fn expect_continue_head(port: u16, path: &str, len: usize, request_id: &st
     read_head(&mut tcp).await
 }
 
-/// Send a chunked body of `total` bytes to `path` in 512-byte chunks,
+/// Send a chunked body of `total` bytes to `path`,
 /// stopping when the server stops reading, and read the answer's head.
 async fn chunked_head(port: u16, path: &str, total: usize, request_id: &str) -> String {
     let mut tcp = tokio::net::TcpStream::connect(("127.0.0.1", port))
