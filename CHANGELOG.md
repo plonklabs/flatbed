@@ -50,6 +50,9 @@ contain breaking changes during the pre-1.0 stabilization window.
 - `@plonklabs/flatbed-client` skips an operation whose success response
   sends a media type that is neither JSON nor FlatBuffers, and the CLI names
   each one it skips.
+- `FlatbedConfig::shutdown_timeout(Duration)`, 30 s by default
+  (`DEFAULT_SHUTDOWN_TIMEOUT`): how long shutdown holds in-flight replies and
+  worker drains. `Flatbed::run` previously always used 30 s.
 - `TelemetryService::register_u64_counter_vec(name, help, label_names)`, the
   counter twin of `register_u64_gauge_vec`, returning a `CounterVec<u64>`
   whose `inc_by(label_values, value)` logs and skips a label-arity mismatch.
@@ -70,13 +73,18 @@ contain breaking changes during the pre-1.0 stabilization window.
   `Bytes`, was `Vec<u8>`; the body reaches the handler without a copy after
   it is read.
 - Graceful shutdown holds in-flight replies, streamed or buffered, up to
-  the shutdown budget instead of cutting every connection at `SIGTERM`.
-  Readiness drops first, through a `shutdown` gate, so `/readyz` reports
-  `Not Ready: shutdown`; each connection stops taking requests and finishes
-  the ones it has; a connection still open past the budget is cut. The
-  wait ends when the last connection and worker drain are done rather than
-  after a fixed sleep, and the `ErrorReporter` is flushed again after it, so
-  a stream that fails during the hold is reported.
+  `shutdown_timeout` instead of cutting every connection at `SIGTERM`. On
+  the signal (or a worker's terminal failure) the listener closes, so new
+  connections are refused, and readiness drops in-process through a
+  `shutdown` gate, so a request still reaching an open HTTP/2 connection is
+  answered `503`. Each open connection gets `graceful_shutdown()`: it takes
+  no new requests and finishes the ones it has; one still open past the
+  budget is cut. The wait ends when the last connection and worker drain are
+  done rather than after a fixed sleep, and the `ErrorReporter` is flushed
+  again after it, so a stream that fails during the hold is reported. The
+  process exits at most `shutdown_timeout` plus 4 s after the signal.
+- BREAKING: `AutoServer::shutdown_timeout(secs)` is gone; the budget is
+  `FlatbedConfig::shutdown_timeout`.
 
 ## [0.0.12] — 2026-11-07
 

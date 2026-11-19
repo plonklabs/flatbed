@@ -1,6 +1,7 @@
-//! On `SIGTERM` the server drops readiness, lets in-flight replies finish
-//! inside `shutdown_timeout`, cuts what is still open past it, and flushes
-//! the `ErrorReporter` once more before `serve` returns.
+//! On `SIGTERM` the server closes its listener, drops readiness in-process,
+//! lets in-flight replies finish inside `shutdown_timeout`, cuts what is
+//! still open past it, and flushes the `ErrorReporter` once more before
+//! `serve` returns.
 //!
 //! The test signals its own process, so this binary holds a single test.
 
@@ -22,7 +23,7 @@ use futures::StreamExt;
 use generated::test::Defaulted;
 use tokio::sync::{watch, RwLock};
 
-const BUDGET_SECS: u64 = 2;
+const BUDGET: Duration = Duration::from_secs(2);
 
 static FOREVER_DROPPED: AtomicBool = AtomicBool::new(false);
 
@@ -135,7 +136,8 @@ async fn sigterm_holds_in_flight_replies_up_to_the_budget() {
     let readiness = Readiness::new();
     let config = FlatbedConfig::new("shutdown")
         .readiness(readiness.clone())
-        .with_error_reporter(reporter.clone());
+        .with_error_reporter(reporter.clone())
+        .shutdown_timeout(BUDGET);
     let (healthz_tx, healthz_rx) = watch::channel(true);
     let (_booted_tx, booted_rx) = watch::channel(true);
     let service_ctx = ServiceContext {
@@ -146,23 +148,17 @@ async fn sigterm_holds_in_flight_replies_up_to_the_budget() {
         config,
         static_routes: Arc::new(Vec::new()),
     };
-    let server = AutoServer::new(([127, 0, 0, 1], port).into(), service_ctx, healthz_tx)
-        .shutdown_timeout(BUDGET_SECS);
+    let server = AutoServer::new(([127, 0, 0, 1], port).into(), service_ctx, healthz_tx);
     let serving = tokio::spawn(server.serve());
 
-    let client = reqwest::Client::new();
-    let readyz = format!("http://127.0.0.1:{port}/readyz");
+    let connect = || tokio::net::TcpStream::connect(("127.0.0.1", port));
     for _ in 0..100 {
-        if client
-            .get(&readyz)
-            .send()
-            .await
-            .is_ok_and(|r| r.status() == 200)
-        {
+        if connect().await.is_ok() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+    let client = reqwest::Client::new();
 
     let short = open(&client, port, "/short").await;
     let fails = open(&client, port, "/fails").await;
@@ -183,6 +179,11 @@ async fn sigterm_holds_in_flight_replies_up_to_the_budget() {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     assert_eq!(readiness.blocked_on(), ["shutdown"]);
+    let refused = connect().await;
+    assert!(
+        refused.is_err(),
+        "a new connection after SIGTERM was accepted"
+    );
 
     assert_eq!(rest(short).await.unwrap(), "end");
     assert!(rest(fails).await.is_err(), "a failed stream is aborted");
@@ -192,11 +193,11 @@ async fn sigterm_holds_in_flight_replies_up_to_the_budget() {
     );
     let cut_after = signalled.elapsed();
     assert!(
-        cut_after >= Duration::from_secs(BUDGET_SECS) - Duration::from_millis(100),
+        cut_after >= BUDGET - Duration::from_millis(100),
         "cut after {cut_after:?}, before the budget"
     );
 
-    tokio::time::timeout(Duration::from_secs(BUDGET_SECS + 5), serving)
+    tokio::time::timeout(BUDGET + Duration::from_secs(5), serving)
         .await
         .expect("serve returned")
         .unwrap()

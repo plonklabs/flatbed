@@ -6,6 +6,7 @@ use std::any::Any;
 use std::net::SocketAddr;
 use std::pin::pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
 use tokio::net::{TcpListener, TcpStream};
@@ -45,7 +46,6 @@ pub struct AutoServer<C> {
     bind_addr: SocketAddr,
     service_ctx: ServiceContext<C>,
     healthz_tx: watch::Sender<bool>,
-    shutdown_timeout_secs: u64,
 }
 
 impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
@@ -62,14 +62,7 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             bind_addr,
             service_ctx,
             healthz_tx,
-            shutdown_timeout_secs: 30,
         }
-    }
-
-    /// Set the graceful shutdown timeout in seconds
-    pub fn shutdown_timeout(mut self, secs: u64) -> Self {
-        self.shutdown_timeout_secs = secs;
-        self
     }
 
     /// Start the server and run until shutdown signal
@@ -90,15 +83,12 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
         }
 
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
-
-        // Readiness drops before anything stops, so the sidecar and
-        // Kubernetes stop routing to the pod while in-flight replies finish.
         let shutdown_gate = self.service_ctx.config.readiness.gate("shutdown");
         shutdown_gate.set_ready(true);
+
         let shutdown_tx_clone = shutdown_tx.clone();
         tokio::spawn(async move {
             shutdown_signal().await;
-            shutdown_gate.set_ready(false);
             let _ = shutdown_tx_clone.send(true);
         });
 
@@ -158,7 +148,16 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
         loop {
             tokio::select! {
                 result = listener.accept() => {
-                    let (stream, _addr) = result?;
+                    let stream = match result {
+                        Ok((stream, _addr)) => stream,
+                        Err(e) => {
+                            // Out of file descriptors, accept fails again at
+                            // once until a connection closes.
+                            warn!(error = %e, "accept failed");
+                            tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
+                            continue;
+                        }
+                    };
                     let service = FlatbedService::new(service_ctx.clone());
                     connections.spawn(serve_connection(stream, service, shutdown_rx.clone()));
                 }
@@ -169,13 +168,19 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             }
         }
 
+        // A signal and a worker's terminal failure both end the loop. From
+        // here new connections are refused, and a request still arriving on
+        // an open HTTP/2 connection before its GOAWAY is answered 503.
+        shutdown_gate.set_ready(false);
+        drop(listener);
+
         // The hold can spend the whole shutdown budget, so a flush only after
         // it races SIGKILL.
         crate::error_reporting::flush(REPORTER_FLUSH_TIMEOUT).await;
 
         // In-flight replies and the worker drains share the budget; a
         // connection still open past it is aborted.
-        let budget = tokio::time::Duration::from_secs(self.shutdown_timeout_secs);
+        let budget = service_ctx.config.shutdown_timeout;
         let open_connections = async {
             let _ = tokio::time::timeout(budget, async {
                 while connections.join_next().await.is_some() {}
@@ -193,7 +198,9 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
     }
 }
 
-const REPORTER_FLUSH_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(2);
+const REPORTER_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
+
+const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(50);
 
 /// Serve one connection, HTTP/1.1 or HTTP/2. On shutdown the connection
 /// stops taking requests and is awaited until its in-flight replies finish.
@@ -220,7 +227,7 @@ async fn serve_connection<C: Clone + Send + Sync + 'static>(
 /// concurrently, giving them at most `budget`.
 async fn run_worker_drains<C: Clone + Send + Sync + 'static>(
     service_ctx: &ServiceContext<C>,
-    budget: tokio::time::Duration,
+    budget: Duration,
 ) {
     let drains: Vec<_> = get_worker_drains()
         .into_iter()
