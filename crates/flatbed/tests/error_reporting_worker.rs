@@ -1,7 +1,9 @@
 //! End-to-end check of worker error reporting through a real `Flatbed::run`:
 //! a worker that panics, is restarted, and then exhausts its restart policy
 //! with a typed error must reach the reporter as a panic with a backtrace,
-//! then the typed failure, then a flush as graceful shutdown starts.
+//! then the typed failure, then a flush as graceful shutdown starts and
+//! another once in-flight replies are done. The shutdown it triggers drops
+//! readiness through the `shutdown` gate, as a signal does.
 //!
 //! The worker's failure shuts the server down, so this binary runs a single
 //! server and a single test.
@@ -11,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use flatbed::{
-    ErrorReporter, Flatbed, FlatbedConfig, FlatbedWorkerError, PanicReport, PanicSite,
+    ErrorReporter, Flatbed, FlatbedConfig, FlatbedWorkerError, PanicReport, PanicSite, Readiness,
     RestartPolicy, RouteFailure, Worker, WorkerFailure,
 };
 
@@ -94,24 +96,18 @@ async fn worker_panic_and_typed_failure_are_reported_then_flushed_at_shutdown() 
 
     let recorder = Arc::new(Recorder::default());
     let reporter: Arc<dyn ErrorReporter> = recorder.clone();
+    let readiness = Readiness::new();
     let config = FlatbedConfig::new("report-worker")
+        .readiness(readiness.clone())
         .host("127.0.0.1")
         .port(port)
         .with_error_reporter(reporter);
-    tokio::spawn(async move { Flatbed::run(config, |_| async { Ok(()) }).await });
-
-    for _ in 0..250 {
-        let flushed = recorder
-            .0
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|record| matches!(record, Record::Flush(_)));
-        if flushed {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    let running = tokio::spawn(async move { Flatbed::run(config, |_| async { Ok(()) }).await });
+    tokio::time::timeout(Duration::from_secs(5), running)
+        .await
+        .expect("the worker's failure shut the server down")
+        .expect("server task panicked")
+        .expect("server returned an error");
 
     assert_eq!(
         *recorder.0.lock().unwrap(),
@@ -127,6 +123,8 @@ async fn worker_panic_and_typed_failure_are_reported_then_flushed_at_shutdown() 
                 restarts_exhausted: true,
             },
             Record::Flush(Duration::from_secs(2)),
+            Record::Flush(Duration::from_secs(2)),
         ]
     );
+    assert_eq!(readiness.blocked_on(), ["shutdown"]);
 }

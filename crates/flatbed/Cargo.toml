@@ -159,6 +159,10 @@ required-features = ["openapi"]
 name = "body_limit"
 required-features = ["openapi"]
 
+[[test]]
+name = "shutdown"
+required-features = ["openapi"]
+
 [[example]]
 name = "routes"
 required-features = ["openapi"]

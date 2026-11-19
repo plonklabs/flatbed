@@ -4,11 +4,14 @@
 
 use std::any::Any;
 use std::net::SocketAddr;
+use std::pin::pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use hyper_util::rt::TokioIo;
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
+use tokio::task::JoinSet;
 
 use tracing::{debug, error, info, warn};
 
@@ -43,7 +46,6 @@ pub struct AutoServer<C> {
     bind_addr: SocketAddr,
     service_ctx: ServiceContext<C>,
     healthz_tx: watch::Sender<bool>,
-    shutdown_timeout_secs: u64,
 }
 
 impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
@@ -60,14 +62,7 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             bind_addr,
             service_ctx,
             healthz_tx,
-            shutdown_timeout_secs: 30,
         }
-    }
-
-    /// Set the graceful shutdown timeout in seconds
-    pub fn shutdown_timeout(mut self, secs: u64) -> Self {
-        self.shutdown_timeout_secs = secs;
-        self
     }
 
     /// Start the server and run until shutdown signal
@@ -88,8 +83,9 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
         }
 
         let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+        let shutdown_gate = self.service_ctx.config.readiness.gate("shutdown");
+        shutdown_gate.set_ready(true);
 
-        // Spawn shutdown signal handler
         let shutdown_tx_clone = shutdown_tx.clone();
         tokio::spawn(async move {
             shutdown_signal().await;
@@ -147,83 +143,104 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
         });
 
         let service_ctx = self.service_ctx;
+        let mut connections = JoinSet::new();
 
         loop {
             tokio::select! {
                 result = listener.accept() => {
-                    let (stream, _addr) = result?;
-                    let service = FlatbedService::new(service_ctx.clone());
-                    let mut conn_shutdown_rx = shutdown_rx.clone();
-
-                    tokio::spawn(async move {
-                        // Use hyper_util's auto connection builder
-                        let io = TokioIo::new(stream);
-
-                        let builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor);
-                        let conn = builder.serve_connection(io, service);
-
-                        tokio::select! {
-                            result = conn => {
-                                if let Err(e) = result {
-                                    debug!(error = %e, "connection error");
-                                }
-                            }
-                            _ = conn_shutdown_rx.changed() => {
-                                // Graceful shutdown
-                            }
+                    let stream = match result {
+                        Ok((stream, _addr)) => stream,
+                        Err(e) => {
+                            // Out of file descriptors, accept fails again at
+                            // once until a connection closes.
+                            warn!(error = %e, "accept failed");
+                            tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
+                            continue;
                         }
-                    });
+                    };
+                    let service = FlatbedService::new(service_ctx.clone());
+                    connections.spawn(serve_connection(stream, service, shutdown_rx.clone()));
                 }
+                Some(_) = connections.join_next(), if !connections.is_empty() => {}
                 _ = shutdown_rx.changed() => {
                     break;
                 }
             }
         }
 
-        // The worker drains and the wait for in-flight connections can spend
-        // the whole shutdown budget, so a flush after them races SIGKILL.
+        // A request still arriving on an open HTTP/2 connection before its
+        // GOAWAY is answered 503.
+        shutdown_gate.set_ready(false);
+        drop(listener);
+
+        // The hold can spend the whole shutdown budget, so a flush only after
+        // it races SIGKILL.
         crate::error_reporting::flush(REPORTER_FLUSH_TIMEOUT).await;
 
-        let budget = tokio::time::Duration::from_secs(self.shutdown_timeout_secs);
-        let epilogue = CONNECTION_EPILOGUE.min(budget);
-        let drain_budget = budget
-            .saturating_sub(epilogue)
-            .max(tokio::time::Duration::from_secs(1));
+        // In-flight replies and the worker drains share the budget; a
+        // connection still open past it is aborted.
+        let budget = service_ctx.config.shutdown_timeout;
+        let open_connections = async {
+            let _ = tokio::time::timeout(budget, async {
+                while connections.join_next().await.is_some() {}
+            })
+            .await;
+            connections.shutdown().await;
+        };
+        tokio::join!(run_worker_drains(&service_ctx, budget), open_connections);
 
-        // Nothing counts in-flight connections, so the wait for them is a
-        // fixed sleep: the short epilogue once drains have had their turn,
-        // and otherwise the whole budget.
-        let drained = run_worker_drains(&service_ctx, drain_budget).await;
-        tokio::time::sleep(if drained { epilogue } else { budget }).await;
+        // Failures reported during the hold, a stream's included, came after
+        // the first flush.
+        crate::error_reporting::flush(REPORTER_FLUSH_TIMEOUT).await;
 
         Ok(())
     }
 }
 
-const REPORTER_FLUSH_TIMEOUT: tokio::time::Duration = tokio::time::Duration::from_secs(2);
+const REPORTER_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Time left to in-flight connections after the worker drains have run.
-const CONNECTION_EPILOGUE: tokio::time::Duration = tokio::time::Duration::from_secs(2);
+const ACCEPT_RETRY_DELAY: Duration = Duration::from_millis(50);
+
+/// Serve one connection, HTTP/1.1 or HTTP/2. On shutdown the connection
+/// stops taking requests and is awaited until its in-flight replies finish.
+async fn serve_connection<C: Clone + Send + Sync + 'static>(
+    stream: TcpStream,
+    service: FlatbedService<C>,
+    mut shutdown_rx: watch::Receiver<bool>,
+) {
+    let builder = hyper_util::server::conn::auto::Builder::new(TokioExecutor);
+    let mut conn = pin!(builder.serve_connection(TokioIo::new(stream), service));
+    let result = tokio::select! {
+        result = conn.as_mut() => result,
+        _ = shutdown_rx.changed() => {
+            conn.as_mut().graceful_shutdown();
+            conn.await
+        }
+    };
+    if let Err(e) = result {
+        debug!(error = %e, "connection error");
+    }
+}
 
 /// Run the drain of every registered worker that is not disabled
-/// concurrently, giving them at most `budget`. Returns whether any drain ran.
+/// concurrently, giving them at most `budget`.
 async fn run_worker_drains<C: Clone + Send + Sync + 'static>(
     service_ctx: &ServiceContext<C>,
-    budget: tokio::time::Duration,
-) -> bool {
+    budget: Duration,
+) {
     let drains: Vec<_> = get_worker_drains()
         .into_iter()
         .filter(|drain_info| !crate::supervisor::is_disabled(drain_info.name))
         .collect();
     if drains.is_empty() {
-        return false;
+        return;
     }
 
     let worker_ctx: Arc<dyn Any + Send + Sync> = {
         let guard = service_ctx.context.read().await;
         let Some(app_ctx) = guard.as_ref() else {
             warn!("context not initialised; skipping worker drains");
-            return false;
+            return;
         };
         Arc::clone(app_ctx) as Arc<dyn Any + Send + Sync>
     };
@@ -253,6 +270,4 @@ async fn run_worker_drains<C: Clone + Send + Sync + 'static>(
         }
     })
     .await;
-
-    true
 }

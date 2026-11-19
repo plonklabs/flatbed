@@ -27,6 +27,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::time::Duration;
 
 #[cfg(feature = "nats")]
 pub mod nats;
@@ -145,6 +146,9 @@ pub use include_dir;
 /// The request body limit a [`FlatbedConfig`] starts with: 16 MiB.
 pub const DEFAULT_MAX_REQUEST_BODY: usize = 16 * 1024 * 1024;
 
+/// The default for [`FlatbedConfig::shutdown_timeout`].
+pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Boxed, Send future alias for trait return types.
 ///
 /// Eliminates the need for `use std::future::Future; use std::pin::Pin;`
@@ -253,6 +257,9 @@ pub struct FlatbedConfig {
     /// The largest request body a route reads, in bytes, unless the route
     /// sets its own `max_body` (see [`FlatbedConfig::max_request_body`]).
     pub max_request_body: usize,
+    /// How long shutdown holds in-flight replies and worker drains (see
+    /// [`FlatbedConfig::shutdown_timeout`]).
+    pub shutdown_timeout: Duration,
     /// Telemetry service for health endpoints (when telemetry feature is enabled)
     #[cfg(feature = "telemetry")]
     pub telemetry: Option<Arc<dyn TelemetryService>>,
@@ -271,6 +278,7 @@ impl Default for FlatbedConfig {
             readiness: Readiness::new(),
             error_reporter: None,
             max_request_body: DEFAULT_MAX_REQUEST_BODY,
+            shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
             #[cfg(feature = "telemetry")]
             telemetry: None,
         }
@@ -296,7 +304,8 @@ impl fmt::Debug for FlatbedConfig {
                 "error_reporter",
                 &self.error_reporter.as_ref().map(|_| "<ErrorReporter>"),
             )
-            .field("max_request_body", &self.max_request_body);
+            .field("max_request_body", &self.max_request_body)
+            .field("shutdown_timeout", &self.shutdown_timeout);
         #[cfg(feature = "telemetry")]
         debug.field(
             "telemetry",
@@ -425,6 +434,22 @@ impl FlatbedConfig {
     /// sending a byte.
     pub fn max_request_body(mut self, bytes: usize) -> Self {
         self.max_request_body = bytes;
+        self
+    }
+
+    /// Set how long shutdown holds in-flight work (default
+    /// [`DEFAULT_SHUTDOWN_TIMEOUT`], 30 s).
+    ///
+    /// On `SIGTERM` the listener closes, so new connections are refused,
+    /// and readiness drops in-process. Each open connection is told to take
+    /// no new requests and finish the ones it has; those replies, streamed
+    /// or buffered, and the worker drains run under this budget, and what is
+    /// still open past it is cut. The `ErrorReporter` is flushed for up to
+    /// 2 s before the hold and up to 2 s after it, so the process exits at
+    /// most this budget plus 4 s after the signal: the pod's termination
+    /// grace period has to cover that.
+    pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
+        self.shutdown_timeout = timeout;
         self
     }
 
