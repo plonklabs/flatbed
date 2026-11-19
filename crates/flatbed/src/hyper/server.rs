@@ -168,9 +168,8 @@ impl<C: Clone + Send + Sync + 'static> AutoServer<C> {
             }
         }
 
-        // A signal and a worker's terminal failure both end the loop. From
-        // here new connections are refused, and a request still arriving on
-        // an open HTTP/2 connection before its GOAWAY is answered 503.
+        // A request still arriving on an open HTTP/2 connection before its
+        // GOAWAY is answered 503.
         shutdown_gate.set_ready(false);
         drop(listener);
 

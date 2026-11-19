@@ -103,9 +103,11 @@ async fn worker_panic_and_typed_failure_are_reported_then_flushed_at_shutdown() 
         .port(port)
         .with_error_reporter(reporter);
     let running = tokio::spawn(async move { Flatbed::run(config, |_| async { Ok(()) }).await });
-    let _ = tokio::time::timeout(Duration::from_secs(5), running)
+    tokio::time::timeout(Duration::from_secs(5), running)
         .await
-        .expect("the worker's failure shut the server down");
+        .expect("the worker's failure shut the server down")
+        .expect("server task panicked")
+        .expect("server returned an error");
 
     assert_eq!(
         *recorder.0.lock().unwrap(),
