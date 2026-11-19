@@ -30,7 +30,7 @@ on:
         default: ''
 
 concurrency:
-  group: build-flatbed-bin-${{ inputs.tag || github.ref }}
+  group: build-flatbed-bin-${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -166,6 +166,15 @@ jobs:
           RELEASE_TAG: ${{ steps.tag.outputs.tag }}
           IS_PRERELEASE: ${{ steps.tag.outputs.prerelease }}
         run: |
+          assets=(dist/flatbed-linux-amd64 dist/flatbed-linux-amd64.sha256
+                  dist/flatbed-linux-arm64 dist/flatbed-linux-arm64.sha256
+                  dist/flatbed-darwin-arm64 dist/flatbed-darwin-arm64.sha256)
+          # A failed earlier run can leave the release half-published;
+          # `gh release create` refuses an existing release, so top it up.
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" --clobber "${assets[@]}"
+            exit 0
+          fi
           PRERELEASE_FLAG=""
           if [ "$IS_PRERELEASE" = "true" ]; then
             PRERELEASE_FLAG="--prerelease"
@@ -174,12 +183,7 @@ jobs:
             --title "$RELEASE_TAG" \
             --notes-file notes.md \
             $PRERELEASE_FLAG \
-            dist/flatbed-linux-amd64 \
-            dist/flatbed-linux-amd64.sha256 \
-            dist/flatbed-linux-arm64 \
-            dist/flatbed-linux-arm64.sha256 \
-            dist/flatbed-darwin-arm64 \
-            dist/flatbed-darwin-arm64.sha256
+            "${assets[@]}"
 
   notify-failure:
     needs: [build, release]
